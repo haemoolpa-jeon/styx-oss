@@ -54,24 +54,18 @@
       <!-- 오디오 장치 선택 -->
       <div class="device-selectors">
         <div class="device-selector">
-          <label>🎤 입력:</label>
+          <label>🎤 입력</label>
           <select id="audio-device"></select>
         </div>
         <div class="device-selector">
-          <label>🔊 출력:</label>
+          <label>🔊 출력</label>
           <select id="audio-output"></select>
         </div>
       </div>
 
-      <!-- 즐겨찾기 -->
-      <div class="room-browser">
-        <h3>⭐ 즐겨찾기</h3>
-        <div id="favorites-list"></div>
-      </div>
-
       <!-- 방 목록 -->
       <div class="room-browser">
-        <h3>활성 방 목록</h3>
+        <h3>📡 활성 방 목록</h3>
         <div id="room-list"></div>
       </div>
 
@@ -123,7 +117,6 @@
     <div id="room-view" class="panel hidden">
       <div class="room-header">
         <h2>🎸 <span id="roomName"></span></h2>
-        <button id="favBtn" onclick="toggleFavorite(document.getElementById('roomName').textContent)" title="즐겨찾기">⭐</button>
         <div class="room-controls">
           <button id="recordBtn" onclick="toggleRecording()" title="녹음">⏺️ 녹음</button>
           <button id="closeRoomBtn" class="hidden" onclick="closeRoom()" title="방 닫기">🚪 닫기</button>

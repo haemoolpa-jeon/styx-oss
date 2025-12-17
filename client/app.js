@@ -109,45 +109,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ===== 즐겨찾기 =====
-function getFavorites() {
-  return JSON.parse(localStorage.getItem('styx-favorites') || '[]');
-}
-
-function saveFavorites(favs) {
-  localStorage.setItem('styx-favorites', JSON.stringify(favs));
-}
-
-function toggleFavorite(roomName) {
-  const favs = getFavorites();
-  const idx = favs.indexOf(roomName);
-  if (idx >= 0) {
-    favs.splice(idx, 1);
-    toast('즐겨찾기에서 제거됨', 'info');
-  } else {
-    favs.push(roomName);
-    toast('즐겨찾기에 추가됨', 'success');
-  }
-  saveFavorites(favs);
-  renderFavorites();
-}
-
-function renderFavorites() {
-  const favs = getFavorites();
-  const container = $('favorites-list');
-  if (!container) return;
-  
-  if (!favs.length) {
-    container.innerHTML = '<p class="no-rooms">즐겨찾기가 없습니다</p>';
-    return;
-  }
-  container.innerHTML = favs.map(name => `
-    <div class="room-item favorite" onclick="joinRoom('${name.replace(/'/g, "\\'")}', false)">
-      <span class="room-name">⭐ ${escapeHtml(name)}</span>
-      <button class="fav-remove" onclick="event.stopPropagation(); toggleFavorite('${name.replace(/'/g, "\\'")}')">✕</button>
-    </div>
-  `).join('');
-}
+// ===== (즐겨찾기 제거됨) =====
 
 // ===== 녹음 =====
 function startRecording() {
@@ -360,7 +322,7 @@ async function showLobby() {
   
   await loadAudioDevices();
   loadRoomList();
-  renderFavorites();
+  
 }
 
 $('logoutBtn').onclick = () => {
@@ -966,5 +928,5 @@ function leaveRoom() {
   roomView.classList.add('hidden');
   lobby.classList.remove('hidden');
   loadRoomList();
-  renderFavorites();
+  
 }
