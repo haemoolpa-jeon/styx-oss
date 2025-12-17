@@ -397,6 +397,35 @@ io.on('connection', (socket) => {
   socket.on('answer', ({ to, answer }) => io.to(to).emit('answer', { from: socket.id, answer }));
   socket.on('ice-candidate', ({ to, candidate }) => io.to(to).emit('ice-candidate', { from: socket.id, candidate }));
 
+  // UDP P2P 시그널링
+  socket.on('udp-info', ({ port, publicIp }) => {
+    if (!socket.room) return;
+    socket.udpPort = port;
+    socket.udpPublicIp = publicIp;
+    // 방의 다른 사용자들에게 UDP 정보 전달
+    socket.to(socket.room).emit('udp-peer-info', { 
+      id: socket.id, 
+      port, 
+      publicIp,
+      username: socket.username 
+    });
+  });
+
+  socket.on('udp-request-peers', () => {
+    if (!socket.room) return;
+    const roomData = rooms.get(socket.room);
+    if (!roomData) return;
+    // 방의 모든 UDP 피어 정보 전송
+    const peers = [];
+    for (const [id, u] of roomData.users) {
+      const peerSocket = io.sockets.sockets.get(id);
+      if (peerSocket && peerSocket.udpPort && id !== socket.id) {
+        peers.push({ id, port: peerSocket.udpPort, publicIp: peerSocket.udpPublicIp, username: u.username });
+      }
+    }
+    socket.emit('udp-peers', peers);
+  });
+
   socket.on('disconnect', () => {
     if (socket.room && rooms.has(socket.room)) {
       const roomData = rooms.get(socket.room);

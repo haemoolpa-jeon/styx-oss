@@ -456,6 +456,9 @@ socket.on('connect', () => {
   console.log('서버 연결됨');
   $('connection-status')?.classList.remove('offline');
   
+  // UDP 핸들러 설정 (Tauri 앱일 때만)
+  if (isTauri) setupUdpHandlers();
+  
   // 세션 복구 (최초 연결 시에만)
   if (!sessionRestored) {
     sessionRestored = true;
@@ -734,6 +737,9 @@ function updateConnectionModeButtons() {
 }
 
 // Tauri 기능 초기화
+let udpPort = null;
+let udpPeers = new Map(); // peerId -> { port, publicIp, username }
+
 async function initTauriFeatures() {
   if (!tauriInvoke) return;
   
@@ -750,6 +756,41 @@ async function initTauriFeatures() {
   } catch (e) {
     console.error('Tauri 초기화 오류:', e);
   }
+}
+
+// UDP 모드 시작
+async function startUdpMode() {
+  if (!tauriInvoke) return;
+  
+  try {
+    // UDP 소켓 바인딩 (0 = 자동 포트)
+    udpPort = await tauriInvoke('udp_bind', { port: 0 });
+    console.log('UDP 포트 바인딩:', udpPort);
+    
+    // 서버에 UDP 정보 전송
+    socket.emit('udp-info', { port: udpPort, publicIp: null });
+    
+    // 기존 피어 정보 요청
+    socket.emit('udp-request-peers');
+    
+    toast(`UDP 모드 활성화 (포트: ${udpPort})`, 'success');
+  } catch (e) {
+    console.error('UDP 시작 실패:', e);
+    toast('UDP 모드 시작 실패', 'error');
+  }
+}
+
+// UDP 피어 정보 수신 핸들러
+function setupUdpHandlers() {
+  socket.on('udp-peer-info', ({ id, port, publicIp, username }) => {
+    udpPeers.set(id, { port, publicIp, username });
+    console.log(`UDP 피어 추가: ${username} (${publicIp}:${port})`);
+  });
+  
+  socket.on('udp-peers', (peers) => {
+    peers.forEach(p => udpPeers.set(p.id, { port: p.port, publicIp: p.publicIp, username: p.username }));
+    console.log('UDP 피어 목록:', udpPeers.size);
+  });
 }
 
 // 오디오 모드 설정
@@ -1013,6 +1054,11 @@ window.joinRoom = async (roomName, hasPassword) => {
     startLatencyPing();
     startAudioMeter();
     initPttTouch();
+    
+    // UDP 모드면 UDP 시작
+    if (isTauri && connectionMode === 'udp') {
+      startUdpMode();
+    }
   });
 };
 
