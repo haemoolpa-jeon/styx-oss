@@ -171,6 +171,31 @@ h3 { font-size: 1.3em; color: var(--text-secondary); margin-bottom: 15px; }
 #jitter-value { color: var(--accent); font-weight: 600; }
 
 #auto-adapt { width: 20px; height: 20px; margin-right: 8px; cursor: pointer; }
+#echo-cancel, #noise-suppress, #ptt-mode { width: 18px; height: 18px; margin-right: 6px; cursor: pointer; }
+
+.test-btn {
+  padding: 10px 18px; border: none; border-radius: 10px;
+  background: var(--accent); color: #fff; cursor: pointer; font-size: 14px;
+}
+.test-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+#test-status { font-size: 14px; color: var(--text-secondary); }
+
+#test-results {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px;
+  padding: 15px; background: var(--bg-input); border-radius: 10px;
+}
+.test-item { font-size: 14px; padding: 6px 12px; border-radius: 6px; }
+.test-item.pass { background: rgba(46, 213, 115, 0.2); color: var(--success); }
+.test-item.fail { background: rgba(255, 71, 87, 0.2); color: var(--error); }
+
+/* Ping Graph */
+.ping-graph-container {
+  display: flex; align-items: center; gap: 15px;
+  padding: 12px 22px; background: var(--bg-card); border-radius: 14px;
+  margin-bottom: 20px;
+}
+.ping-graph-container span { font-size: 14px; color: var(--text-secondary); white-space: nowrap; }
+#ping-graph { background: var(--bg-input); border-radius: 6px; }
 
 .room-browser { margin-bottom: 30px; }
 .room-browser h3 { font-size: 1.4em; margin-bottom: 18px; color: var(--text-primary); }

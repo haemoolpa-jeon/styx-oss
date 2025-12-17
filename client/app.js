@@ -26,11 +26,28 @@ let audioMode = localStorage.getItem('styx-audio-mode') || 'voice'; // voice | m
 let jitterBuffer = parseInt(localStorage.getItem('styx-jitter-buffer')) || 100; // ms
 let autoAdapt = localStorage.getItem('styx-auto-adapt') !== 'false';
 
+// 오디오 처리 설정
+let echoCancellation = localStorage.getItem('styx-echo') !== 'false';
+let noiseSuppression = localStorage.getItem('styx-noise') !== 'false';
+let pttMode = localStorage.getItem('styx-ptt') === 'true';
+let pttKey = localStorage.getItem('styx-ptt-key') || 'Space';
+let isPttActive = false;
+
+// 오디오 프로세싱 노드
+let gainNode = null;
+let compressorNode = null;
+let noiseGateInterval = null;
+let latencyHistory = []; // 핑 그래프용
+
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
-  ]
+    { urls: 'stun:stun1.l.google.com:19302' },
+    // 무료 TURN 서버 (OpenRelay)
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
+  ],
+  iceCandidatePoolSize: 10
 };
 
 // 오디오 모드별 설정
@@ -46,6 +63,98 @@ function getQualityGrade(latency, packetLoss, jitter) {
   if (packetLoss > 5 || latency > 200 || jitter > 50) return { grade: 'poor', label: '불안정', color: '#ff4757' };
   if (packetLoss > 2 || latency > 100 || jitter > 30) return { grade: 'fair', label: '보통', color: '#ffa502' };
   return { grade: 'good', label: '좋음', color: '#2ed573' };
+}
+
+// ===== 연결 테스트 =====
+async function runConnectionTest() {
+  const results = { mic: false, speaker: false, network: false, turn: false };
+  const statusEl = $('test-status');
+  const updateStatus = (msg) => { if (statusEl) statusEl.textContent = msg; };
+  
+  // 1. 마이크 테스트
+  updateStatus('🎤 마이크 테스트 중...');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const track = stream.getAudioTracks()[0];
+    results.mic = track.readyState === 'live';
+    stream.getTracks().forEach(t => t.stop());
+  } catch { results.mic = false; }
+  
+  // 2. 스피커 테스트 (간단한 비프음)
+  updateStatus('🔊 스피커 테스트 중...');
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.value = 0.1;
+    osc.frequency.value = 440;
+    osc.start();
+    osc.stop(ctx.currentTime + 0.2);
+    results.speaker = true;
+    await new Promise(r => setTimeout(r, 300));
+    ctx.close();
+  } catch { results.speaker = false; }
+  
+  // 3. STUN 연결 테스트
+  updateStatus('🌐 네트워크 테스트 중...');
+  try {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    pc.createDataChannel('test');
+    await pc.createOffer().then(o => pc.setLocalDescription(o));
+    
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject('timeout'), 5000);
+      pc.onicecandidate = (e) => {
+        if (e.candidate?.type === 'srflx') {
+          clearTimeout(timeout);
+          results.network = true;
+          resolve();
+        }
+      };
+    });
+    pc.close();
+  } catch { results.network = false; }
+  
+  // 4. TURN 연결 테스트
+  updateStatus('🔄 TURN 서버 테스트 중...');
+  try {
+    const pc = new RTCPeerConnection({ 
+      iceServers: [{ urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }],
+      iceTransportPolicy: 'relay'
+    });
+    pc.createDataChannel('test');
+    await pc.createOffer().then(o => pc.setLocalDescription(o));
+    
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject('timeout'), 5000);
+      pc.onicecandidate = (e) => {
+        if (e.candidate?.type === 'relay') {
+          clearTimeout(timeout);
+          results.turn = true;
+          resolve();
+        }
+      };
+    });
+    pc.close();
+  } catch { results.turn = false; }
+  
+  updateStatus('테스트 완료');
+  return results;
+}
+
+// 테스트 결과 표시
+function showTestResults(results) {
+  const el = $('test-results');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="test-item ${results.mic ? 'pass' : 'fail'}">🎤 마이크: ${results.mic ? '✓' : '✗'}</div>
+    <div class="test-item ${results.speaker ? 'pass' : 'fail'}">🔊 스피커: ${results.speaker ? '✓' : '✗'}</div>
+    <div class="test-item ${results.network ? 'pass' : 'fail'}">🌐 P2P 연결: ${results.network ? '✓' : '✗'}</div>
+    <div class="test-item ${results.turn ? 'pass' : 'fail'}">🔄 TURN 릴레이: ${results.turn ? '✓' : '✗'}</div>
+  `;
+  el.classList.remove('hidden');
 }
 
 // 토스트 메시지
@@ -139,6 +248,15 @@ function playSound(type) {
 
 // ===== 키보드 단축키 =====
 document.addEventListener('keydown', (e) => {
+  // PTT 모드
+  if (pttMode && !isPttActive && e.code === pttKey && localStream) {
+    isPttActive = true;
+    localStream.getAudioTracks().forEach(t => t.enabled = true);
+    $('muteBtn')?.classList.remove('muted');
+    $('muteBtn').textContent = '🎤';
+    return;
+  }
+  
   // 입력 필드에서는 무시
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   
@@ -147,10 +265,20 @@ document.addEventListener('keydown', (e) => {
   
   if (e.key === 'm' || e.key === 'M' || e.key === 'ㅡ') {
     e.preventDefault();
-    $('muteBtn')?.click();
-  } else if (e.key === ' ') {
+    if (!pttMode) $('muteBtn')?.click();
+  } else if (e.key === ' ' && e.code !== pttKey) {
     e.preventDefault();
     $('metronome-toggle')?.click();
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  // PTT 모드 - 키 떼면 음소거
+  if (pttMode && isPttActive && e.code === pttKey && localStream) {
+    isPttActive = false;
+    localStream.getAudioTracks().forEach(t => t.enabled = false);
+    $('muteBtn')?.classList.add('muted');
+    $('muteBtn').textContent = '🔇';
   }
 });
 
@@ -397,6 +525,50 @@ function initStabilitySettings() {
       localStorage.setItem('styx-auto-adapt', autoAdapt);
     };
   }
+  
+  // 에코 제거
+  const echoCheck = $('echo-cancel');
+  if (echoCheck) {
+    echoCheck.checked = echoCancellation;
+    echoCheck.onchange = () => {
+      echoCancellation = echoCheck.checked;
+      localStorage.setItem('styx-echo', echoCancellation);
+    };
+  }
+  
+  // 노이즈 억제
+  const noiseCheck = $('noise-suppress');
+  if (noiseCheck) {
+    noiseCheck.checked = noiseSuppression;
+    noiseCheck.onchange = () => {
+      noiseSuppression = noiseCheck.checked;
+      localStorage.setItem('styx-noise', noiseSuppression);
+    };
+  }
+  
+  // PTT 모드
+  const pttCheck = $('ptt-mode');
+  if (pttCheck) {
+    pttCheck.checked = pttMode;
+    pttCheck.onchange = () => {
+      pttMode = pttCheck.checked;
+      localStorage.setItem('styx-ptt', pttMode);
+      toast(pttMode ? 'PTT 모드: Space 키를 누르고 말하세요' : 'PTT 모드 해제', 'info');
+    };
+  }
+  
+  // 연결 테스트 버튼
+  const testBtn = $('test-connection-btn');
+  if (testBtn) {
+    testBtn.onclick = async () => {
+      testBtn.disabled = true;
+      testBtn.textContent = '테스트 중...';
+      const results = await runConnectionTest();
+      showTestResults(results);
+      testBtn.disabled = false;
+      testBtn.textContent = '🔍 연결 테스트';
+    };
+  }
 }
 
 // 오디오 모드 설정
@@ -593,15 +765,19 @@ window.joinRoom = async (roomName, hasPassword) => {
   const audioConstraints = {
     audio: {
       deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
+      echoCancellation: echoCancellation,
+      noiseSuppression: noiseSuppression,
+      autoGainControl: true,
       latency: 0
     }
   };
 
   try {
     localStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+    // PTT 모드면 시작 시 음소거
+    if (pttMode) {
+      localStream.getAudioTracks().forEach(t => t.enabled = false);
+    }
   } catch {
     return toast('마이크 접근이 거부되었습니다', 'error');
   }
@@ -823,8 +999,30 @@ function createPeerConnection(peerId, username, avatar, initiator) {
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
   pc.ontrack = (e) => {
-    audioEl.srcObject = e.streams[0];
-    // 지터 버퍼 힌트 설정 (지원되는 경우)
+    // 오디오 프로세싱 체인 적용 (압축기)
+    const peerData = peers.get(peerId);
+    try {
+      const ctx = new AudioContext();
+      const source = ctx.createMediaStreamSource(e.streams[0]);
+      
+      // 압축기 (볼륨 차이 자동 조절)
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.value = -24;
+      compressor.knee.value = 30;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.25;
+      
+      const dest = ctx.createMediaStreamDestination();
+      source.connect(compressor);
+      compressor.connect(dest);
+      
+      audioEl.srcObject = dest.stream;
+      if (peerData) peerData.audioContext = ctx;
+    } catch {
+      audioEl.srcObject = e.streams[0];
+    }
+    
     if (audioEl.playsInline !== undefined) {
       audioEl.playsInline = true;
     }
@@ -909,9 +1107,12 @@ function renderUsers() {
 function startLatencyPing() {
   if (latencyInterval) clearInterval(latencyInterval);
   if (statsInterval) clearInterval(statsInterval);
+  latencyHistory = [];
   
   // 상세 통계 수집 (2초마다)
   statsInterval = setInterval(async () => {
+    let avgLatency = 0, count = 0;
+    
     for (const [id, peer] of peers) {
       if (peer.pc.connectionState !== 'connected') continue;
       
@@ -923,7 +1124,7 @@ function startLatencyPing() {
           if (report.type === 'inbound-rtp' && report.kind === 'audio') {
             packetsLost = report.packetsLost || 0;
             packetsReceived = report.packetsReceived || 0;
-            jitter = (report.jitter || 0) * 1000; // ms로 변환
+            jitter = (report.jitter || 0) * 1000;
           }
           if (report.type === 'candidate-pair' && report.state === 'succeeded') {
             rtt = (report.currentRoundTripTime || 0) * 1000;
@@ -937,6 +1138,8 @@ function startLatencyPing() {
         peer.packetLoss = lossRate;
         peer.jitter = jitter;
         peer.quality = getQualityGrade(rtt, lossRate, jitter);
+        
+        if (rtt > 0) { avgLatency += rtt; count++; }
         
         // 자동 적응: 패킷 손실 높으면 비트레이트 낮춤
         if (autoAdapt && lossRate > 3) {
@@ -953,8 +1156,59 @@ function startLatencyPing() {
         }
       } catch (e) {}
     }
+    
+    // 핑 그래프용 히스토리 저장
+    if (count > 0) {
+      latencyHistory.push(Math.round(avgLatency / count));
+      if (latencyHistory.length > 30) latencyHistory.shift();
+      renderPingGraph();
+    }
+    
     renderUsers();
   }, 2000);
+}
+
+// 핑 그래프 렌더링
+function renderPingGraph() {
+  const canvas = $('ping-graph');
+  if (!canvas || latencyHistory.length < 2) return;
+  
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const max = Math.max(200, ...latencyHistory);
+  
+  ctx.clearRect(0, 0, w, h);
+  
+  // 배경 그리드
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = (h / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+  
+  // 핑 라인
+  ctx.strokeStyle = '#e94560';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  
+  const step = w / (latencyHistory.length - 1);
+  latencyHistory.forEach((ping, i) => {
+    const x = i * step;
+    const y = h - (ping / max) * h;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  
+  // 현재 값 표시
+  const current = latencyHistory[latencyHistory.length - 1];
+  ctx.fillStyle = '#eee';
+  ctx.font = '12px sans-serif';
+  ctx.fillText(`${current}ms`, w - 40, 15);
 }
 
 // 소켓 이벤트
@@ -1055,9 +1309,11 @@ function leaveRoom() {
   peers.forEach(peer => {
     peer.pc.close();
     peer.audioEl.remove();
+    if (peer.audioContext) try { peer.audioContext.close(); } catch {}
   });
   peers.clear();
   volumeStates.clear();
+  latencyHistory = [];
   
   localStream?.getTracks().forEach(t => t.stop());
   localStream = null;

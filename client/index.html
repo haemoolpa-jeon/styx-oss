@@ -80,9 +80,30 @@
         <div class="setting-row">
           <label>
             <input type="checkbox" id="auto-adapt" checked>
-            🔄 자동 품질 조절 (불안정 시 비트레이트 낮춤)
+            🔄 자동 품질 조절
           </label>
         </div>
+        <div class="setting-row">
+          <label>
+            <input type="checkbox" id="echo-cancel" checked>
+            🔇 에코 제거
+          </label>
+          <label>
+            <input type="checkbox" id="noise-suppress" checked>
+            🔕 노이즈 억제
+          </label>
+        </div>
+        <div class="setting-row">
+          <label>
+            <input type="checkbox" id="ptt-mode">
+            🎙️ 푸시투톡 (Space 키)
+          </label>
+        </div>
+        <div class="setting-row">
+          <button id="test-connection-btn" class="test-btn">🔍 연결 테스트</button>
+          <span id="test-status"></span>
+        </div>
+        <div id="test-results" class="hidden"></div>
       </div>
 
       <!-- 방 목록 -->
@@ -161,6 +182,12 @@
         <div class="audio-meter-bg">
           <div id="audio-meter"></div>
         </div>
+      </div>
+
+      <!-- 핑 그래프 -->
+      <div class="ping-graph-container">
+        <span>지연 (평균):</span>
+        <canvas id="ping-graph" width="200" height="40"></canvas>
       </div>
 
       <div class="room-content">
