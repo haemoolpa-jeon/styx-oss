@@ -803,6 +803,8 @@ function setupUdpHandlers() {
       }
     }
     console.log('UDP 피어 목록:', udpPeers.size);
+    // 피어가 있으면 스트림 시작
+    if (udpPeers.size > 0) startUdpStream();
   });
 }
 
@@ -819,11 +821,38 @@ async function setUdpMuted(muted) {
 async function cleanupUdp() {
   if (tauriInvoke) {
     try {
+      await tauriInvoke('udp_stop_stream');
       await tauriInvoke('udp_clear_peers');
     } catch (e) { console.error('UDP 정리 실패:', e); }
   }
   udpPeers.clear();
   udpPort = null;
+}
+
+// UDP 스트림 시작
+async function startUdpStream() {
+  if (!tauriInvoke || connectionMode !== 'udp') return;
+  
+  try {
+    await tauriInvoke('udp_start_stream');
+    console.log('UDP 스트림 시작됨');
+    toast('UDP 오디오 스트림 시작', 'success');
+  } catch (e) {
+    console.error('UDP 스트림 시작 실패:', e);
+    toast('UDP 스트림 시작 실패: ' + e, 'error');
+  }
+}
+
+// UDP 스트림 중지
+async function stopUdpStream() {
+  if (!tauriInvoke) return;
+  
+  try {
+    await tauriInvoke('udp_stop_stream');
+    console.log('UDP 스트림 중지됨');
+  } catch (e) {
+    console.error('UDP 스트림 중지 실패:', e);
+  }
 }
 
 // 오디오 모드 설정

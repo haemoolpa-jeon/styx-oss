@@ -92,6 +92,49 @@ fn udp_clear_peers(state: State<'_, AppState>) {
     state.udp_stream.lock().unwrap().peers.clear();
 }
 
+#[tauri::command]
+fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
+    let mut stream_state = state.udp_stream.lock().unwrap();
+    
+    if stream_state.is_running.load(Ordering::SeqCst) {
+        return Err("이미 실행 중".to_string());
+    }
+    
+    let socket = stream_state.socket.clone().ok_or("소켓 없음")?;
+    let peers = stream_state.peers.clone();
+    
+    if peers.is_empty() {
+        return Err("피어 없음".to_string());
+    }
+    
+    stream_state.is_running.store(true, Ordering::SeqCst);
+    
+    // 송신 루프 시작
+    peer::start_send_loop(
+        socket.clone(),
+        peers,
+        stream_state.is_running.clone(),
+        stream_state.is_muted.clone(),
+        stream_state.sequence.clone(),
+    )?;
+    
+    // 수신 루프 시작
+    peer::start_recv_loop(
+        socket,
+        stream_state.is_running.clone(),
+        stream_state.jitter_buffers.clone(),
+        stream_state.playback_buffer.clone(),
+    )?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+fn udp_stop_stream(state: State<'_, AppState>) {
+    let stream_state = state.udp_stream.lock().unwrap();
+    stream_state.is_running.store(false, Ordering::SeqCst);
+}
+
 // ===== 앱 실행 =====
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -118,6 +161,8 @@ pub fn run() {
             udp_set_muted,
             udp_is_running,
             udp_clear_peers,
+            udp_start_stream,
+            udp_stop_stream,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
