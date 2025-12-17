@@ -11,12 +11,33 @@ where rustc >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Rust not found.
     echo Please install from https://rustup.rs
-    echo.
     pause
     exit /b 1
 )
-
 for /f "tokens=*" %%i in ('rustc --version') do echo Rust: %%i
+
+REM Check CMake (required for Opus)
+where cmake >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] CMake not found.
+    echo Please install from https://cmake.org/download/
+    echo Or: winget install Kitware.CMake
+    pause
+    exit /b 1
+)
+for /f "tokens=*" %%i in ('cmake --version ^| findstr /n "." ^| findstr "^1:"') do (
+    set "ver=%%i"
+    echo CMake: !ver:~2!
+)
+
+REM Check Visual Studio Build Tools
+where cl >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [WARNING] MSVC compiler not in PATH.
+    echo Make sure to run from "Developer Command Prompt for VS"
+    echo Or install Visual Studio Build Tools.
+    echo.
+)
 
 REM Check Tauri CLI
 cargo tauri --version >nul 2>&1
@@ -30,20 +51,25 @@ if %errorlevel% neq 0 (
         exit /b 1
     )
 )
-
 for /f "tokens=*" %%i in ('cargo tauri --version') do echo Tauri CLI: %%i
 
 echo.
 echo [INFO] Building Styx Desktop...
-echo This may take several minutes on first build.
+echo This may take 5-10 minutes on first build.
 echo.
 
 cd /d "%~dp0"
-cargo tauri build
+cargo tauri build --release
 
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] Build failed!
+    echo.
+    echo Common issues:
+    echo - Missing CMake: winget install Kitware.CMake
+    echo - Missing MSVC: Install Visual Studio Build Tools
+    echo - Missing WebView2: Will be bundled automatically
+    echo.
     pause
     exit /b 1
 )
@@ -53,11 +79,12 @@ echo ========================================
 echo   Build Complete!
 echo ========================================
 echo.
-echo Installers are located in:
-echo   src-tauri\target\release\bundle\
+echo Installers:
+echo   src-tauri\target\release\bundle\msi\
+echo   src-tauri\target\release\bundle\nsis\
 echo.
-echo - MSI installer: msi\
-echo - NSIS installer: nsis\
+echo Portable EXE:
+echo   src-tauri\target\release\styx-desktop.exe
 echo.
 
 pause

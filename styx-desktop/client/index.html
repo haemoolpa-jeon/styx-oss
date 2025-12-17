@@ -76,6 +76,13 @@
           <span class="hint" id="connection-mode-hint">WebRTC: 호환성 좋음 | UDP: 저지연 (데스크톱 앱 전용)</span>
         </div>
         
+        <!-- Tauri 오디오 장치 선택 (UDP 모드용) -->
+        <div class="setting-row" id="tauri-audio-row" style="display:none;">
+          <label>🎛️ 오디오 드라이버</label>
+          <select id="tauri-audio-host"></select>
+          <span class="hint" id="tauri-audio-hint">ASIO: 저지연 | WASAPI: 기본</span>
+        </div>
+        
         <div class="setting-row">
           <label>🎵 오디오 모드</label>
           <div class="mode-toggle">

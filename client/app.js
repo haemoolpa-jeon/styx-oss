@@ -744,10 +744,19 @@ async function initTauriFeatures() {
   if (!tauriInvoke) return;
   
   try {
+    // 오디오 호스트 목록 로드
+    const hosts = await tauriInvoke('get_audio_hosts');
+    const hostSelect = $('tauri-audio-host');
+    if (hostSelect && hosts.length) {
+      hostSelect.innerHTML = hosts.map(h => `<option value="${h}">${h}</option>`).join('');
+      $('tauri-audio-row').style.display = 'flex';
+    }
+    
     // ASIO 사용 가능 여부 확인
     const asioAvailable = await tauriInvoke('check_asio');
     if (asioAvailable) {
       toast('ASIO 드라이버 감지됨', 'success');
+      $('tauri-audio-hint').textContent = 'ASIO 사용 가능 - 저지연 모드 권장';
     }
     
     // 오디오 정보 가져오기
@@ -910,11 +919,12 @@ function updateUdpStatsUI(stats) {
   }
   
   const lossRate = stats.loss_rate.toFixed(1);
+  const bufferMs = stats.jitter_buffer_size * 10; // 10ms per frame
   let quality = 'good';
   if (stats.loss_rate > 5) quality = 'bad';
   else if (stats.loss_rate > 1) quality = 'warning';
   
-  badge.textContent = `UDP: ${stats.peer_count}명 | 손실 ${lossRate}%`;
+  badge.textContent = `UDP: ${stats.peer_count}명 | 손실 ${lossRate}% | 버퍼 ${bufferMs}ms`;
   badge.className = `stats-badge ${quality}`;
 }
 

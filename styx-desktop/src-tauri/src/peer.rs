@@ -26,6 +26,10 @@ impl JitterBuffer {
         Self { buffer: BTreeMap::new(), next_seq: 0, max_size }
     }
     
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+    
     pub fn push(&mut self, seq: u32, samples: Vec<f32>) {
         if self.buffer.len() >= self.max_size {
             if let Some(&oldest) = self.buffer.keys().next() {
