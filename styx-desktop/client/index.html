@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Styx - HADES 오디오</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="dark">
+  <div id="connection-status" title="서버 연결 상태"></div>
+  <div id="toast-container"></div>
+  <div id="app">
+    <!-- 로그인 패널 -->
+    <div id="auth" class="panel">
+      <h1>🎵 Styx</h1>
+      <p class="subtitle">HADES 실시간 오디오 협업</p>
+      
+      <div id="auth-tabs">
+        <button class="tab active" data-tab="login">로그인</button>
+        <button class="tab" data-tab="signup">회원가입</button>
+      </div>
+
+      <div id="login-form" class="auth-form">
+        <input type="text" id="login-user" placeholder="사용자명" autocomplete="username">
+        <input type="password" id="login-pass" placeholder="비밀번호" autocomplete="current-password">
+        <button id="loginBtn">로그인</button>
+      </div>
+
+      <div id="signup-form" class="auth-form hidden">
+        <input type="text" id="signup-user" placeholder="사용자명 (2-20자)">
+        <input type="password" id="signup-pass" placeholder="비밀번호 (4자 이상)">
+        <button id="signupBtn">가입 요청</button>
+      </div>
+
+      <div id="auth-msg"></div>
+    </div>
+
+    <!-- 로비 -->
+    <div id="lobby" class="panel hidden">
+      <div class="lobby-header">
+        <div class="user-info">
+          <div id="my-avatar" class="avatar"></div>
+          <span id="my-username"></span>
+        </div>
+        <div class="lobby-actions">
+          <button id="themeBtn" onclick="toggleTheme()" title="테마 변경">☀️</button>
+          <label class="avatar-upload" title="아바타 변경">📷<input type="file" id="avatar-input" accept="image/*"></label>
+          <button id="settingsBtn" title="설정">⚙️</button>
+          <button id="adminBtn" class="hidden" title="관리자">👑</button>
+          <button id="logoutBtn">로그아웃</button>
+        </div>
+      </div>
+
+      <!-- 오디오 장치 선택 -->
+      <div class="device-selectors">
+        <div class="device-selector">
+          <label>🎤 입력</label>
+          <select id="audio-device"></select>
+        </div>
+        <div class="device-selector">
+          <label>🔊 출력</label>
+          <select id="audio-output"></select>
+        </div>
+      </div>
+
+      <!-- 안정성 설정 -->
+      <div class="stability-settings">
+        <div class="setting-row">
+          <label>🎵 오디오 모드</label>
+          <div class="mode-toggle">
+            <button id="voiceModeBtn" class="mode-btn active" onclick="setAudioMode('voice')">🎤 음성</button>
+            <button id="musicModeBtn" class="mode-btn" onclick="setAudioMode('music')">🎸 악기</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label>📊 지터 버퍼 <span id="jitter-value">100ms</span></label>
+          <input type="range" id="jitter-slider" min="50" max="200" value="100" step="10">
+          <span class="hint">높을수록 안정적, 지연 증가</span>
+        </div>
+        <div class="setting-row">
+          <label>
+            <input type="checkbox" id="auto-adapt" checked>
+            🔄 자동 품질 조절
+          </label>
+        </div>
+        <div class="setting-row">
+          <label>
+            <input type="checkbox" id="echo-cancel" checked>
+            🔇 에코 제거
+          </label>
+          <label>
+            <input type="checkbox" id="noise-suppress" checked>
+            🔕 노이즈 억제
+          </label>
+        </div>
+        <div class="setting-row">
+          <label>
+            <input type="checkbox" id="ptt-mode">
+            🎙️ 푸시투톡 (Space 키)
+          </label>
+          <label>
+            <input type="checkbox" id="vad-mode" checked>
+            👄 음성 감지 (말하는 사람 표시)
+          </label>
+        </div>
+        <div class="setting-row">
+          <label>
+            <input type="checkbox" id="ducking-mode">
+            🔉 오디오 덕킹 (다른 사람 말할 때 볼륨 낮춤)
+          </label>
+        </div>
+        <div class="setting-row">
+          <button id="test-connection-btn" class="test-btn">🔍 연결 테스트</button>
+          <span id="test-status"></span>
+        </div>
+        <div id="test-results" class="hidden"></div>
+      </div>
+
+      <!-- 방 목록 -->
+      <div class="room-browser">
+        <h3>📡 활성 방 목록</h3>
+        <div id="room-list"></div>
+      </div>
+
+      <div class="room-join">
+        <input type="text" id="room-input" placeholder="방 이름 입력...">
+        <input type="password" id="room-password" placeholder="비밀번호 (선택)">
+        <button id="joinRoomBtn">입장</button>
+      </div>
+    </div>
+
+    <!-- 설정 패널 -->
+    <div id="settings-panel" class="panel hidden">
+      <h2>⚙️ 설정</h2>
+      
+      <div class="settings-section">
+        <h3>비밀번호 변경</h3>
+        <input type="password" id="old-password" placeholder="현재 비밀번호">
+        <input type="password" id="new-password" placeholder="새 비밀번호">
+        <button id="changePasswordBtn">변경</button>
+      </div>
+
+      <div class="settings-section">
+        <h3>키보드 단축키</h3>
+        <p class="shortcut-hint">M - 음소거 토글</p>
+        <p class="shortcut-hint">Space - 메트로놈 토글</p>
+      </div>
+      
+      <button id="closeSettingsBtn">닫기</button>
+    </div>
+
+    <!-- 관리자 패널 -->
+    <div id="admin-panel" class="panel hidden">
+      <h2>👑 관리자</h2>
+      
+      <div class="admin-section">
+        <h3>가입 승인 대기</h3>
+        <div id="pending-list"></div>
+      </div>
+      
+      <div class="admin-section">
+        <h3>사용자 관리</h3>
+        <div id="users-list"></div>
+      </div>
+      
+      <button id="closeAdminBtn">닫기</button>
+    </div>
+
+    <!-- 방 화면 -->
+    <div id="room-view" class="panel hidden">
+      <div class="room-header">
+        <h2>🎸 <span id="roomName"></span></h2>
+        <div class="room-controls">
+          <button id="inviteBtn" onclick="createInviteLink()" title="초대 링크">🔗 초대</button>
+          <button id="recordBtn" onclick="toggleRecording()" title="녹음">⏺️ 녹음</button>
+          <button id="closeRoomBtn" class="hidden" onclick="closeRoom()" title="방 닫기">🚪 닫기</button>
+          <button id="muteBtn" title="음소거 (M)">🎤</button>
+          <button id="leaveBtn">나가기</button>
+        </div>
+      </div>
+
+      <!-- 메트로놈 -->
+      <div class="metronome-bar">
+        <button id="metronome-toggle" title="메트로놈 (Space)">▶️</button>
+        <input type="number" id="bpm-input" value="120" min="30" max="300" title="BPM">
+        <span>BPM</span>
+        <div id="metronome-tick"></div>
+      </div>
+
+      <!-- 오디오 레벨 미터 -->
+      <div class="audio-meter-container">
+        <span>입력 레벨:</span>
+        <div class="audio-meter-bg">
+          <div id="audio-meter"></div>
+        </div>
+      </div>
+
+      <!-- 핑 그래프 -->
+      <div class="ping-graph-container">
+        <span>지연 (평균):</span>
+        <canvas id="ping-graph" width="200" height="40"></canvas>
+      </div>
+
+      <div class="room-content">
+        <div class="users-section">
+          <div id="users-grid"></div>
+          <div id="my-card" class="user-card self">
+            <div class="card-avatar"></div>
+            <div class="card-info">
+              <span class="card-name">나</span>
+              <span class="card-latency">로컬</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-section">
+          <div id="chat-messages"></div>
+          <div class="chat-input">
+            <input type="text" id="chat-text" placeholder="메시지 입력..." maxlength="500">
+            <button id="sendBtn">전송</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script>
+    // Tauri 앱용 서버 URL 설정
+    window.STYX_SERVER_URL = localStorage.getItem('styx-server-url') || 'http://localhost:3000';
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>
