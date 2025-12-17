@@ -6,7 +6,7 @@
   <title>Styx - HADES 오디오</title>
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body data-theme="dark">
   <div id="connection-status" title="서버 연결 상태"></div>
   <div id="toast-container"></div>
   <div id="app">
@@ -43,6 +43,7 @@
           <span id="my-username"></span>
         </div>
         <div class="lobby-actions">
+          <button id="themeBtn" onclick="toggleTheme()" title="테마 변경">☀️</button>
           <label class="avatar-upload" title="아바타 변경">📷<input type="file" id="avatar-input" accept="image/*"></label>
           <button id="settingsBtn" title="설정">⚙️</button>
           <button id="adminBtn" class="hidden" title="관리자">👑</button>
@@ -50,11 +51,25 @@
         </div>
       </div>
 
-      <div class="device-selector">
-        <label>🎤 오디오 입력:</label>
-        <select id="audio-device"></select>
+      <!-- 오디오 장치 선택 -->
+      <div class="device-selectors">
+        <div class="device-selector">
+          <label>🎤 입력:</label>
+          <select id="audio-device"></select>
+        </div>
+        <div class="device-selector">
+          <label>🔊 출력:</label>
+          <select id="audio-output"></select>
+        </div>
       </div>
 
+      <!-- 즐겨찾기 -->
+      <div class="room-browser">
+        <h3>⭐ 즐겨찾기</h3>
+        <div id="favorites-list"></div>
+      </div>
+
+      <!-- 방 목록 -->
       <div class="room-browser">
         <h3>활성 방 목록</h3>
         <div id="room-list"></div>
@@ -76,6 +91,12 @@
         <input type="password" id="old-password" placeholder="현재 비밀번호">
         <input type="password" id="new-password" placeholder="새 비밀번호">
         <button id="changePasswordBtn">변경</button>
+      </div>
+
+      <div class="settings-section">
+        <h3>키보드 단축키</h3>
+        <p class="shortcut-hint">M - 음소거 토글</p>
+        <p class="shortcut-hint">Space - 메트로놈 토글</p>
       </div>
       
       <button id="closeSettingsBtn">닫기</button>
@@ -102,15 +123,17 @@
     <div id="room-view" class="panel hidden">
       <div class="room-header">
         <h2>🎸 <span id="roomName"></span></h2>
+        <button id="favBtn" onclick="toggleFavorite(document.getElementById('roomName').textContent)" title="즐겨찾기">⭐</button>
         <div class="room-controls">
-          <button id="muteBtn" title="음소거">🎤</button>
+          <button id="recordBtn" onclick="toggleRecording()" title="녹음">⏺️ 녹음</button>
+          <button id="muteBtn" title="음소거 (M)">🎤</button>
           <button id="leaveBtn">나가기</button>
         </div>
       </div>
 
       <!-- 메트로놈 -->
       <div class="metronome-bar">
-        <button id="metronome-toggle" title="메트로놈">▶️</button>
+        <button id="metronome-toggle" title="메트로놈 (Space)">▶️</button>
         <input type="number" id="bpm-input" value="120" min="30" max="300" title="BPM">
         <span>BPM</span>
         <div id="metronome-tick"></div>

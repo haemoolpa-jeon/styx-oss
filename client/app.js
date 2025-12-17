@@ -8,6 +8,7 @@ let localStream = null;
 let isMuted = false;
 let currentUser = null;
 let selectedDeviceId = null;
+let selectedOutputId = null;
 let latencyInterval = null;
 let audioContext = null;
 let analyser = null;
@@ -15,6 +16,9 @@ let meterInterval = null;
 let metronomeInterval = null;
 let metronomeAudio = null;
 let sessionRestored = false;
+let mediaRecorder = null;
+let recordedChunks = [];
+let isRecording = false;
 
 const rtcConfig = {
   iceServers: [
@@ -37,6 +41,176 @@ function toast(message, type = 'info', duration = 3000) {
     el.classList.add('hide');
     setTimeout(() => el.remove(), 300);
   }, duration);
+}
+
+// ===== 테마 =====
+function initTheme() {
+  const saved = localStorage.getItem('styx-theme') || 'dark';
+  document.body.dataset.theme = saved;
+  updateThemeIcon();
+}
+
+function toggleTheme() {
+  const current = document.body.dataset.theme;
+  const next = current === 'dark' ? 'light' : 'dark';
+  document.body.dataset.theme = next;
+  localStorage.setItem('styx-theme', next);
+  updateThemeIcon();
+}
+
+function updateThemeIcon() {
+  const btn = $('themeBtn');
+  if (btn) btn.textContent = document.body.dataset.theme === 'dark' ? '☀️' : '🌙';
+}
+
+initTheme();
+
+// ===== 사운드 알림 =====
+let notifyAudio = null;
+
+function playSound(type) {
+  if (!notifyAudio) notifyAudio = new AudioContext();
+  if (notifyAudio.state === 'suspended') notifyAudio.resume();
+  
+  const osc = notifyAudio.createOscillator();
+  const gain = notifyAudio.createGain();
+  osc.connect(gain);
+  gain.connect(notifyAudio.destination);
+  
+  if (type === 'join') {
+    osc.frequency.value = 800;
+    gain.gain.setValueAtTime(0.2, notifyAudio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, notifyAudio.currentTime + 0.15);
+    osc.start();
+    osc.stop(notifyAudio.currentTime + 0.15);
+  } else if (type === 'leave') {
+    osc.frequency.value = 400;
+    gain.gain.setValueAtTime(0.2, notifyAudio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, notifyAudio.currentTime + 0.2);
+    osc.start();
+    osc.stop(notifyAudio.currentTime + 0.2);
+  }
+}
+
+// ===== 키보드 단축키 =====
+document.addEventListener('keydown', (e) => {
+  // 입력 필드에서는 무시
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  
+  // 방 화면에서만 작동
+  if (roomView?.classList.contains('hidden')) return;
+  
+  if (e.key === 'm' || e.key === 'M' || e.key === 'ㅡ') {
+    e.preventDefault();
+    $('muteBtn')?.click();
+  } else if (e.key === ' ') {
+    e.preventDefault();
+    $('metronome-toggle')?.click();
+  }
+});
+
+// ===== 즐겨찾기 =====
+function getFavorites() {
+  return JSON.parse(localStorage.getItem('styx-favorites') || '[]');
+}
+
+function saveFavorites(favs) {
+  localStorage.setItem('styx-favorites', JSON.stringify(favs));
+}
+
+function toggleFavorite(roomName) {
+  const favs = getFavorites();
+  const idx = favs.indexOf(roomName);
+  if (idx >= 0) {
+    favs.splice(idx, 1);
+    toast('즐겨찾기에서 제거됨', 'info');
+  } else {
+    favs.push(roomName);
+    toast('즐겨찾기에 추가됨', 'success');
+  }
+  saveFavorites(favs);
+  renderFavorites();
+}
+
+function renderFavorites() {
+  const favs = getFavorites();
+  const container = $('favorites-list');
+  if (!container) return;
+  
+  if (!favs.length) {
+    container.innerHTML = '<p class="no-rooms">즐겨찾기가 없습니다</p>';
+    return;
+  }
+  container.innerHTML = favs.map(name => `
+    <div class="room-item favorite" onclick="joinRoom('${name.replace(/'/g, "\\'")}', false)">
+      <span class="room-name">⭐ ${escapeHtml(name)}</span>
+      <button class="fav-remove" onclick="event.stopPropagation(); toggleFavorite('${name.replace(/'/g, "\\'")}')">✕</button>
+    </div>
+  `).join('');
+}
+
+// ===== 녹음 =====
+function startRecording() {
+  if (isRecording) return;
+  
+  // 모든 오디오 스트림 믹싱
+  const audioCtx = new AudioContext();
+  const dest = audioCtx.createMediaStreamDestination();
+  
+  // 로컬 오디오 추가
+  if (localStream) {
+    const localSource = audioCtx.createMediaStreamSource(localStream);
+    localSource.connect(dest);
+  }
+  
+  // 원격 오디오 추가
+  peers.forEach(peer => {
+    if (peer.audioEl.srcObject) {
+      const remoteSource = audioCtx.createMediaStreamSource(peer.audioEl.srcObject);
+      remoteSource.connect(dest);
+    }
+  });
+  
+  recordedChunks = [];
+  mediaRecorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
+  
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) recordedChunks.push(e.data);
+  };
+  
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `styx-recording-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.webm`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('녹음 파일이 다운로드되었습니다', 'success');
+  };
+  
+  mediaRecorder.start();
+  isRecording = true;
+  $('recordBtn').textContent = '⏹️ 녹음 중';
+  $('recordBtn').classList.add('recording');
+  toast('녹음 시작', 'info');
+}
+
+function stopRecording() {
+  if (!isRecording || !mediaRecorder) return;
+  
+  mediaRecorder.stop();
+  isRecording = false;
+  $('recordBtn').textContent = '⏺️ 녹음';
+  $('recordBtn').classList.remove('recording');
+}
+
+function toggleRecording() {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
 }
 const authPanel = $('auth');
 const lobby = $('lobby');
@@ -167,6 +341,7 @@ async function showLobby() {
   
   await loadAudioDevices();
   loadRoomList();
+  renderFavorites();
 }
 
 $('logoutBtn').onclick = () => {
@@ -175,7 +350,7 @@ $('logoutBtn').onclick = () => {
   location.reload();
 };
 
-// 오디오 장치 로드
+// 오디오 장치 로드 (입력 + 출력)
 async function loadAudioDevices() {
   try {
     const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -183,14 +358,33 @@ async function loadAudioDevices() {
     
     const devices = await navigator.mediaDevices.enumerateDevices();
     const audioInputs = devices.filter(d => d.kind === 'audioinput');
+    const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
     
-    const select = $('audio-device');
-    select.innerHTML = audioInputs.map((d, i) => 
+    // 입력 장치
+    const inputSelect = $('audio-device');
+    inputSelect.innerHTML = audioInputs.map((d, i) => 
       `<option value="${d.deviceId}">${d.label || '마이크 ' + (i + 1)}</option>`
     ).join('');
-    
     selectedDeviceId = audioInputs[0]?.deviceId;
-    select.onchange = () => selectedDeviceId = select.value;
+    inputSelect.onchange = () => selectedDeviceId = inputSelect.value;
+    
+    // 출력 장치
+    const outputSelect = $('audio-output');
+    if (outputSelect && audioOutputs.length) {
+      outputSelect.innerHTML = audioOutputs.map((d, i) => 
+        `<option value="${d.deviceId}">${d.label || '스피커 ' + (i + 1)}</option>`
+      ).join('');
+      selectedOutputId = audioOutputs[0]?.deviceId;
+      outputSelect.onchange = () => {
+        selectedOutputId = outputSelect.value;
+        // 모든 오디오 엘리먼트에 출력 장치 적용
+        peers.forEach(peer => {
+          if (peer.audioEl.setSinkId) {
+            peer.audioEl.setSinkId(selectedOutputId).catch(() => {});
+          }
+        });
+      };
+    }
   } catch (e) {
     console.error('오디오 장치 접근 거부됨');
   }
@@ -535,6 +729,11 @@ function createPeerConnection(peerId, username, avatar, initiator) {
   audioEl.autoplay = true;
   document.body.appendChild(audioEl);
 
+  // 출력 장치 설정
+  if (selectedOutputId && audioEl.setSinkId) {
+    audioEl.setSinkId(selectedOutputId).catch(() => {});
+  }
+
   const savedVolume = volumeStates.get(peerId) ?? 100;
   audioEl.volume = savedVolume / 100;
 
@@ -634,7 +833,11 @@ function startLatencyPing() {
 }
 
 // 소켓 이벤트
-socket.on('user-joined', ({ id, username, avatar }) => createPeerConnection(id, username, avatar, true));
+socket.on('user-joined', ({ id, username, avatar }) => {
+  createPeerConnection(id, username, avatar, true);
+  playSound('join');
+  toast(`${username} 입장`, 'info', 2000);
+});
 
 socket.on('offer', async ({ from, offer }) => {
   try {
@@ -673,10 +876,13 @@ socket.on('ice-candidate', async ({ from, candidate }) => {
 socket.on('user-left', ({ id }) => {
   const peer = peers.get(id);
   if (peer) {
+    const username = peer.username;
     peer.pc.close();
     peer.audioEl.remove();
     peers.delete(id);
     renderUsers();
+    playSound('leave');
+    toast(`${username} 퇴장`, 'info', 2000);
   }
 });
 
