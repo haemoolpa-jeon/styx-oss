@@ -59,7 +59,7 @@ echo This may take 5-10 minutes on first build.
 echo.
 
 cd /d "%~dp0"
-cargo tauri build --release
+cargo tauri build
 
 if %errorlevel% neq 0 (
     echo.
