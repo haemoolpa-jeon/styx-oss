@@ -1,5 +1,6 @@
 mod audio;
 mod udp;
+mod stream;
 
 use tauri::{
     menu::{Menu, MenuItem},
