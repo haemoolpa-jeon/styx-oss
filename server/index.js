@@ -48,8 +48,28 @@ const validateUsername = (u) => typeof u === 'string' && u.length >= 2 && u.leng
 const validatePassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 50;
 const sanitize = (s) => String(s).replace(/[<>"'&]/g, '');
 
-// 세션 토큰 생성/검증
-const sessions = new Map(); // username -> { token, expires }
+// 세션 토큰 생성/검증 (파일 기반 영속성)
+const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
+const loadSessions = () => {
+  try {
+    if (fs.existsSync(SESSIONS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      // 만료된 세션 제거
+      const now = Date.now();
+      for (const [k, v] of Object.entries(data)) {
+        if (v.expires < now) delete data[k];
+      }
+      return new Map(Object.entries(data));
+    }
+  } catch {}
+  return new Map();
+};
+const saveSessions = (sessions) => {
+  try {
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions), null, 2));
+  } catch {}
+};
+const sessions = loadSessions();
 const generateToken = () => require('crypto').randomBytes(32).toString('hex');
 
 app.use(express.static(path.join(__dirname, '../client')));
@@ -93,6 +113,7 @@ io.on('connection', (socket) => {
     // 세션 토큰 생성
     const token = generateToken();
     sessions.set(username, { token, expires: Date.now() + 7 * 24 * 60 * 60 * 1000 }); // 7일
+    saveSessions(sessions);
     
     cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar }, token });
   });
@@ -102,6 +123,7 @@ io.on('connection', (socket) => {
     const session = sessions.get(username);
     if (!session || session.token !== token || session.expires < Date.now()) {
       sessions.delete(username);
+      saveSessions(sessions);
       return cb({ error: 'Invalid session' });
     }
     
@@ -152,6 +174,7 @@ io.on('connection', (socket) => {
       
       // 기존 세션 무효화
       sessions.delete(socket.username);
+      saveSessions(sessions);
       
       cb({ success: true });
     });
@@ -219,6 +242,7 @@ io.on('connection', (socket) => {
       delete data.users[username];
       saveUsers(data);
       sessions.delete(username);
+      saveSessions(sessions);
       
       // 아바타 파일 삭제 (확장자 찾기)
       try {

@@ -752,6 +752,10 @@ async function initTauriFeatures() {
       $('tauri-audio-row').style.display = 'flex';
     }
     
+    // 오디오 장치 목록 로드
+    const devices = await tauriInvoke('get_audio_devices');
+    console.log('Tauri 오디오 장치:', devices);
+    
     // ASIO 사용 가능 여부 확인
     const asioAvailable = await tauriInvoke('check_asio');
     if (asioAvailable) {
@@ -861,6 +865,11 @@ async function startUdpStream() {
   if (!tauriInvoke || connectionMode !== 'udp') return;
   
   try {
+    // 선택된 장치 설정 (웹 UI에서 선택한 장치 사용)
+    const inputDevice = $('audio-device')?.value ? null : null; // Tauri는 장치 이름 필요
+    const outputDevice = $('audio-output')?.value ? null : null;
+    await tauriInvoke('set_audio_devices', { input: inputDevice, output: outputDevice });
+    
     await tauriInvoke('udp_start_stream');
     console.log('UDP 스트림 시작됨');
     toast('UDP 오디오 스트림 시작', 'success');

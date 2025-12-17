@@ -1,4 +1,5 @@
 node_modules/
 avatars/
 server/users.json
+server/sessions.json
 .env

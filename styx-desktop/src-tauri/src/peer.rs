@@ -67,6 +67,9 @@ pub struct UdpStreamState {
     pub packets_sent: Arc<AtomicU32>,
     pub packets_received: Arc<AtomicU32>,
     pub packets_lost: Arc<AtomicU32>,
+    // 장치 선택
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
 }
 
 impl Default for UdpStreamState {
@@ -82,6 +85,8 @@ impl Default for UdpStreamState {
             packets_sent: Arc::new(AtomicU32::new(0)),
             packets_received: Arc::new(AtomicU32::new(0)),
             packets_lost: Arc::new(AtomicU32::new(0)),
+            input_device: None,
+            output_device: None,
         }
     }
 }
@@ -122,9 +127,16 @@ pub fn start_send_loop(
     is_muted: Arc<AtomicBool>,
     sequence: Arc<AtomicU32>,
     packets_sent: Arc<AtomicU32>,
+    input_device_name: Option<String>,
 ) -> Result<(), String> {
     let host = cpal::default_host();
-    let device = host.default_input_device().ok_or("입력 장치 없음")?;
+    let device = match &input_device_name {
+        Some(name) => host.input_devices()
+            .map_err(|e| e.to_string())?
+            .find(|d| d.name().map(|n| n == *name).unwrap_or(false))
+            .ok_or_else(|| format!("입력 장치 '{}' 없음", name))?,
+        None => host.default_input_device().ok_or("기본 입력 장치 없음")?,
+    };
     let config = device.default_input_config().map_err(|e| e.to_string())?;
     
     let (tx, mut rx) = mpsc::channel::<Vec<f32>>(32);
@@ -198,9 +210,16 @@ pub fn start_recv_loop(
     jitter_buffers: Arc<Mutex<BTreeMap<SocketAddr, JitterBuffer>>>,
     playback_buffer: Arc<Mutex<Vec<f32>>>,
     packets_received: Arc<AtomicU32>,
+    output_device_name: Option<String>,
 ) -> Result<(), String> {
     let host = cpal::default_host();
-    let device = host.default_output_device().ok_or("출력 장치 없음")?;
+    let device = match &output_device_name {
+        Some(name) => host.output_devices()
+            .map_err(|e| e.to_string())?
+            .find(|d| d.name().map(|n| n == *name).unwrap_or(false))
+            .ok_or_else(|| format!("출력 장치 '{}' 없음", name))?,
+        None => host.default_output_device().ok_or("기본 출력 장치 없음")?,
+    };
     let config = device.default_output_config().map_err(|e| e.to_string())?;
     
     let playback_clone = playback_buffer.clone();

@@ -99,13 +99,20 @@ fn udp_is_running(state: State<'_, AppState>) -> bool {
 }
 
 #[tauri::command]
+fn set_audio_devices(input: Option<String>, output: Option<String>, state: State<'_, AppState>) {
+    let mut stream_state = state.udp_stream.lock().unwrap();
+    stream_state.input_device = input;
+    stream_state.output_device = output;
+}
+
+#[tauri::command]
 fn udp_clear_peers(state: State<'_, AppState>) {
     state.udp_stream.lock().unwrap().peers.clear();
 }
 
 #[tauri::command]
 fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
-    let mut stream_state = state.udp_stream.lock().unwrap();
+    let stream_state = state.udp_stream.lock().unwrap();
     
     if stream_state.is_running.load(Ordering::SeqCst) {
         return Err("이미 실행 중".to_string());
@@ -113,6 +120,8 @@ fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
     
     let socket = stream_state.socket.clone().ok_or("소켓 없음")?;
     let peers = stream_state.peers.clone();
+    let input_device = stream_state.input_device.clone();
+    let output_device = stream_state.output_device.clone();
     
     if peers.is_empty() {
         return Err("피어 없음".to_string());
@@ -128,6 +137,7 @@ fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
         stream_state.is_muted.clone(),
         stream_state.sequence.clone(),
         stream_state.packets_sent.clone(),
+        input_device,
     )?;
     
     // 수신 루프 시작
@@ -137,6 +147,7 @@ fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
         stream_state.jitter_buffers.clone(),
         stream_state.playback_buffer.clone(),
         stream_state.packets_received.clone(),
+        output_device,
     )?;
     
     Ok(())
@@ -213,6 +224,7 @@ pub fn run() {
             udp_set_muted,
             udp_is_running,
             udp_clear_peers,
+            set_audio_devices,
             udp_start_stream,
             udp_stop_stream,
             get_udp_stats,
