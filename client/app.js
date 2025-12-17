@@ -24,6 +24,20 @@ const rtcConfig = {
 };
 
 const $ = id => document.getElementById(id);
+
+// 토스트 메시지
+function toast(message, type = 'info', duration = 3000) {
+  const container = $('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+  
+  setTimeout(() => {
+    el.classList.add('hide');
+    setTimeout(() => el.remove(), 300);
+  }, duration);
+}
 const authPanel = $('auth');
 const lobby = $('lobby');
 const adminPanel = $('admin-panel');
@@ -59,7 +73,7 @@ socket.on('connect', () => {
   if (currentUser && socket.room) {
     socket.emit('join', { room: socket.room, username: currentUser.username }, res => {
       if (res.error) {
-        alert('재연결 실패: ' + res.error);
+        toast('재연결 실패: ' + res.error, 'error');
         leaveRoom();
       }
     });
@@ -72,7 +86,7 @@ socket.on('disconnect', () => {
 });
 
 socket.on('kicked', () => { 
-  alert('방에서 강퇴되었습니다'); 
+  toast('방에서 강퇴되었습니다', 'error'); 
   leaveRoom();
 });
 
@@ -134,6 +148,7 @@ $('signupBtn').onclick = () => {
       return showAuthMsg(errorMsg, true);
     }
     showAuthMsg('가입 요청 완료. 관리자 승인을 기다려주세요.', false);
+    toast('가입 요청이 전송되었습니다', 'success');
   });
 };
 
@@ -206,7 +221,7 @@ function renderRoomList(rooms) {
 $('avatar-input').onchange = (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  if (file.size > 2 * 1024 * 1024) return alert('이미지 크기는 2MB 이하여야 합니다');
+  if (file.size > 2 * 1024 * 1024) return toast('이미지 크기는 2MB 이하여야 합니다', 'error');
   
   const reader = new FileReader();
   reader.onload = () => {
@@ -214,8 +229,9 @@ $('avatar-input').onchange = (e) => {
       if (res.success) {
         currentUser.avatar = res.avatar;
         $('my-avatar').style.backgroundImage = `url(${res.avatar})`;
+        toast('아바타가 변경되었습니다', 'success');
       } else {
-        alert(res.error);
+        toast(res.error, 'error');
       }
     });
   };
@@ -236,15 +252,17 @@ $('closeSettingsBtn').onclick = () => {
 $('changePasswordBtn').onclick = () => {
   const oldPw = $('old-password').value;
   const newPw = $('new-password').value;
-  if (!oldPw || !newPw) return alert('비밀번호를 입력하세요');
+  if (!oldPw || !newPw) return toast('비밀번호를 입력하세요', 'warning');
   
   socket.emit('change-password', { oldPassword: oldPw, newPassword: newPw }, res => {
     if (res.success) {
-      alert('비밀번호가 변경되었습니다. 다시 로그인해주세요.');
-      localStorage.removeItem('styx-token');
-      location.reload();
+      toast('비밀번호가 변경되었습니다. 다시 로그인해주세요.', 'success');
+      setTimeout(() => {
+        localStorage.removeItem('styx-token');
+        location.reload();
+      }, 1500);
     } else {
-      alert(res.error === 'Wrong password' ? '현재 비밀번호가 틀렸습니다' : res.error);
+      toast(res.error === 'Wrong password' ? '현재 비밀번호가 틀렸습니다' : res.error, 'error');
     }
   });
 };
@@ -322,7 +340,7 @@ window.joinRoom = async (roomName, hasPassword) => {
   try {
     localStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
   } catch {
-    return alert('마이크 접근이 거부되었습니다');
+    return toast('마이크 접근이 거부되었습니다', 'error');
   }
 
   $('joinRoomBtn').disabled = true;
@@ -336,7 +354,7 @@ window.joinRoom = async (roomName, hasPassword) => {
         'Not authorized': '권한이 없습니다',
         'Wrong room password': '방 비밀번호가 틀렸습니다'
       }[res.error] || res.error;
-      return alert(errorMsg);
+      return toast(errorMsg, 'error');
     }
 
     lobby.classList.add('hidden');
