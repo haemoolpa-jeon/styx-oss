@@ -22,3 +22,11 @@ log = "0.4"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
+
+# 오디오 처리
+cpal = { version = "0.15", features = ["asio"] }
+ringbuf = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+# Windows ASIO 지원
+asio-sys = "0.2"

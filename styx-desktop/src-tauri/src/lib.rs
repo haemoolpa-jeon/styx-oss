@@ -1,3 +1,5 @@
+mod audio;
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
@@ -5,10 +7,40 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
+// Tauri 커맨드: 오디오 장치 목록
+#[tauri::command]
+fn get_audio_devices() -> Vec<audio::AudioDevice> {
+    audio::list_audio_devices()
+}
+
+// Tauri 커맨드: 오디오 호스트 목록
+#[tauri::command]
+fn get_audio_hosts() -> Vec<String> {
+    audio::list_audio_hosts()
+}
+
+// Tauri 커맨드: ASIO 사용 가능 여부
+#[tauri::command]
+fn check_asio() -> bool {
+    audio::is_asio_available()
+}
+
+// Tauri 커맨드: 전체 오디오 정보
+#[tauri::command]
+fn get_audio_info() -> audio::AudioInfo {
+    audio::get_audio_info()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![
+            get_audio_devices,
+            get_audio_hosts,
+            check_asio,
+            get_audio_info
+        ])
         .setup(|app| {
             // 로깅 (디버그 모드)
             if cfg!(debug_assertions) {
@@ -59,9 +91,6 @@ pub fn run() {
                     let _ = window.eval("document.getElementById('muteBtn')?.click()");
                 }
             })?;
-
-            // 글로벌 단축키: Ctrl+Shift+P (PTT - 누르고 있는 동안)
-            // 참고: PTT는 웹에서 Space로 처리하므로 여기서는 토글만
 
             Ok(())
         })
