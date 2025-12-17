@@ -30,6 +30,16 @@ fn get_audio_info() -> audio::AudioInfo {
     audio::get_audio_info()
 }
 
+#[tauri::command]
+fn test_audio() -> Result<String, String> {
+    audio::test_audio_loopback()
+}
+
+#[tauri::command]
+fn get_sample_rates(device_name: Option<String>, is_input: bool) -> Vec<u32> {
+    audio::get_supported_sample_rates(device_name, is_input)
+}
+
 // ===== UDP 커맨드 =====
 
 #[tauri::command]
@@ -55,6 +65,8 @@ pub fn run() {
             get_audio_hosts,
             check_asio,
             get_audio_info,
+            test_audio,
+            get_sample_rates,
             // UDP
             udp_bind,
             get_packet_header_size,
