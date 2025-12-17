@@ -59,6 +59,10 @@ echo This may take 5-10 minutes on first build.
 echo.
 
 cd /d "%~dp0"
+
+REM CMake 4.x compatibility fix for audiopus_sys
+set CMAKE_POLICY_VERSION_MINIMUM=3.5
+
 cargo tauri build
 
 if %errorlevel% neq 0 (
