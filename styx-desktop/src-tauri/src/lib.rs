@@ -127,6 +127,7 @@ fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
         stream_state.is_running.clone(),
         stream_state.is_muted.clone(),
         stream_state.sequence.clone(),
+        stream_state.packets_sent.clone(),
     )?;
     
     // 수신 루프 시작
@@ -135,6 +136,7 @@ fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
         stream_state.is_running.clone(),
         stream_state.jitter_buffers.clone(),
         stream_state.playback_buffer.clone(),
+        stream_state.packets_received.clone(),
     )?;
     
     Ok(())

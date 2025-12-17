@@ -121,6 +121,7 @@ pub fn start_send_loop(
     is_running: Arc<AtomicBool>,
     is_muted: Arc<AtomicBool>,
     sequence: Arc<AtomicU32>,
+    packets_sent: Arc<AtomicU32>,
 ) -> Result<(), String> {
     let host = cpal::default_host();
     let device = host.default_input_device().ok_or("입력 장치 없음")?;
@@ -180,6 +181,7 @@ pub fn start_send_loop(
                     
                     for peer in &peers {
                         let _ = socket.send_to(&packet, peer).await;
+                        packets_sent.fetch_add(1, Ordering::Relaxed);
                     }
                 }
             }
@@ -195,6 +197,7 @@ pub fn start_recv_loop(
     is_running: Arc<AtomicBool>,
     jitter_buffers: Arc<Mutex<BTreeMap<SocketAddr, JitterBuffer>>>,
     playback_buffer: Arc<Mutex<Vec<f32>>>,
+    packets_received: Arc<AtomicU32>,
 ) -> Result<(), String> {
     let host = cpal::default_host();
     let device = host.default_output_device().ok_or("출력 장치 없음")?;
@@ -244,6 +247,8 @@ pub fn start_recv_loop(
                         None => continue,
                     };
                     let payload = &buf[AudioPacketHeader::SIZE..len];
+                    
+                    packets_received.fetch_add(1, Ordering::Relaxed);
                     
                     let decoder = decoders.entry(addr).or_insert_with(|| create_decoder().unwrap());
                     if let Ok(samples) = decode_frame(decoder, payload) {
