@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Styx - HADES 오디오</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 로그인 패널 -->
+    <div id="auth" class="panel">
+      <h1>🎵 Styx</h1>
+      <p class="subtitle">HADES 실시간 오디오 협업</p>
+      
+      <div id="auth-tabs">
+        <button class="tab active" data-tab="login">로그인</button>
+        <button class="tab" data-tab="signup">회원가입</button>
+      </div>
+
+      <div id="login-form" class="auth-form">
+        <input type="text" id="login-user" placeholder="사용자명">
+        <input type="password" id="login-pass" placeholder="비밀번호">
+        <button id="loginBtn">로그인</button>
+      </div>
+
+      <div id="signup-form" class="auth-form hidden">
+        <input type="text" id="signup-user" placeholder="사용자명">
+        <input type="password" id="signup-pass" placeholder="비밀번호">
+        <button id="signupBtn">가입 요청</button>
+      </div>
+
+      <div id="auth-msg"></div>
+    </div>
+
+    <!-- 로비 -->
+    <div id="lobby" class="panel hidden">
+      <div class="lobby-header">
+        <div class="user-info">
+          <div id="my-avatar" class="avatar"></div>
+          <span id="my-username"></span>
+        </div>
+        <div class="lobby-actions">
+          <label class="avatar-upload">📷<input type="file" id="avatar-input" accept="image/*"></label>
+          <button id="adminBtn" class="hidden">⚙️</button>
+          <button id="logoutBtn">로그아웃</button>
+        </div>
+      </div>
+
+      <!-- 오디오 장치 선택 -->
+      <div class="device-selector">
+        <label>🎤 오디오 입력:</label>
+        <select id="audio-device"></select>
+      </div>
+
+      <!-- 방 목록 -->
+      <div class="room-browser">
+        <h3>활성 방 목록</h3>
+        <div id="room-list"></div>
+      </div>
+
+      <div class="room-join">
+        <input type="text" id="room-input" placeholder="방 이름 입력...">
+        <button id="joinRoomBtn">입장</button>
+      </div>
+    </div>
+
+    <!-- 관리자 패널 -->
+    <div id="admin-panel" class="panel hidden">
+      <h2>가입 승인 대기</h2>
+      <div id="pending-list"></div>
+      <button id="closeAdminBtn">닫기</button>
+    </div>
+
+    <!-- 방 화면 -->
+    <div id="room-view" class="panel hidden">
+      <div class="room-header">
+        <h2>🎸 <span id="roomName"></span></h2>
+        <div class="room-controls">
+          <button id="muteBtn">🎤</button>
+          <button id="leaveBtn">나가기</button>
+        </div>
+      </div>
+
+      <div class="room-content">
+        <div class="users-section">
+          <div id="users-grid"></div>
+          <div id="my-card" class="user-card self">
+            <div class="card-avatar"></div>
+            <div class="card-info">
+              <span class="card-name">나</span>
+              <span class="card-latency">로컬</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-section">
+          <div id="chat-messages"></div>
+          <div class="chat-input">
+            <input type="text" id="chat-text" placeholder="메시지 입력...">
+            <button id="sendBtn">전송</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
