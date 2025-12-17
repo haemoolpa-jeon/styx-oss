@@ -3,7 +3,7 @@
 
 const socket = io({ reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 10 });
 const peers = new Map();
-const volumeStates = new Map(); // 볼륨 상태 유지
+const volumeStates = new Map();
 let localStream = null;
 let isMuted = false;
 let currentUser = null;
@@ -14,6 +14,7 @@ let analyser = null;
 let meterInterval = null;
 let metronomeInterval = null;
 let metronomeAudio = null;
+let sessionRestored = false;
 
 const rtcConfig = {
   iceServers: [
@@ -30,32 +31,50 @@ const roomView = $('room-view');
 const usersGrid = $('users-grid');
 const chatMessages = $('chat-messages');
 
-// 세션 복구 시도
-const savedUser = localStorage.getItem('styx-user');
-if (savedUser) {
-  socket.emit('restore-session', { username: savedUser }, res => {
-    if (res.success) {
-      currentUser = res.user;
-      showLobby();
-    } else {
-      localStorage.removeItem('styx-user');
-    }
-  });
-}
-
-// 소켓 재연결 처리
+// 소켓 연결 후 세션 복구 시도
 socket.on('connect', () => {
   console.log('서버 연결됨');
+  $('connection-status')?.classList.remove('offline');
+  
+  // 세션 복구 (최초 연결 시에만)
+  if (!sessionRestored) {
+    sessionRestored = true;
+    const savedUser = localStorage.getItem('styx-user');
+    const savedToken = localStorage.getItem('styx-token');
+    
+    if (savedUser && savedToken) {
+      socket.emit('restore-session', { username: savedUser, token: savedToken }, res => {
+        if (res.success) {
+          currentUser = res.user;
+          showLobby();
+        } else {
+          localStorage.removeItem('styx-user');
+          localStorage.removeItem('styx-token');
+        }
+      });
+    }
+  }
+  
+  // 방에 있었다면 재입장 시도
   if (currentUser && socket.room) {
-    // 방에 있었다면 재입장 시도
     socket.emit('join', { room: socket.room, username: currentUser.username }, res => {
-      if (res.error) location.reload();
+      if (res.error) {
+        alert('재연결 실패: ' + res.error);
+        leaveRoom();
+      }
     });
   }
 });
 
-socket.on('disconnect', () => console.log('서버 연결 끊김, 재연결 시도 중...'));
-socket.on('kicked', () => { alert('방에서 강퇴되었습니다'); location.reload(); });
+socket.on('disconnect', () => {
+  console.log('서버 연결 끊김');
+  $('connection-status')?.classList.add('offline');
+});
+
+socket.on('kicked', () => { 
+  alert('방에서 강퇴되었습니다'); 
+  leaveRoom();
+});
 
 // 로그인/회원가입 탭
 document.querySelectorAll('.tab').forEach(tab => {
@@ -67,7 +86,7 @@ document.querySelectorAll('.tab').forEach(tab => {
   };
 });
 
-// Enter 키 로그인
+// Enter 키
 $('login-user').onkeypress = $('login-pass').onkeypress = (e) => { if (e.key === 'Enter') $('loginBtn').click(); };
 $('signup-user').onkeypress = $('signup-pass').onkeypress = (e) => { if (e.key === 'Enter') $('signupBtn').click(); };
 $('room-input').onkeypress = (e) => { if (e.key === 'Enter') $('joinRoomBtn').click(); };
@@ -78,7 +97,9 @@ $('loginBtn').onclick = () => {
   const password = $('login-pass').value;
   if (!username || !password) return showAuthMsg('사용자명과 비밀번호를 입력하세요', true);
 
+  $('loginBtn').disabled = true;
   socket.emit('login', { username, password }, res => {
+    $('loginBtn').disabled = false;
     if (res.error) {
       const errorMsg = {
         'User not found': '사용자를 찾을 수 없습니다',
@@ -90,6 +111,7 @@ $('loginBtn').onclick = () => {
     }
     currentUser = res.user;
     localStorage.setItem('styx-user', username);
+    localStorage.setItem('styx-token', res.token);
     showLobby();
   });
 };
@@ -100,7 +122,9 @@ $('signupBtn').onclick = () => {
   const password = $('signup-pass').value;
   if (!username || !password) return showAuthMsg('사용자명과 비밀번호를 입력하세요', true);
 
+  $('signupBtn').disabled = true;
   socket.emit('signup', { username, password }, res => {
+    $('signupBtn').disabled = false;
     if (res.error) {
       const errorMsg = {
         'Username taken': '이미 사용 중인 사용자명입니다',
@@ -132,14 +156,15 @@ async function showLobby() {
 
 $('logoutBtn').onclick = () => {
   localStorage.removeItem('styx-user');
+  localStorage.removeItem('styx-token');
   location.reload();
 };
 
-// 오디오 장치 로드 (권한 요청 후 해제)
+// 오디오 장치 로드
 async function loadAudioDevices() {
   try {
     const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    tempStream.getTracks().forEach(t => t.stop()); // 즉시 해제
+    tempStream.getTracks().forEach(t => t.stop());
     
     const devices = await navigator.mediaDevices.enumerateDevices();
     const audioInputs = devices.filter(d => d.kind === 'audioinput');
@@ -197,7 +222,7 @@ $('avatar-input').onchange = (e) => {
   reader.readAsDataURL(file);
 };
 
-// 설정 패널 (비밀번호 변경)
+// 설정 패널
 $('settingsBtn').onclick = () => {
   $('settings-panel').classList.remove('hidden');
   lobby.classList.add('hidden');
@@ -215,9 +240,9 @@ $('changePasswordBtn').onclick = () => {
   
   socket.emit('change-password', { oldPassword: oldPw, newPassword: newPw }, res => {
     if (res.success) {
-      alert('비밀번호가 변경되었습니다');
-      $('old-password').value = '';
-      $('new-password').value = '';
+      alert('비밀번호가 변경되었습니다. 다시 로그인해주세요.');
+      localStorage.removeItem('styx-token');
+      location.reload();
     } else {
       alert(res.error === 'Wrong password' ? '현재 비밀번호가 틀렸습니다' : res.error);
     }
@@ -232,11 +257,10 @@ $('adminBtn').onclick = () => {
 };
 
 function loadAdminData() {
-  // 대기 중인 사용자
   socket.emit('get-pending', null, res => {
     const list = $('pending-list');
-    list.innerHTML = res.pending.length ? '' : '<p>대기 중인 요청이 없습니다</p>';
-    res.pending.forEach(username => {
+    list.innerHTML = res.pending?.length ? '' : '<p>대기 중인 요청이 없습니다</p>';
+    res.pending?.forEach(username => {
       const div = document.createElement('div');
       div.className = 'pending-user';
       div.innerHTML = `<span>${escapeHtml(username)}</span>
@@ -246,11 +270,10 @@ function loadAdminData() {
     });
   });
   
-  // 전체 사용자 목록
   socket.emit('get-users', null, res => {
     const list = $('users-list');
     list.innerHTML = '';
-    res.users.forEach(u => {
+    res.users?.forEach(u => {
       const div = document.createElement('div');
       div.className = 'user-item';
       div.innerHTML = `
@@ -302,7 +325,9 @@ window.joinRoom = async (roomName, hasPassword) => {
     return alert('마이크 접근이 거부되었습니다');
   }
 
+  $('joinRoomBtn').disabled = true;
   socket.emit('join', { room, username: currentUser.username, password: roomPassword }, res => {
+    $('joinRoomBtn').disabled = false;
     if (res.error) {
       localStream.getTracks().forEach(t => t.stop());
       const errorMsg = {
@@ -325,7 +350,6 @@ window.joinRoom = async (roomName, hasPassword) => {
     chatMessages.innerHTML = '';
     res.messages?.forEach(addChatMessage);
 
-    // 메트로놈 상태 복원
     if (res.metronome) {
       $('bpm-input').value = res.metronome.bpm;
       if (res.metronome.playing) startMetronome(res.metronome.bpm, res.metronome.startTime);
@@ -341,27 +365,36 @@ $('joinRoomBtn').onclick = () => joinRoom();
 
 // 오디오 레벨 미터
 function startAudioMeter() {
-  audioContext = new AudioContext();
-  analyser = audioContext.createAnalyser();
-  analyser.fftSize = 256;
-  
-  const source = audioContext.createMediaStreamSource(localStream);
-  source.connect(analyser);
-  
-  const dataArray = new Uint8Array(analyser.frequencyBinCount);
-  const meter = $('audio-meter');
-  
-  meterInterval = setInterval(() => {
-    analyser.getByteFrequencyData(dataArray);
-    const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
-    const level = Math.min(100, avg * 1.5);
-    meter.style.width = level + '%';
-    meter.style.background = level > 80 ? '#ff4757' : level > 50 ? '#ffa502' : '#2ed573';
-  }, 50);
+  try {
+    audioContext = new AudioContext();
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    
+    const source = audioContext.createMediaStreamSource(localStream);
+    source.connect(analyser);
+    
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    const meter = $('audio-meter');
+    
+    meterInterval = setInterval(() => {
+      analyser.getByteFrequencyData(dataArray);
+      const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+      const level = Math.min(100, avg * 1.5);
+      meter.style.width = level + '%';
+      meter.style.background = level > 80 ? '#ff4757' : level > 50 ? '#ffa502' : '#2ed573';
+    }, 50);
+  } catch (e) {
+    console.error('AudioContext 생성 실패:', e);
+  }
 }
 
 // 메트로놈
 $('metronome-toggle').onclick = () => {
+  // 사용자 상호작용으로 AudioContext 생성
+  if (!metronomeAudio) {
+    metronomeAudio = new AudioContext();
+  }
+  
   const bpm = parseInt($('bpm-input').value) || 120;
   const playing = !metronomeInterval;
   
@@ -398,7 +431,6 @@ function startMetronome(bpm, serverStartTime) {
   const interval = 60000 / bpm;
   const tick = $('metronome-tick');
   
-  // 서버 시작 시간에 동기화
   let delay = 0;
   if (serverStartTime) {
     const elapsed = Date.now() - serverStartTime;
@@ -407,19 +439,28 @@ function startMetronome(bpm, serverStartTime) {
   
   const playTick = () => {
     tick.classList.add('active');
-    // 클릭 사운드 (Web Audio)
-    if (!metronomeAudio) {
+    
+    // AudioContext가 없거나 suspended면 생성/resume
+    if (!metronomeAudio || metronomeAudio.state === 'closed') {
       metronomeAudio = new AudioContext();
     }
-    const osc = metronomeAudio.createOscillator();
-    const gain = metronomeAudio.createGain();
-    osc.connect(gain);
-    gain.connect(metronomeAudio.destination);
-    osc.frequency.value = 1000;
-    gain.gain.setValueAtTime(0.3, metronomeAudio.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, metronomeAudio.currentTime + 0.1);
-    osc.start();
-    osc.stop(metronomeAudio.currentTime + 0.1);
+    if (metronomeAudio.state === 'suspended') {
+      metronomeAudio.resume();
+    }
+    
+    try {
+      const osc = metronomeAudio.createOscillator();
+      const gain = metronomeAudio.createGain();
+      osc.connect(gain);
+      gain.connect(metronomeAudio.destination);
+      osc.frequency.value = 1000;
+      gain.gain.setValueAtTime(0.3, metronomeAudio.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, metronomeAudio.currentTime + 0.1);
+      osc.start();
+      osc.stop(metronomeAudio.currentTime + 0.1);
+    } catch (e) {
+      console.error('메트로놈 사운드 재생 실패:', e);
+    }
     
     setTimeout(() => tick.classList.remove('active'), 100);
   };
@@ -476,7 +517,6 @@ function createPeerConnection(peerId, username, avatar, initiator) {
   audioEl.autoplay = true;
   document.body.appendChild(audioEl);
 
-  // 이전 볼륨 상태 복원
   const savedVolume = volumeStates.get(peerId) ?? 100;
   audioEl.volume = savedVolume / 100;
 
@@ -493,11 +533,20 @@ function createPeerConnection(peerId, username, avatar, initiator) {
     if (e.candidate) socket.emit('ice-candidate', { to: peerId, candidate: e.candidate });
   };
 
-  pc.onconnectionstatechange = () => renderUsers();
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed') {
+      console.log(`연결 실패: ${username}, 재시도...`);
+      // 연결 실패 시 재시도
+      pc.restartIce();
+    }
+    renderUsers();
+  };
 
   if (initiator) {
-    pc.createOffer().then(offer => pc.setLocalDescription(offer))
-      .then(() => socket.emit('offer', { to: peerId, offer: pc.localDescription }));
+    pc.createOffer()
+      .then(offer => pc.setLocalDescription(offer))
+      .then(() => socket.emit('offer', { to: peerId, offer: pc.localDescription }))
+      .catch(e => console.error('Offer 생성 실패:', e));
   }
 
   renderUsers();
@@ -519,9 +568,9 @@ function renderUsers() {
         <span class="card-latency">${peer.latency ? peer.latency + 'ms' : (connected ? '측정중...' : state)}</span>
       </div>
       <div class="card-controls">
-        <input type="range" min="0" max="100" value="${peer.volume}" class="volume-slider" data-peer="${id}">
+        <input type="range" min="0" max="100" value="${peer.volume}" class="volume-slider">
         <span class="volume-label">${peer.volume}%</span>
-        ${currentUser?.isAdmin ? `<button class="kick-btn" onclick="kickUser('${id}')">강퇴</button>` : ''}
+        ${currentUser?.isAdmin ? `<button class="kick-btn" data-id="${id}">강퇴</button>` : ''}
       </div>
     `;
     
@@ -535,15 +584,18 @@ function renderUsers() {
       label.textContent = vol + '%';
     };
     
+    const kickBtn = card.querySelector('.kick-btn');
+    if (kickBtn) {
+      kickBtn.onclick = () => {
+        if (confirm('이 사용자를 강퇴하시겠습니까?')) {
+          socket.emit('kick-user', { socketId: id });
+        }
+      };
+    }
+    
     usersGrid.appendChild(card);
   });
 }
-
-window.kickUser = (socketId) => {
-  if (confirm('이 사용자를 강퇴하시겠습니까?')) {
-    socket.emit('kick-user', { socketId });
-  }
-};
 
 function startLatencyPing() {
   if (latencyInterval) clearInterval(latencyInterval);
@@ -557,7 +609,7 @@ function startLatencyPing() {
             }
           });
           renderUsers();
-        });
+        }).catch(() => {});
       }
     });
   }, 2000);
@@ -567,25 +619,37 @@ function startLatencyPing() {
 socket.on('user-joined', ({ id, username, avatar }) => createPeerConnection(id, username, avatar, true));
 
 socket.on('offer', async ({ from, offer }) => {
-  let peer = peers.get(from);
-  if (!peer) {
-    createPeerConnection(from, '사용자', null, false);
-    peer = peers.get(from);
+  try {
+    let peer = peers.get(from);
+    if (!peer) {
+      createPeerConnection(from, '사용자', null, false);
+      peer = peers.get(from);
+    }
+    await peer.pc.setRemoteDescription(offer);
+    const answer = await peer.pc.createAnswer();
+    await peer.pc.setLocalDescription(answer);
+    socket.emit('answer', { to: from, answer });
+  } catch (e) {
+    console.error('Offer 처리 실패:', e);
   }
-  await peer.pc.setRemoteDescription(offer);
-  const answer = await peer.pc.createAnswer();
-  await peer.pc.setLocalDescription(answer);
-  socket.emit('answer', { to: from, answer });
 });
 
 socket.on('answer', async ({ from, answer }) => {
-  const peer = peers.get(from);
-  if (peer) await peer.pc.setRemoteDescription(answer);
+  try {
+    const peer = peers.get(from);
+    if (peer) await peer.pc.setRemoteDescription(answer);
+  } catch (e) {
+    console.error('Answer 처리 실패:', e);
+  }
 });
 
 socket.on('ice-candidate', async ({ from, candidate }) => {
-  const peer = peers.get(from);
-  if (peer) await peer.pc.addIceCandidate(candidate);
+  try {
+    const peer = peers.get(from);
+    if (peer && candidate) await peer.pc.addIceCandidate(candidate);
+  } catch (e) {
+    console.error('ICE 후보 추가 실패:', e);
+  }
 });
 
 socket.on('user-left', ({ id }) => {
@@ -609,7 +673,7 @@ socket.on('user-updated', ({ id, avatar }) => {
 // 음소거
 $('muteBtn').onclick = () => {
   isMuted = !isMuted;
-  localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+  localStream?.getAudioTracks().forEach(t => t.enabled = !isMuted);
   $('muteBtn').textContent = isMuted ? '🔇' : '🎤';
   $('muteBtn').classList.toggle('muted', isMuted);
 };
@@ -621,16 +685,19 @@ $('leaveBtn').onclick = () => {
 };
 
 function leaveRoom() {
-  // 인터벌 정리
   if (latencyInterval) { clearInterval(latencyInterval); latencyInterval = null; }
   if (meterInterval) { clearInterval(meterInterval); meterInterval = null; }
   stopMetronome();
   
-  // 오디오 컨텍스트 정리
-  if (audioContext) { audioContext.close(); audioContext = null; }
-  if (metronomeAudio) { metronomeAudio.close(); metronomeAudio = null; }
+  if (audioContext) { 
+    try { audioContext.close(); } catch {} 
+    audioContext = null; 
+  }
+  if (metronomeAudio) { 
+    try { metronomeAudio.close(); } catch {} 
+    metronomeAudio = null; 
+  }
   
-  // P2P 연결 정리
   peers.forEach(peer => {
     peer.pc.close();
     peer.audioEl.remove();
@@ -638,7 +705,6 @@ function leaveRoom() {
   peers.clear();
   volumeStates.clear();
   
-  // 로컬 스트림 정리
   localStream?.getTracks().forEach(t => t.stop());
   localStream = null;
   

@@ -20,6 +20,14 @@ const SALT_ROUNDS = 10;
 
 if (!fs.existsSync(AVATARS_DIR)) fs.mkdirSync(AVATARS_DIR, { recursive: true });
 
+// 파일 잠금을 위한 간단한 뮤텍스
+let fileLock = false;
+const withLock = async (fn) => {
+  while (fileLock) await new Promise(r => setTimeout(r, 10));
+  fileLock = true;
+  try { return await fn(); } finally { fileLock = false; }
+};
+
 const loadUsers = () => JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
 const saveUsers = (data) => fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
 
@@ -28,10 +36,14 @@ const validateUsername = (u) => typeof u === 'string' && u.length >= 2 && u.leng
 const validatePassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 50;
 const sanitize = (s) => String(s).replace(/[<>"'&]/g, '');
 
+// 세션 토큰 생성/검증
+const sessions = new Map(); // username -> { token, expires }
+const generateToken = () => require('crypto').randomBytes(32).toString('hex');
+
 app.use(express.static(path.join(__dirname, '../client')));
 app.use('/avatars', express.static(AVATARS_DIR));
 
-// 방 상태: { roomId: { users: Map, messages: [], password: string|null, metronome: { bpm, playing, startTime } } }
+// 방 상태
 const rooms = new Map();
 
 const broadcastRoomList = () => {
@@ -50,7 +62,7 @@ const broadcastRoomList = () => {
 io.on('connection', (socket) => {
   console.log(`연결됨: ${socket.id}`);
   
-  // 로그인 시 isAdmin 설정 (방 입장 전에도 관리자 기능 사용 가능)
+  // 로그인
   socket.on('login', async ({ username, password }, cb) => {
     if (!validateUsername(username)) return cb({ error: 'Invalid username' });
     
@@ -63,21 +75,34 @@ io.on('connection', (socket) => {
     if (!valid) return cb({ error: 'Wrong password' });
     if (!user.approved) return cb({ error: 'Account pending approval' });
     
-    // 로그인 시점에 관리자 권한 설정
     socket.username = username;
     socket.isAdmin = user.isAdmin;
     
-    cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar } });
+    // 세션 토큰 생성
+    const token = generateToken();
+    sessions.set(username, { token, expires: Date.now() + 7 * 24 * 60 * 60 * 1000 }); // 7일
+    
+    cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar }, token });
   });
 
-  // 세션 복구 (localStorage 토큰)
-  socket.on('restore-session', ({ username }, cb) => {
+  // 세션 복구 (토큰 검증)
+  socket.on('restore-session', ({ username, token }, cb) => {
+    const session = sessions.get(username);
+    if (!session || session.token !== token || session.expires < Date.now()) {
+      sessions.delete(username);
+      return cb({ error: 'Invalid session' });
+    }
+    
     const data = loadUsers();
     const user = data.users[username];
     if (!user || !user.approved) return cb({ error: 'Invalid session' });
     
     socket.username = username;
     socket.isAdmin = user.isAdmin;
+    
+    // 토큰 갱신
+    session.expires = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    
     cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar } });
   });
 
@@ -85,15 +110,17 @@ io.on('connection', (socket) => {
     if (!validateUsername(username)) return cb({ error: 'Invalid username (2-20자, 영문/숫자/한글/_)' });
     if (!validatePassword(password)) return cb({ error: 'Invalid password (4-50자)' });
     
-    const data = loadUsers();
-    if (data.users[username] || data.pending[username]) {
-      return cb({ error: 'Username taken' });
-    }
-    
-    const hash = await bcrypt.hash(password, SALT_ROUNDS);
-    data.pending[username] = { password: hash, requestedAt: new Date().toISOString() };
-    saveUsers(data);
-    cb({ success: true, message: '가입 요청 완료' });
+    await withLock(async () => {
+      const data = loadUsers();
+      if (data.users[username] || data.pending[username]) {
+        return cb({ error: 'Username taken' });
+      }
+      
+      const hash = await bcrypt.hash(password, SALT_ROUNDS);
+      data.pending[username] = { password: hash, requestedAt: new Date().toISOString() };
+      saveUsers(data);
+      cb({ success: true, message: '가입 요청 완료' });
+    });
   });
 
   // 비밀번호 변경
@@ -101,15 +128,21 @@ io.on('connection', (socket) => {
     if (!socket.username) return cb({ error: 'Not logged in' });
     if (!validatePassword(newPassword)) return cb({ error: 'Invalid new password' });
     
-    const data = loadUsers();
-    const user = data.users[socket.username];
-    
-    const valid = await bcrypt.compare(oldPassword, user.password);
-    if (!valid) return cb({ error: 'Wrong password' });
-    
-    user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
-    saveUsers(data);
-    cb({ success: true });
+    await withLock(async () => {
+      const data = loadUsers();
+      const user = data.users[socket.username];
+      
+      const valid = await bcrypt.compare(oldPassword, user.password);
+      if (!valid) return cb({ error: 'Wrong password' });
+      
+      user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
+      saveUsers(data);
+      
+      // 기존 세션 무효화
+      sessions.delete(socket.username);
+      
+      cb({ success: true });
+    });
   });
 
   // 관리자: 대기 중인 사용자
@@ -130,59 +163,72 @@ io.on('connection', (socket) => {
   });
 
   // 관리자: 사용자 승인
-  socket.on('approve-user', ({ username }, cb) => {
+  socket.on('approve-user', async ({ username }, cb) => {
     if (!socket.isAdmin) return cb({ error: 'Not admin' });
-    const data = loadUsers();
-    if (!data.pending[username]) return cb({ error: 'No pending request' });
     
-    data.users[username] = {
-      password: data.pending[username].password,
-      approved: true,
-      isAdmin: false,
-      avatar: null,
-      createdAt: new Date().toISOString()
-    };
-    delete data.pending[username];
-    saveUsers(data);
-    cb({ success: true });
+    await withLock(async () => {
+      const data = loadUsers();
+      if (!data.pending[username]) return cb({ error: 'No pending request' });
+      
+      data.users[username] = {
+        password: data.pending[username].password,
+        approved: true,
+        isAdmin: false,
+        avatar: null,
+        createdAt: new Date().toISOString()
+      };
+      delete data.pending[username];
+      saveUsers(data);
+      cb({ success: true });
+    });
   });
 
   // 관리자: 사용자 거절
-  socket.on('reject-user', ({ username }, cb) => {
+  socket.on('reject-user', async ({ username }, cb) => {
     if (!socket.isAdmin) return cb({ error: 'Not admin' });
-    const data = loadUsers();
-    delete data.pending[username];
-    saveUsers(data);
-    cb({ success: true });
+    
+    await withLock(async () => {
+      const data = loadUsers();
+      delete data.pending[username];
+      saveUsers(data);
+      cb({ success: true });
+    });
   });
 
   // 관리자: 사용자 삭제
-  socket.on('delete-user', ({ username }, cb) => {
+  socket.on('delete-user', async ({ username }, cb) => {
     if (!socket.isAdmin) return cb({ error: 'Not admin' });
     if (username === socket.username) return cb({ error: 'Cannot delete yourself' });
     
-    const data = loadUsers();
-    if (!data.users[username]) return cb({ error: 'User not found' });
-    
-    delete data.users[username];
-    saveUsers(data);
-    
-    // 아바타 파일 삭제
-    const avatarPath = path.join(AVATARS_DIR, `${username}.*`);
-    try { fs.unlinkSync(avatarPath); } catch {}
-    
-    cb({ success: true });
+    await withLock(async () => {
+      const data = loadUsers();
+      if (!data.users[username]) return cb({ error: 'User not found' });
+      
+      delete data.users[username];
+      saveUsers(data);
+      sessions.delete(username);
+      
+      // 아바타 파일 삭제 (확장자 찾기)
+      try {
+        const files = fs.readdirSync(AVATARS_DIR);
+        const avatarFile = files.find(f => f.startsWith(username + '.'));
+        if (avatarFile) fs.unlinkSync(path.join(AVATARS_DIR, avatarFile));
+      } catch {}
+      
+      cb({ success: true });
+    });
   });
 
   // 관리자: 방에서 강퇴
-  socket.on('kick-user', ({ odId }, cb) => {
+  socket.on('kick-user', ({ socketId }, cb) => {
     if (!socket.isAdmin) return cb({ error: 'Not admin' });
+    if (!socketId) return cb({ error: 'Invalid socket ID' });
     io.to(socketId).emit('kicked');
     cb({ success: true });
   });
 
   // 아바타 업로드
-  socket.on('upload-avatar', ({ username, avatarData }, cb) => {
+  socket.on('upload-avatar', async ({ username, avatarData }, cb) => {
     if (!socket.username || socket.username !== username) return cb({ error: 'Unauthorized' });
     
     const match = avatarData.match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/);
@@ -191,17 +237,28 @@ io.on('connection', (socket) => {
     const buffer = Buffer.from(match[2], 'base64');
     if (buffer.length > 2 * 1024 * 1024) return cb({ error: 'Image too large (max 2MB)' });
     
-    const filename = `${username}.${match[1]}`;
+    const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+    const filename = `${username}.${ext}`;
+    
+    // 기존 아바타 삭제
+    try {
+      const files = fs.readdirSync(AVATARS_DIR);
+      const oldAvatar = files.find(f => f.startsWith(username + '.') && f !== filename);
+      if (oldAvatar) fs.unlinkSync(path.join(AVATARS_DIR, oldAvatar));
+    } catch {}
+    
     fs.writeFileSync(path.join(AVATARS_DIR, filename), buffer);
     
-    const data = loadUsers();
-    data.users[username].avatar = `/avatars/${filename}?t=${Date.now()}`;
-    saveUsers(data);
-    
-    if (socket.room) {
-      socket.to(socket.room).emit('user-updated', { id: socket.id, avatar: data.users[username].avatar });
-    }
-    cb({ success: true, avatar: data.users[username].avatar });
+    await withLock(async () => {
+      const data = loadUsers();
+      data.users[username].avatar = `/avatars/${filename}?t=${Date.now()}`;
+      saveUsers(data);
+      
+      if (socket.room) {
+        socket.to(socket.room).emit('user-updated', { id: socket.id, avatar: data.users[username].avatar });
+      }
+      cb({ success: true, avatar: data.users[username].avatar });
+    });
   });
 
   socket.on('get-rooms', (_, cb) => {
@@ -217,7 +274,7 @@ io.on('connection', (socket) => {
     cb(list);
   });
 
-  // 방 입장 (비밀번호 지원)
+  // 방 입장
   socket.on('join', ({ room, username, password: roomPassword }, cb) => {
     const data = loadUsers();
     const user = data.users[username];
@@ -236,7 +293,6 @@ io.on('connection', (socket) => {
     }
     const roomData = rooms.get(room);
     
-    // 비밀번호 확인
     if (roomData.password && roomData.users.size > 0 && roomData.password !== roomPassword) {
       return cb({ error: 'Wrong room password' });
     }
