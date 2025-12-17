@@ -1,13 +1,20 @@
 mod audio;
 mod udp;
 mod stream;
+mod peer;
 
+use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Manager, State,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+
+// 앱 상태
+struct AppState {
+    udp_port: Mutex<Option<u16>>,
+}
 
 // ===== 오디오 커맨드 =====
 
@@ -44,8 +51,9 @@ fn get_sample_rates(device_name: Option<String>, is_input: bool) -> Vec<u32> {
 // ===== UDP 커맨드 =====
 
 #[tauri::command]
-async fn udp_bind(port: u16) -> Result<u16, String> {
+async fn udp_bind(port: u16, state: State<'_, AppState>) -> Result<u16, String> {
     let (_, local_port) = udp::bind_udp_socket(port).await?;
+    *state.udp_port.lock().unwrap() = Some(local_port);
     Ok(local_port)
 }
 
@@ -54,12 +62,20 @@ fn get_packet_header_size() -> usize {
     udp::AudioPacketHeader::SIZE
 }
 
+#[tauri::command]
+fn get_udp_port(state: State<'_, AppState>) -> Option<u16> {
+    *state.udp_port.lock().unwrap()
+}
+
 // ===== 앱 실행 =====
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .manage(AppState {
+            udp_port: Mutex::new(None),
+        })
         .invoke_handler(tauri::generate_handler![
             // 오디오
             get_audio_devices,
@@ -71,6 +87,7 @@ pub fn run() {
             // UDP
             udp_bind,
             get_packet_header_size,
+            get_udp_port,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
