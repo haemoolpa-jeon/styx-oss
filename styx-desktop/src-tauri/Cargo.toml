@@ -24,12 +24,9 @@ tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
 
 # 오디오 처리
-cpal = { version = "0.15", features = ["asio"] }
+cpal = "0.15"
 ringbuf = "0.4"
 opus = "0.3"
 
 # UDP 네트워킹
 tokio = { version = "1", features = ["net", "rt-multi-thread", "sync", "macros", "time"] }
-
-[target.'cfg(windows)'.dependencies]
-asio-sys = "0.2"
