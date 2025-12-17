@@ -1,5 +1,5 @@
 // Styx 클라이언트 - HADES 실시간 오디오 협업
-// WebRTC P2P 오디오 + 메트로놈 + 오디오 레벨 미터
+// WebRTC P2P 오디오 + 안정성 중심 설계
 
 const socket = io({ reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 10 });
 const peers = new Map();
@@ -10,6 +10,7 @@ let currentUser = null;
 let selectedDeviceId = null;
 let selectedOutputId = null;
 let latencyInterval = null;
+let statsInterval = null;
 let audioContext = null;
 let analyser = null;
 let meterInterval = null;
@@ -20,6 +21,11 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
 
+// 안정성 설정
+let audioMode = localStorage.getItem('styx-audio-mode') || 'voice'; // voice | music
+let jitterBuffer = parseInt(localStorage.getItem('styx-jitter-buffer')) || 100; // ms
+let autoAdapt = localStorage.getItem('styx-auto-adapt') !== 'false';
+
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -27,7 +33,20 @@ const rtcConfig = {
   ]
 };
 
+// 오디오 모드별 설정
+const audioModes = {
+  voice: { bitrate: 32000, stereo: false, fec: true, dtx: true, name: '음성' },
+  music: { bitrate: 128000, stereo: true, fec: true, dtx: false, name: '악기' }
+};
+
 const $ = id => document.getElementById(id);
+
+// 연결 품질 등급
+function getQualityGrade(latency, packetLoss, jitter) {
+  if (packetLoss > 5 || latency > 200 || jitter > 50) return { grade: 'poor', label: '불안정', color: '#ff4757' };
+  if (packetLoss > 2 || latency > 100 || jitter > 30) return { grade: 'fair', label: '보통', color: '#ffa502' };
+  return { grade: 'good', label: '좋음', color: '#2ed573' };
+}
 
 // 토스트 메시지
 function toast(message, type = 'info', duration = 3000) {
@@ -64,6 +83,32 @@ function updateThemeIcon() {
 }
 
 initTheme();
+
+// 오디오 설정 적용 (Opus 코덱)
+async function applyAudioSettings(pc) {
+  const senders = pc.getSenders();
+  const audioSender = senders.find(s => s.track?.kind === 'audio');
+  if (!audioSender) return;
+
+  const params = audioSender.getParameters();
+  if (!params.encodings || !params.encodings.length) {
+    params.encodings = [{}];
+  }
+
+  const mode = audioModes[audioMode];
+  params.encodings[0].maxBitrate = mode.bitrate;
+  
+  try {
+    await audioSender.setParameters(params);
+  } catch (e) {
+    console.warn('오디오 파라미터 설정 실패:', e);
+  }
+}
+
+// 모든 피어에 오디오 설정 적용
+function applyAudioSettingsToAll() {
+  peers.forEach(peer => applyAudioSettings(peer.pc));
+}
 
 // ===== 사운드 알림 =====
 let notifyAudio = null;
@@ -322,7 +367,50 @@ async function showLobby() {
   
   await loadAudioDevices();
   loadRoomList();
+  initStabilitySettings();
+}
+
+// 안정성 설정 초기화
+function initStabilitySettings() {
+  // 오디오 모드
+  updateModeButtons();
   
+  // 지터 버퍼 슬라이더
+  const slider = $('jitter-slider');
+  const valueLabel = $('jitter-value');
+  if (slider) {
+    slider.value = jitterBuffer;
+    valueLabel.textContent = jitterBuffer + 'ms';
+    slider.oninput = () => {
+      jitterBuffer = parseInt(slider.value);
+      valueLabel.textContent = jitterBuffer + 'ms';
+      localStorage.setItem('styx-jitter-buffer', jitterBuffer);
+    };
+  }
+  
+  // 자동 적응
+  const autoCheck = $('auto-adapt');
+  if (autoCheck) {
+    autoCheck.checked = autoAdapt;
+    autoCheck.onchange = () => {
+      autoAdapt = autoCheck.checked;
+      localStorage.setItem('styx-auto-adapt', autoAdapt);
+    };
+  }
+}
+
+// 오디오 모드 설정
+window.setAudioMode = (mode) => {
+  audioMode = mode;
+  localStorage.setItem('styx-audio-mode', mode);
+  updateModeButtons();
+  applyAudioSettingsToAll();
+  toast(`${audioModes[mode].name} 모드로 변경됨`, 'info');
+};
+
+function updateModeButtons() {
+  $('voiceModeBtn')?.classList.toggle('active', audioMode === 'voice');
+  $('musicModeBtn')?.classList.toggle('active', audioMode === 'music');
 }
 
 $('logoutBtn').onclick = () => {
@@ -725,12 +813,21 @@ function createPeerConnection(peerId, username, avatar, initiator) {
   const savedVolume = volumeStates.get(peerId) ?? 100;
   audioEl.volume = savedVolume / 100;
 
-  peers.set(peerId, { pc, username, avatar, audioEl, latency: null, volume: savedVolume });
+  peers.set(peerId, { 
+    pc, username, avatar, audioEl, 
+    latency: null, volume: savedVolume,
+    packetLoss: 0, jitter: 0, bitrate: 0,
+    quality: { grade: 'good', label: '연결중', color: '#ffa502' }
+  });
 
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
   pc.ontrack = (e) => {
     audioEl.srcObject = e.streams[0];
+    // 지터 버퍼 힌트 설정 (지원되는 경우)
+    if (audioEl.playsInline !== undefined) {
+      audioEl.playsInline = true;
+    }
     renderUsers();
   };
 
@@ -739,9 +836,11 @@ function createPeerConnection(peerId, username, avatar, initiator) {
   };
 
   pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'connected') {
+      applyAudioSettings(pc);
+    }
     if (pc.connectionState === 'failed') {
       console.log(`연결 실패: ${username}, 재시도...`);
-      // 연결 실패 시 재시도
       pc.restartIce();
     }
     renderUsers();
@@ -763,6 +862,7 @@ function renderUsers() {
   peers.forEach((peer, id) => {
     const state = peer.pc.connectionState;
     const connected = state === 'connected';
+    const q = peer.quality;
     
     const card = document.createElement('div');
     card.className = `user-card ${connected ? 'connected' : 'connecting'}`;
@@ -770,7 +870,11 @@ function renderUsers() {
       <div class="card-avatar" style="background-image: ${peer.avatar ? `url(${peer.avatar})` : 'none'}"></div>
       <div class="card-info">
         <span class="card-name">${escapeHtml(peer.username)}</span>
-        <span class="card-latency">${peer.latency ? peer.latency + 'ms' : (connected ? '측정중...' : state)}</span>
+        <div class="card-stats">
+          <span class="quality-badge" style="background:${q.color}">${q.label}</span>
+          <span class="stat">${peer.latency ? peer.latency + 'ms' : '--'}</span>
+          <span class="stat">${peer.packetLoss.toFixed(1)}% 손실</span>
+        </div>
       </div>
       <div class="card-controls">
         <input type="range" min="0" max="100" value="${peer.volume}" class="volume-slider">
@@ -804,19 +908,52 @@ function renderUsers() {
 
 function startLatencyPing() {
   if (latencyInterval) clearInterval(latencyInterval);
-  latencyInterval = setInterval(() => {
-    peers.forEach((peer) => {
-      if (peer.pc.connectionState === 'connected') {
-        peer.pc.getStats().then(stats => {
-          stats.forEach(report => {
-            if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime) {
-              peer.latency = Math.round(report.currentRoundTripTime * 1000);
+  if (statsInterval) clearInterval(statsInterval);
+  
+  // 상세 통계 수집 (2초마다)
+  statsInterval = setInterval(async () => {
+    for (const [id, peer] of peers) {
+      if (peer.pc.connectionState !== 'connected') continue;
+      
+      try {
+        const stats = await peer.pc.getStats();
+        let packetsLost = 0, packetsReceived = 0, jitter = 0, rtt = 0;
+        
+        stats.forEach(report => {
+          if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+            packetsLost = report.packetsLost || 0;
+            packetsReceived = report.packetsReceived || 0;
+            jitter = (report.jitter || 0) * 1000; // ms로 변환
+          }
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            rtt = (report.currentRoundTripTime || 0) * 1000;
+          }
+        });
+        
+        const totalPackets = packetsLost + packetsReceived;
+        const lossRate = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
+        
+        peer.latency = Math.round(rtt);
+        peer.packetLoss = lossRate;
+        peer.jitter = jitter;
+        peer.quality = getQualityGrade(rtt, lossRate, jitter);
+        
+        // 자동 적응: 패킷 손실 높으면 비트레이트 낮춤
+        if (autoAdapt && lossRate > 3) {
+          const sender = peer.pc.getSenders().find(s => s.track?.kind === 'audio');
+          if (sender) {
+            const params = sender.getParameters();
+            if (params.encodings?.[0]) {
+              const currentBitrate = params.encodings[0].maxBitrate || audioModes[audioMode].bitrate;
+              const newBitrate = Math.max(16000, currentBitrate * 0.8);
+              params.encodings[0].maxBitrate = newBitrate;
+              sender.setParameters(params).catch(() => {});
             }
-          });
-          renderUsers();
-        }).catch(() => {});
-      }
-    });
+          }
+        }
+      } catch (e) {}
+    }
+    renderUsers();
   }, 2000);
 }
 
@@ -901,6 +1038,7 @@ function leaveRoom() {
   socket.emit('leave-room');
   
   if (latencyInterval) { clearInterval(latencyInterval); latencyInterval = null; }
+  if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
   if (meterInterval) { clearInterval(meterInterval); meterInterval = null; }
   stopMetronome();
   stopRecording();
