@@ -4,6 +4,7 @@ mod stream;
 mod peer;
 
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
@@ -14,6 +15,7 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut}
 // 앱 상태
 struct AppState {
     udp_port: Mutex<Option<u16>>,
+    udp_stream: Mutex<peer::UdpStreamState>,
 }
 
 // ===== 오디오 커맨드 =====
@@ -52,8 +54,9 @@ fn get_sample_rates(device_name: Option<String>, is_input: bool) -> Vec<u32> {
 
 #[tauri::command]
 async fn udp_bind(port: u16, state: State<'_, AppState>) -> Result<u16, String> {
-    let (_, local_port) = udp::bind_udp_socket(port).await?;
+    let (socket, local_port) = udp::bind_udp_socket(port).await?;
     *state.udp_port.lock().unwrap() = Some(local_port);
+    state.udp_stream.lock().unwrap().socket = Some(std::sync::Arc::new(socket));
     Ok(local_port)
 }
 
@@ -67,6 +70,28 @@ fn get_udp_port(state: State<'_, AppState>) -> Option<u16> {
     *state.udp_port.lock().unwrap()
 }
 
+#[tauri::command]
+fn udp_add_peer(addr: String, state: State<'_, AppState>) -> Result<(), String> {
+    let socket_addr: std::net::SocketAddr = addr.parse().map_err(|e| format!("주소 파싱 실패: {}", e))?;
+    state.udp_stream.lock().unwrap().peers.push(socket_addr);
+    Ok(())
+}
+
+#[tauri::command]
+fn udp_set_muted(muted: bool, state: State<'_, AppState>) {
+    state.udp_stream.lock().unwrap().is_muted.store(muted, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn udp_is_running(state: State<'_, AppState>) -> bool {
+    state.udp_stream.lock().unwrap().is_running.load(Ordering::SeqCst)
+}
+
+#[tauri::command]
+fn udp_clear_peers(state: State<'_, AppState>) {
+    state.udp_stream.lock().unwrap().peers.clear();
+}
+
 // ===== 앱 실행 =====
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -75,6 +100,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState {
             udp_port: Mutex::new(None),
+            udp_stream: Mutex::new(peer::UdpStreamState::default()),
         })
         .invoke_handler(tauri::generate_handler![
             // 오디오
@@ -88,6 +114,10 @@ pub fn run() {
             udp_bind,
             get_packet_header_size,
             get_udp_port,
+            udp_add_peer,
+            udp_set_muted,
+            udp_is_running,
+            udp_clear_peers,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

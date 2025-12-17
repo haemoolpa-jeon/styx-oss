@@ -782,15 +782,48 @@ async function startUdpMode() {
 
 // UDP 피어 정보 수신 핸들러
 function setupUdpHandlers() {
-  socket.on('udp-peer-info', ({ id, port, publicIp, username }) => {
+  socket.on('udp-peer-info', async ({ id, port, publicIp, username }) => {
     udpPeers.set(id, { port, publicIp, username });
     console.log(`UDP 피어 추가: ${username} (${publicIp}:${port})`);
+    // Tauri에 피어 추가
+    if (tauriInvoke && publicIp && port) {
+      try {
+        await tauriInvoke('udp_add_peer', { addr: `${publicIp}:${port}` });
+      } catch (e) { console.error('피어 추가 실패:', e); }
+    }
   });
   
-  socket.on('udp-peers', (peers) => {
-    peers.forEach(p => udpPeers.set(p.id, { port: p.port, publicIp: p.publicIp, username: p.username }));
+  socket.on('udp-peers', async (peers) => {
+    for (const p of peers) {
+      udpPeers.set(p.id, { port: p.port, publicIp: p.publicIp, username: p.username });
+      if (tauriInvoke && p.publicIp && p.port) {
+        try {
+          await tauriInvoke('udp_add_peer', { addr: `${p.publicIp}:${p.port}` });
+        } catch (e) { console.error('피어 추가 실패:', e); }
+      }
+    }
     console.log('UDP 피어 목록:', udpPeers.size);
   });
+}
+
+// UDP 음소거 연동
+async function setUdpMuted(muted) {
+  if (tauriInvoke && connectionMode === 'udp') {
+    try {
+      await tauriInvoke('udp_set_muted', { muted });
+    } catch (e) { console.error('UDP 음소거 설정 실패:', e); }
+  }
+}
+
+// 방 퇴장 시 UDP 정리
+async function cleanupUdp() {
+  if (tauriInvoke) {
+    try {
+      await tauriInvoke('udp_clear_peers');
+    } catch (e) { console.error('UDP 정리 실패:', e); }
+  }
+  udpPeers.clear();
+  udpPort = null;
 }
 
 // 오디오 모드 설정
@@ -1603,6 +1636,7 @@ $('muteBtn').onclick = () => {
   localStream?.getAudioTracks().forEach(t => t.enabled = !isMuted);
   $('muteBtn').textContent = isMuted ? '🔇' : '🎤';
   $('muteBtn').classList.toggle('muted', isMuted);
+  setUdpMuted(isMuted);
 };
 
 // 방 나가기
@@ -1645,6 +1679,9 @@ function leaveRoom() {
   
   localStream?.getTracks().forEach(t => t.stop());
   localStream = null;
+  
+  // UDP 정리
+  cleanupUdp();
   
   socket.room = null;
   lastRoom = null;
