@@ -65,6 +65,16 @@
 
       <!-- 안정성 설정 -->
       <div class="stability-settings">
+        <!-- 연결 모드 선택 (Tauri 앱에서만 표시) -->
+        <div class="setting-row" id="connection-mode-row" style="display:none;">
+          <label>🔌 연결 모드</label>
+          <div class="mode-toggle">
+            <button id="webrtcModeBtn" class="mode-btn active" onclick="setConnectionMode('webrtc')">🌐 WebRTC</button>
+            <button id="udpModeBtn" class="mode-btn" onclick="setConnectionMode('udp')">⚡ Custom UDP</button>
+          </div>
+          <span class="hint" id="connection-mode-hint">WebRTC: 호환성 좋음 | UDP: 저지연 (데스크톱 앱 전용)</span>
+        </div>
+        
         <div class="setting-row">
           <label>🎵 오디오 모드</label>
           <div class="mode-toggle">
@@ -225,6 +235,10 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // 서버 URL (웹 버전은 같은 서버)
+    window.STYX_SERVER_URL = '';
+  </script>
   <script src="app.js"></script>
 </body>
 </html>

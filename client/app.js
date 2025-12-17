@@ -1,7 +1,8 @@
 // Styx 클라이언트 - HADES 실시간 오디오 협업
 // WebRTC P2P 오디오 + 안정성 중심 설계
 
-const socket = io({ reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 10 });
+const serverUrl = window.STYX_SERVER_URL || '';
+const socket = io(serverUrl, { reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 10 });
 const peers = new Map();
 const volumeStates = new Map();
 let localStream = null;
@@ -20,6 +21,16 @@ let sessionRestored = false;
 let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
+
+// Tauri 감지
+const isTauri = window.__TAURI__ !== undefined;
+let tauriInvoke = null;
+if (isTauri) {
+  tauriInvoke = window.__TAURI__.core.invoke;
+}
+
+// 연결 모드: 'webrtc' | 'udp'
+let connectionMode = localStorage.getItem('styx-connection-mode') || 'webrtc';
 
 // 안정성 설정
 let audioMode = localStorage.getItem('styx-audio-mode') || 'voice'; // voice | music
@@ -609,6 +620,14 @@ async function showLobby() {
 
 // 안정성 설정 초기화
 function initStabilitySettings() {
+  // Tauri 앱이면 연결 모드 선택 표시
+  if (isTauri) {
+    const modeRow = $('connection-mode-row');
+    if (modeRow) modeRow.style.display = 'flex';
+    updateConnectionModeButtons();
+    initTauriFeatures();
+  }
+  
   // 오디오 모드
   updateModeButtons();
   
@@ -697,6 +716,39 @@ function initStabilitySettings() {
       testBtn.disabled = false;
       testBtn.textContent = '🔍 연결 테스트';
     };
+  }
+}
+
+// 연결 모드 설정
+window.setConnectionMode = (mode) => {
+  connectionMode = mode;
+  localStorage.setItem('styx-connection-mode', mode);
+  updateConnectionModeButtons();
+  const modeNames = { webrtc: 'WebRTC', udp: 'Custom UDP' };
+  toast(`${modeNames[mode]} 모드로 변경됨`, 'info');
+};
+
+function updateConnectionModeButtons() {
+  $('webrtcModeBtn')?.classList.toggle('active', connectionMode === 'webrtc');
+  $('udpModeBtn')?.classList.toggle('active', connectionMode === 'udp');
+}
+
+// Tauri 기능 초기화
+async function initTauriFeatures() {
+  if (!tauriInvoke) return;
+  
+  try {
+    // ASIO 사용 가능 여부 확인
+    const asioAvailable = await tauriInvoke('check_asio');
+    if (asioAvailable) {
+      toast('ASIO 드라이버 감지됨', 'success');
+    }
+    
+    // 오디오 정보 가져오기
+    const audioInfo = await tauriInvoke('get_audio_info');
+    console.log('Tauri 오디오 정보:', audioInfo);
+  } catch (e) {
+    console.error('Tauri 초기화 오류:', e);
   }
 }
 
