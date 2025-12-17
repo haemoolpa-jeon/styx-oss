@@ -264,6 +264,25 @@ socket.on('kicked', () => {
   leaveRoom();
 });
 
+socket.on('room-closed', () => {
+  toast('관리자가 방을 닫았습니다', 'warning');
+  leaveRoom();
+});
+
+// 관리자: 방 닫기
+function closeRoom() {
+  const roomName = $('roomName')?.textContent;
+  if (!roomName) return;
+  
+  if (confirm(`"${roomName}" 방을 닫으시겠습니까? 모든 사용자가 퇴장됩니다.`)) {
+    socket.emit('close-room', { roomName }, res => {
+      if (res.error) {
+        toast(res.error, 'error');
+      }
+    });
+  }
+}
+
 // 로그인/회원가입 탭
 document.querySelectorAll('.tab').forEach(tab => {
   tab.onclick = () => {
@@ -555,6 +574,13 @@ window.joinRoom = async (roomName, hasPassword) => {
     roomView.classList.remove('hidden');
     $('roomName').textContent = room;
     socket.room = room;
+    
+    // 관리자면 방 닫기 버튼 표시
+    if (res.isAdmin) {
+      $('closeRoomBtn')?.classList.remove('hidden');
+    } else {
+      $('closeRoomBtn')?.classList.add('hidden');
+    }
     
     document.querySelector('#my-card .card-avatar').style.backgroundImage = 
       currentUser.avatar ? `url(${currentUser.avatar})` : '';
@@ -909,9 +935,13 @@ $('leaveBtn').onclick = () => {
 };
 
 function leaveRoom() {
+  // 서버에 방 나가기 알림
+  socket.emit('leave-room');
+  
   if (latencyInterval) { clearInterval(latencyInterval); latencyInterval = null; }
   if (meterInterval) { clearInterval(meterInterval); meterInterval = null; }
   stopMetronome();
+  stopRecording();
   
   if (audioContext) { 
     try { audioContext.close(); } catch {} 
@@ -936,4 +966,5 @@ function leaveRoom() {
   roomView.classList.add('hidden');
   lobby.classList.remove('hidden');
   loadRoomList();
+  renderFavorites();
 }

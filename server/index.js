@@ -227,6 +227,40 @@ io.on('connection', (socket) => {
     cb({ success: true });
   });
 
+  // 관리자: 방 닫기
+  socket.on('close-room', ({ roomName }, cb) => {
+    if (!socket.isAdmin) return cb({ error: 'Not admin' });
+    if (!rooms.has(roomName)) return cb({ error: 'Room not found' });
+    
+    // 방의 모든 사용자에게 알림
+    io.to(roomName).emit('room-closed');
+    
+    // 방 삭제
+    rooms.delete(roomName);
+    broadcastRoomList();
+    cb({ success: true });
+  });
+
+  // 방 나가기 (명시적)
+  socket.on('leave-room', () => {
+    if (socket.room && rooms.has(socket.room)) {
+      const roomData = rooms.get(socket.room);
+      roomData.users.delete(socket.id);
+      socket.to(socket.room).emit('user-left', { id: socket.id });
+      socket.leave(socket.room);
+      
+      console.log(`${socket.username} 퇴장: ${socket.room}`);
+      
+      if (roomData.users.size === 0) {
+        rooms.delete(socket.room);
+        console.log(`방 삭제됨: ${socket.room}`);
+      }
+      
+      socket.room = null;
+      broadcastRoomList();
+    }
+  });
+
   // 아바타 업로드
   socket.on('upload-avatar', async ({ username, avatarData }, cb) => {
     if (!socket.username || socket.username !== username) return cb({ error: 'Unauthorized' });
