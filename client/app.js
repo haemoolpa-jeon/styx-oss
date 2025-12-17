@@ -99,14 +99,15 @@ async function runConnectionTest() {
   
   // 3. STUN 연결 테스트
   updateStatus('🌐 네트워크 테스트 중...');
+  let testPc = null;
   try {
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-    pc.createDataChannel('test');
-    await pc.createOffer().then(o => pc.setLocalDescription(o));
+    testPc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    testPc.createDataChannel('test');
+    await testPc.createOffer().then(o => testPc.setLocalDescription(o));
     
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject('timeout'), 5000);
-      pc.onicecandidate = (e) => {
+      const timeout = setTimeout(() => { testPc?.close(); reject('timeout'); }, 5000);
+      testPc.onicecandidate = (e) => {
         if (e.candidate?.type === 'srflx') {
           clearTimeout(timeout);
           results.network = true;
@@ -114,22 +115,23 @@ async function runConnectionTest() {
         }
       };
     });
-    pc.close();
-  } catch { results.network = false; }
+    testPc.close();
+  } catch { if (testPc) testPc.close(); results.network = false; }
   
   // 4. TURN 연결 테스트
   updateStatus('🔄 TURN 서버 테스트 중...');
+  testPc = null;
   try {
-    const pc = new RTCPeerConnection({ 
+    testPc = new RTCPeerConnection({ 
       iceServers: [{ urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }],
       iceTransportPolicy: 'relay'
     });
-    pc.createDataChannel('test');
-    await pc.createOffer().then(o => pc.setLocalDescription(o));
+    testPc.createDataChannel('test');
+    await testPc.createOffer().then(o => testPc.setLocalDescription(o));
     
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject('timeout'), 5000);
-      pc.onicecandidate = (e) => {
+      const timeout = setTimeout(() => { testPc?.close(); reject('timeout'); }, 5000);
+      testPc.onicecandidate = (e) => {
         if (e.candidate?.type === 'relay') {
           clearTimeout(timeout);
           results.turn = true;
@@ -137,8 +139,8 @@ async function runConnectionTest() {
         }
       };
     });
-    pc.close();
-  } catch { results.turn = false; }
+    testPc.close();
+  } catch { if (testPc) testPc.close(); results.turn = false; }
   
   updateStatus('테스트 완료');
   return results;
@@ -253,6 +255,7 @@ document.addEventListener('keydown', (e) => {
     isPttActive = true;
     localStream.getAudioTracks().forEach(t => t.enabled = true);
     $('muteBtn')?.classList.remove('muted');
+    $('muteBtn')?.classList.add('ptt-active');
     $('muteBtn').textContent = '🎤';
     return;
   }
@@ -278,9 +281,36 @@ document.addEventListener('keyup', (e) => {
     isPttActive = false;
     localStream.getAudioTracks().forEach(t => t.enabled = false);
     $('muteBtn')?.classList.add('muted');
+    $('muteBtn')?.classList.remove('ptt-active');
     $('muteBtn').textContent = '🔇';
   }
 });
+
+// PTT 모바일 터치 지원
+function initPttTouch() {
+  const muteBtn = $('muteBtn');
+  if (!muteBtn) return;
+  
+  muteBtn.addEventListener('touchstart', (e) => {
+    if (!pttMode || !localStream) return;
+    e.preventDefault();
+    isPttActive = true;
+    localStream.getAudioTracks().forEach(t => t.enabled = true);
+    muteBtn.classList.remove('muted');
+    muteBtn.classList.add('ptt-active');
+    muteBtn.textContent = '🎤';
+  }, { passive: false });
+  
+  muteBtn.addEventListener('touchend', (e) => {
+    if (!pttMode || !localStream) return;
+    e.preventDefault();
+    isPttActive = false;
+    localStream.getAudioTracks().forEach(t => t.enabled = false);
+    muteBtn.classList.add('muted');
+    muteBtn.classList.remove('ptt-active');
+    muteBtn.textContent = '🔇';
+  }, { passive: false });
+}
 
 // ===== (즐겨찾기 제거됨) =====
 
@@ -777,6 +807,7 @@ window.joinRoom = async (roomName, hasPassword) => {
     // PTT 모드면 시작 시 음소거
     if (pttMode) {
       localStream.getAudioTracks().forEach(t => t.enabled = false);
+      isMuted = true;
     }
   } catch {
     return toast('마이크 접근이 거부되었습니다', 'error');
@@ -801,6 +832,12 @@ window.joinRoom = async (roomName, hasPassword) => {
     $('roomName').textContent = room;
     socket.room = room;
     
+    // PTT 모드면 음소거 버튼 상태 업데이트
+    if (pttMode) {
+      $('muteBtn').textContent = '🔇';
+      $('muteBtn').classList.add('muted');
+    }
+    
     // 관리자면 방 닫기 버튼 표시
     if (res.isAdmin) {
       $('closeRoomBtn')?.classList.remove('hidden');
@@ -822,6 +859,7 @@ window.joinRoom = async (roomName, hasPassword) => {
     res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, true));
     startLatencyPing();
     startAudioMeter();
+    initPttTouch();
   });
 };
 
@@ -1034,12 +1072,25 @@ function createPeerConnection(peerId, username, avatar, initiator) {
   };
 
   pc.onconnectionstatechange = () => {
+    const peerData = peers.get(peerId);
     if (pc.connectionState === 'connected') {
       applyAudioSettings(pc);
+      if (peerData) peerData.retryCount = 0;
     }
     if (pc.connectionState === 'failed') {
       console.log(`연결 실패: ${username}, 재시도...`);
-      pc.restartIce();
+      const retries = (peerData?.retryCount || 0) + 1;
+      if (peerData) peerData.retryCount = retries;
+      
+      if (retries <= 3) {
+        pc.restartIce();
+        toast(`${username} 재연결 시도 (${retries}/3)`, 'warning');
+      } else {
+        toast(`${username} 연결 실패`, 'error');
+      }
+    }
+    if (pc.connectionState === 'disconnected') {
+      toast(`${username} 연결 끊김, 재연결 대기...`, 'warning');
     }
     renderUsers();
   };
@@ -1137,7 +1188,13 @@ function startLatencyPing() {
         peer.latency = Math.round(rtt);
         peer.packetLoss = lossRate;
         peer.jitter = jitter;
+        const prevQuality = peer.quality?.grade;
         peer.quality = getQualityGrade(rtt, lossRate, jitter);
+        
+        // 품질 저하 경고
+        if (prevQuality === 'good' && peer.quality.grade === 'poor') {
+          toast(`${peer.username} 연결 불안정`, 'warning', 3000);
+        }
         
         if (rtt > 0) { avgLatency += rtt; count++; }
         
@@ -1258,6 +1315,7 @@ socket.on('user-left', ({ id }) => {
     const username = peer.username;
     peer.pc.close();
     peer.audioEl.remove();
+    if (peer.audioContext) try { peer.audioContext.close(); } catch {}
     peers.delete(id);
     renderUsers();
     playSound('leave');
