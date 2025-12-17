@@ -39,6 +39,14 @@ let compressorNode = null;
 let noiseGateInterval = null;
 let latencyHistory = []; // 핑 그래프용
 
+// 추가 기능
+let isOnline = navigator.onLine;
+let lastRoom = null;
+let lastRoomPassword = null;
+let duckingEnabled = localStorage.getItem('styx-ducking') === 'true';
+let vadEnabled = localStorage.getItem('styx-vad') !== 'false';
+let vadIntervals = new Map(); // 피어별 VAD 인터벌
+
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -384,6 +392,54 @@ const roomView = $('room-view');
 const usersGrid = $('users-grid');
 const chatMessages = $('chat-messages');
 
+// 오프라인 감지
+window.addEventListener('online', () => {
+  isOnline = true;
+  toast('인터넷 연결됨', 'success');
+  // 자동 재입장 시도
+  if (lastRoom && currentUser && !socket.room) {
+    toast('방에 재입장 시도 중...', 'info');
+    setTimeout(() => autoRejoin(), 1000);
+  }
+});
+
+window.addEventListener('offline', () => {
+  isOnline = false;
+  toast('인터넷 연결 끊김', 'error', 5000);
+});
+
+// 자동 재입장
+async function autoRejoin() {
+  if (!lastRoom || !currentUser || !isOnline) return;
+  
+  try {
+    const audioConstraints = {
+      audio: {
+        deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+        echoCancellation, noiseSuppression, autoGainControl: true
+      }
+    };
+    localStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+    if (pttMode) localStream.getAudioTracks().forEach(t => t.enabled = false);
+    
+    socket.emit('join', { room: lastRoom, username: currentUser.username, password: lastRoomPassword }, res => {
+      if (res.error) {
+        toast('재입장 실패: ' + res.error, 'error');
+        localStream?.getTracks().forEach(t => t.stop());
+        lastRoom = null;
+      } else {
+        toast('방에 재입장했습니다', 'success');
+        socket.room = lastRoom;
+        res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, true));
+        startLatencyPing();
+        startAudioMeter();
+      }
+    });
+  } catch {
+    toast('마이크 접근 실패', 'error');
+  }
+}
+
 // 소켓 연결 후 세션 복구 시도
 socket.on('connect', () => {
   console.log('서버 연결됨');
@@ -400,6 +456,8 @@ socket.on('connect', () => {
         if (res.success) {
           currentUser = res.user;
           showLobby();
+          // URL에서 방 정보 확인
+          checkInviteLink();
         } else {
           localStorage.removeItem('styx-user');
           localStorage.removeItem('styx-token');
@@ -409,20 +467,41 @@ socket.on('connect', () => {
   }
   
   // 방에 있었다면 재입장 시도
-  if (currentUser && socket.room) {
-    socket.emit('join', { room: socket.room, username: currentUser.username }, res => {
-      if (res.error) {
-        toast('재연결 실패: ' + res.error, 'error');
-        leaveRoom();
-      }
-    });
+  if (currentUser && lastRoom && !socket.room) {
+    autoRejoin();
   }
 });
 
 socket.on('disconnect', () => {
   console.log('서버 연결 끊김');
   $('connection-status')?.classList.add('offline');
+  toast('서버 연결 끊김, 재연결 시도 중...', 'warning');
 });
+
+// 초대 링크 확인
+function checkInviteLink() {
+  const params = new URLSearchParams(window.location.search);
+  const inviteRoom = params.get('room');
+  if (inviteRoom && currentUser) {
+    toast(`"${inviteRoom}" 방으로 초대됨`, 'info');
+    setTimeout(() => joinRoom(inviteRoom, false), 500);
+    // URL 정리
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+}
+
+// 초대 링크 생성
+function createInviteLink() {
+  const roomName = $('roomName')?.textContent;
+  if (!roomName) return;
+  
+  const url = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(roomName)}`;
+  navigator.clipboard.writeText(url).then(() => {
+    toast('초대 링크가 복사되었습니다', 'success');
+  }).catch(() => {
+    prompt('초대 링크:', url);
+  });
+}
 
 socket.on('kicked', () => { 
   toast('방에서 강퇴되었습니다', 'error'); 
@@ -584,6 +663,26 @@ function initStabilitySettings() {
       pttMode = pttCheck.checked;
       localStorage.setItem('styx-ptt', pttMode);
       toast(pttMode ? 'PTT 모드: Space 키를 누르고 말하세요' : 'PTT 모드 해제', 'info');
+    };
+  }
+  
+  // VAD 설정
+  const vadCheck = $('vad-mode');
+  if (vadCheck) {
+    vadCheck.checked = vadEnabled;
+    vadCheck.onchange = () => {
+      vadEnabled = vadCheck.checked;
+      localStorage.setItem('styx-vad', vadEnabled);
+    };
+  }
+  
+  // 덕킹 설정
+  const duckCheck = $('ducking-mode');
+  if (duckCheck) {
+    duckCheck.checked = duckingEnabled;
+    duckCheck.onchange = () => {
+      duckingEnabled = duckCheck.checked;
+      localStorage.setItem('styx-ducking', duckingEnabled);
     };
   }
   
@@ -831,6 +930,8 @@ window.joinRoom = async (roomName, hasPassword) => {
     roomView.classList.remove('hidden');
     $('roomName').textContent = room;
     socket.room = room;
+    lastRoom = room;
+    lastRoomPassword = roomPassword;
     
     // PTT 모드면 음소거 버튼 상태 업데이트
     if (pttMode) {
@@ -1037,13 +1138,12 @@ function createPeerConnection(peerId, username, avatar, initiator) {
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
   pc.ontrack = (e) => {
-    // 오디오 프로세싱 체인 적용 (압축기)
     const peerData = peers.get(peerId);
     try {
       const ctx = new AudioContext();
       const source = ctx.createMediaStreamSource(e.streams[0]);
       
-      // 압축기 (볼륨 차이 자동 조절)
+      // 압축기
       const compressor = ctx.createDynamicsCompressor();
       compressor.threshold.value = -24;
       compressor.knee.value = 30;
@@ -1051,12 +1151,31 @@ function createPeerConnection(peerId, username, avatar, initiator) {
       compressor.attack.value = 0.003;
       compressor.release.value = 0.25;
       
+      // 덕킹용 게인 노드
+      const gainNode = ctx.createGain();
+      gainNode.gain.value = 1;
+      
+      // VAD용 분석기
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      
       const dest = ctx.createMediaStreamDestination();
-      source.connect(compressor);
-      compressor.connect(dest);
+      source.connect(analyser);
+      analyser.connect(compressor);
+      compressor.connect(gainNode);
+      gainNode.connect(dest);
       
       audioEl.srcObject = dest.stream;
-      if (peerData) peerData.audioContext = ctx;
+      if (peerData) {
+        peerData.audioContext = ctx;
+        peerData.gainNode = gainNode;
+        peerData.analyser = analyser;
+        peerData.isSpeaking = false;
+      }
+      
+      // VAD 시작
+      if (vadEnabled) startVAD(peerId, analyser);
+      
     } catch {
       audioEl.srcObject = e.streams[0];
     }
@@ -1112,13 +1231,14 @@ function renderUsers() {
     const state = peer.pc.connectionState;
     const connected = state === 'connected';
     const q = peer.quality;
+    const speaking = peer.isSpeaking ? 'speaking' : '';
     
     const card = document.createElement('div');
-    card.className = `user-card ${connected ? 'connected' : 'connecting'}`;
+    card.className = `user-card ${connected ? 'connected' : 'connecting'} ${speaking}`;
     card.innerHTML = `
       <div class="card-avatar" style="background-image: ${peer.avatar ? `url(${peer.avatar})` : 'none'}"></div>
       <div class="card-info">
-        <span class="card-name">${escapeHtml(peer.username)}</span>
+        <span class="card-name">${peer.isSpeaking ? '🎤 ' : ''}${escapeHtml(peer.username)}</span>
         <div class="card-stats">
           <span class="quality-badge" style="background:${q.color}">${q.label}</span>
           <span class="stat">${peer.latency ? peer.latency + 'ms' : '--'}</span>
@@ -1225,6 +1345,51 @@ function startLatencyPing() {
   }, 2000);
 }
 
+// VAD (음성 활동 감지)
+function startVAD(peerId, analyser) {
+  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+  const threshold = 30; // 음성 감지 임계값
+  
+  const interval = setInterval(() => {
+    const peer = peers.get(peerId);
+    if (!peer) { clearInterval(interval); return; }
+    
+    analyser.getByteFrequencyData(dataArray);
+    const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+    const wasSpeaking = peer.isSpeaking;
+    peer.isSpeaking = avg > threshold;
+    
+    // 상태 변경 시 UI 업데이트
+    if (wasSpeaking !== peer.isSpeaking) {
+      renderUsers();
+      // 덕킹 적용
+      if (duckingEnabled) applyDucking();
+    }
+  }, 100);
+  
+  vadIntervals.set(peerId, interval);
+}
+
+// 덕킹 (다른 사람 말할 때 볼륨 낮춤)
+function applyDucking() {
+  const speakingPeers = [];
+  peers.forEach((peer, id) => {
+    if (peer.isSpeaking) speakingPeers.push(id);
+  });
+  
+  peers.forEach((peer, id) => {
+    if (!peer.gainNode) return;
+    
+    if (speakingPeers.length > 0 && !speakingPeers.includes(id)) {
+      // 다른 사람이 말하고 있으면 볼륨 낮춤
+      peer.gainNode.gain.setTargetAtTime(0.3, peer.audioContext.currentTime, 0.1);
+    } else {
+      // 원래 볼륨으로
+      peer.gainNode.gain.setTargetAtTime(1, peer.audioContext.currentTime, 0.1);
+    }
+  });
+}
+
 // 핑 그래프 렌더링
 function renderPingGraph() {
   const canvas = $('ping-graph');
@@ -1316,6 +1481,9 @@ socket.on('user-left', ({ id }) => {
     peer.pc.close();
     peer.audioEl.remove();
     if (peer.audioContext) try { peer.audioContext.close(); } catch {}
+    // VAD 인터벌 정리
+    const vadInt = vadIntervals.get(id);
+    if (vadInt) { clearInterval(vadInt); vadIntervals.delete(id); }
     peers.delete(id);
     renderUsers();
     playSound('leave');
@@ -1352,6 +1520,10 @@ function leaveRoom() {
   if (latencyInterval) { clearInterval(latencyInterval); latencyInterval = null; }
   if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
   if (meterInterval) { clearInterval(meterInterval); meterInterval = null; }
+  // VAD 인터벌 정리
+  vadIntervals.forEach(int => clearInterval(int));
+  vadIntervals.clear();
+  
   stopMetronome();
   stopRecording();
   
@@ -1377,6 +1549,8 @@ function leaveRoom() {
   localStream = null;
   
   socket.room = null;
+  lastRoom = null;
+  lastRoomPassword = null;
   roomView.classList.add('hidden');
   lobby.classList.remove('hidden');
   loadRoomList();

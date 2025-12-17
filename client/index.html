@@ -98,6 +98,16 @@
             <input type="checkbox" id="ptt-mode">
             🎙️ 푸시투톡 (Space 키)
           </label>
+          <label>
+            <input type="checkbox" id="vad-mode" checked>
+            👄 음성 감지 (말하는 사람 표시)
+          </label>
+        </div>
+        <div class="setting-row">
+          <label>
+            <input type="checkbox" id="ducking-mode">
+            🔉 오디오 덕킹 (다른 사람 말할 때 볼륨 낮춤)
+          </label>
         </div>
         <div class="setting-row">
           <button id="test-connection-btn" class="test-btn">🔍 연결 테스트</button>
@@ -161,6 +171,7 @@
       <div class="room-header">
         <h2>🎸 <span id="roomName"></span></h2>
         <div class="room-controls">
+          <button id="inviteBtn" onclick="createInviteLink()" title="초대 링크">🔗 초대</button>
           <button id="recordBtn" onclick="toggleRecording()" title="녹음">⏺️ 녹음</button>
           <button id="closeRoomBtn" class="hidden" onclick="closeRoom()" title="방 닫기">🚪 닫기</button>
           <button id="muteBtn" title="음소거 (M)">🎤</button>
