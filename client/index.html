@@ -8,6 +8,7 @@
 </head>
 <body data-theme="dark">
   <div id="connection-status" title="서버 연결 상태"></div>
+  <div id="udp-stats-badge" class="stats-badge hidden" title="UDP 연결 상태"></div>
   <div id="toast-container"></div>
   <div id="app">
     <!-- 로그인 패널 -->
@@ -234,10 +235,10 @@
     </div>
   </div>
 
-  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script>
-    // 서버 URL (웹 버전은 같은 서버)
-    window.STYX_SERVER_URL = '';
+    // Tauri 앱용 서버 URL 설정
+    window.STYX_SERVER_URL = localStorage.getItem('styx-server-url') || 'http://localhost:3000';
   </script>
   <script src="app.js"></script>
 </body>

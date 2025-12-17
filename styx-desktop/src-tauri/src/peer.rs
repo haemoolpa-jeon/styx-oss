@@ -59,6 +59,10 @@ pub struct UdpStreamState {
     pub sequence: Arc<AtomicU32>,
     pub jitter_buffers: Arc<Mutex<BTreeMap<SocketAddr, JitterBuffer>>>,
     pub playback_buffer: Arc<Mutex<Vec<f32>>>,
+    // 통계
+    pub packets_sent: Arc<AtomicU32>,
+    pub packets_received: Arc<AtomicU32>,
+    pub packets_lost: Arc<AtomicU32>,
 }
 
 impl Default for UdpStreamState {
@@ -71,6 +75,9 @@ impl Default for UdpStreamState {
             sequence: Arc::new(AtomicU32::new(0)),
             jitter_buffers: Arc::new(Mutex::new(BTreeMap::new())),
             playback_buffer: Arc::new(Mutex::new(Vec::new())),
+            packets_sent: Arc::new(AtomicU32::new(0)),
+            packets_received: Arc::new(AtomicU32::new(0)),
+            packets_lost: Arc::new(AtomicU32::new(0)),
         }
     }
 }

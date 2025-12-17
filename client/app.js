@@ -774,7 +774,13 @@ async function startUdpMode() {
       publicIp = publicAddr.split(':')[0]; // IP만 추출
       console.log('공인 IP:', publicIp);
     } catch (e) {
-      console.warn('STUN 실패, 로컬 모드로 진행:', e);
+      console.warn('STUN 실패:', e);
+      // STUN 실패 시 WebRTC로 fallback
+      toast('NAT 통과 실패, WebRTC 모드로 전환', 'warning');
+      connectionMode = 'webrtc';
+      localStorage.setItem('styx-connection-mode', 'webrtc');
+      updateConnectionModeButtons();
+      return;
     }
     
     // 서버에 UDP 정보 전송
@@ -830,6 +836,7 @@ async function setUdpMuted(muted) {
 
 // 방 퇴장 시 UDP 정리
 async function cleanupUdp() {
+  stopUdpStatsMonitor();
   if (tauriInvoke) {
     try {
       await tauriInvoke('udp_stop_stream');
@@ -848,6 +855,7 @@ async function startUdpStream() {
     await tauriInvoke('udp_start_stream');
     console.log('UDP 스트림 시작됨');
     toast('UDP 오디오 스트림 시작', 'success');
+    startUdpStatsMonitor();
   } catch (e) {
     console.error('UDP 스트림 시작 실패:', e);
     toast('UDP 스트림 시작 실패: ' + e, 'error');
@@ -864,6 +872,50 @@ async function stopUdpStream() {
   } catch (e) {
     console.error('UDP 스트림 중지 실패:', e);
   }
+}
+
+// UDP 연결 품질 모니터링
+let udpStatsInterval = null;
+
+function startUdpStatsMonitor() {
+  if (!tauriInvoke || udpStatsInterval) return;
+  
+  udpStatsInterval = setInterval(async () => {
+    try {
+      const stats = await tauriInvoke('get_udp_stats');
+      updateUdpStatsUI(stats);
+    } catch (e) {
+      console.error('UDP 통계 조회 실패:', e);
+    }
+  }, 1000);
+}
+
+function stopUdpStatsMonitor() {
+  if (udpStatsInterval) {
+    clearInterval(udpStatsInterval);
+    udpStatsInterval = null;
+  }
+}
+
+function updateUdpStatsUI(stats) {
+  const badge = $('udp-stats-badge');
+  if (!badge) return;
+  
+  badge.classList.remove('hidden');
+  
+  if (!stats.is_running) {
+    badge.textContent = 'UDP: 대기';
+    badge.className = 'stats-badge idle';
+    return;
+  }
+  
+  const lossRate = stats.loss_rate.toFixed(1);
+  let quality = 'good';
+  if (stats.loss_rate > 5) quality = 'bad';
+  else if (stats.loss_rate > 1) quality = 'warning';
+  
+  badge.textContent = `UDP: ${stats.peer_count}명 | 손실 ${lossRate}%`;
+  badge.className = `stats-badge ${quality}`;
 }
 
 // 오디오 모드 설정

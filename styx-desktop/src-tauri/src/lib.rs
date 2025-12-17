@@ -146,6 +146,38 @@ fn udp_stop_stream(state: State<'_, AppState>) {
     stream_state.is_running.store(false, Ordering::SeqCst);
 }
 
+#[derive(serde::Serialize)]
+struct UdpStats {
+    packets_sent: u32,
+    packets_received: u32,
+    packets_lost: u32,
+    loss_rate: f32,
+    peer_count: usize,
+    is_running: bool,
+}
+
+#[tauri::command]
+fn get_udp_stats(state: State<'_, AppState>) -> UdpStats {
+    let stream_state = state.udp_stream.lock().unwrap();
+    let sent = stream_state.packets_sent.load(Ordering::Relaxed);
+    let received = stream_state.packets_received.load(Ordering::Relaxed);
+    let lost = stream_state.packets_lost.load(Ordering::Relaxed);
+    let loss_rate = if received + lost > 0 {
+        lost as f32 / (received + lost) as f32 * 100.0
+    } else {
+        0.0
+    };
+    
+    UdpStats {
+        packets_sent: sent,
+        packets_received: received,
+        packets_lost: lost,
+        loss_rate,
+        peer_count: stream_state.peers.len(),
+        is_running: stream_state.is_running.load(Ordering::Relaxed),
+    }
+}
+
 // ===== 앱 실행 =====
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -175,6 +207,7 @@ pub fn run() {
             udp_clear_peers,
             udp_start_stream,
             udp_stop_stream,
+            get_udp_stats,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

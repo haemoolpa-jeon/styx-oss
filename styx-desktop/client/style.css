@@ -32,6 +32,18 @@
 }
 #connection-status.offline { background: var(--error); box-shadow: 0 0 8px var(--error); }
 
+/* UDP 통계 배지 */
+.stats-badge {
+  position: fixed; top: 10px; right: 30px; padding: 4px 10px;
+  border-radius: 12px; font-size: 11px; z-index: 1000;
+  background: var(--bg-card); color: var(--text-secondary);
+}
+.stats-badge.good { background: var(--success); color: #fff; }
+.stats-badge.warning { background: var(--warning); color: #000; }
+.stats-badge.bad { background: var(--error); color: #fff; }
+.stats-badge.idle { background: var(--bg-card); }
+.stats-badge.hidden { display: none; }
+
 /* 토스트 메시지 */
 #toast-container {
   position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
