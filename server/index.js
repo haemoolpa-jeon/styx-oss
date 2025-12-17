@@ -10,7 +10,19 @@ const bcrypt = require('bcrypt');
 
 const app = express();
 const server = createServer(app);
-const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 5e6 });
+
+// CORS 설정 - 환경변수 또는 같은 서버에서만 허용
+const ALLOWED_ORIGINS = process.env.CORS_ORIGINS 
+  ? process.env.CORS_ORIGINS.split(',') 
+  : true; // true = 같은 origin만 허용
+
+const io = new Server(server, { 
+  cors: { 
+    origin: ALLOWED_ORIGINS,
+    credentials: true
+  }, 
+  maxHttpBufferSize: 5e6 
+});
 
 const PORT = process.env.PORT || 3000;
 const MAX_USERS_PER_ROOM = 8;
