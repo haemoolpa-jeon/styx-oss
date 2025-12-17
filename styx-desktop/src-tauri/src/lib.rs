@@ -71,6 +71,17 @@ fn get_udp_port(state: State<'_, AppState>) -> Option<u16> {
 }
 
 #[tauri::command]
+async fn get_public_ip(state: State<'_, AppState>) -> Result<String, String> {
+    let socket = {
+        let stream_state = state.udp_stream.lock().unwrap();
+        stream_state.socket.clone().ok_or("소켓 없음".to_string())?
+    };
+    
+    let addr = udp::get_public_addr(&socket).await?;
+    Ok(addr.to_string())
+}
+
+#[tauri::command]
 fn udp_add_peer(addr: String, state: State<'_, AppState>) -> Result<(), String> {
     let socket_addr: std::net::SocketAddr = addr.parse().map_err(|e| format!("주소 파싱 실패: {}", e))?;
     state.udp_stream.lock().unwrap().peers.push(socket_addr);
@@ -157,6 +168,7 @@ pub fn run() {
             udp_bind,
             get_packet_header_size,
             get_udp_port,
+            get_public_ip,
             udp_add_peer,
             udp_set_muted,
             udp_is_running,

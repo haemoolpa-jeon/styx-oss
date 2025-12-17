@@ -767,13 +767,24 @@ async function startUdpMode() {
     udpPort = await tauriInvoke('udp_bind', { port: 0 });
     console.log('UDP 포트 바인딩:', udpPort);
     
+    // STUN으로 공인 IP 획득
+    let publicIp = null;
+    try {
+      const publicAddr = await tauriInvoke('get_public_ip');
+      publicIp = publicAddr.split(':')[0]; // IP만 추출
+      console.log('공인 IP:', publicIp);
+    } catch (e) {
+      console.warn('STUN 실패, 로컬 모드로 진행:', e);
+    }
+    
     // 서버에 UDP 정보 전송
-    socket.emit('udp-info', { port: udpPort, publicIp: null });
+    socket.emit('udp-info', { port: udpPort, publicIp });
     
     // 기존 피어 정보 요청
     socket.emit('udp-request-peers');
     
-    toast(`UDP 모드 활성화 (포트: ${udpPort})`, 'success');
+    const ipInfo = publicIp ? `${publicIp}:${udpPort}` : `포트 ${udpPort}`;
+    toast(`UDP 모드 활성화 (${ipInfo})`, 'success');
   } catch (e) {
     console.error('UDP 시작 실패:', e);
     toast('UDP 모드 시작 실패', 'error');

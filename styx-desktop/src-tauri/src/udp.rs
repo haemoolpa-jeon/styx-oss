@@ -114,13 +114,13 @@ pub async fn receive_audio_packet(
     Ok((header, payload, addr))
 }
 
-// NAT hole punching을 위한 STUN 요청 (간단 버전)
+// NAT hole punching을 위한 STUN 요청
 pub async fn get_public_addr(socket: &UdpSocket) -> Result<SocketAddr, String> {
-    // Google STUN 서버 사용
+    // Google STUN 서버
     let stun_server: SocketAddr = "74.125.250.129:19302".parse()
         .map_err(|_| "STUN 서버 주소 파싱 실패")?;
     
-    // STUN Binding Request (간단 버전)
+    // STUN Binding Request
     let binding_request: [u8; 20] = [
         0x00, 0x01, // Binding Request
         0x00, 0x00, // Message Length
@@ -146,11 +146,51 @@ pub async fn get_public_addr(socket: &UdpSocket) -> Result<SocketAddr, String> {
         Err(_) => return Err("STUN 응답 타임아웃".to_string()),
     };
     
-    if len < 32 {
+    if len < 20 {
         return Err("STUN 응답이 너무 짧음".to_string());
     }
     
-    // 로컬 주소 반환 (테스트용)
-    socket.local_addr()
-        .map_err(|e| format!("로컬 주소 가져오기 실패: {}", e))
+    // STUN 응답 파싱 - XOR-MAPPED-ADDRESS 또는 MAPPED-ADDRESS 찾기
+    let mut offset = 20; // 헤더 이후부터
+    while offset + 4 <= len {
+        let attr_type = u16::from_be_bytes([buf[offset], buf[offset + 1]]);
+        let attr_len = u16::from_be_bytes([buf[offset + 2], buf[offset + 3]]) as usize;
+        offset += 4;
+        
+        if offset + attr_len > len { break; }
+        
+        // XOR-MAPPED-ADDRESS (0x0020) 또는 MAPPED-ADDRESS (0x0001)
+        if attr_type == 0x0020 && attr_len >= 8 {
+            // XOR-MAPPED-ADDRESS
+            let family = buf[offset + 1];
+            if family == 0x01 { // IPv4
+                let port = u16::from_be_bytes([buf[offset + 2], buf[offset + 3]]) ^ 0x2112;
+                let ip = [
+                    buf[offset + 4] ^ 0x21,
+                    buf[offset + 5] ^ 0x12,
+                    buf[offset + 6] ^ 0xa4,
+                    buf[offset + 7] ^ 0x42,
+                ];
+                let addr = SocketAddr::from((ip, port));
+                return Ok(addr);
+            }
+        } else if attr_type == 0x0001 && attr_len >= 8 {
+            // MAPPED-ADDRESS (fallback)
+            let family = buf[offset + 1];
+            if family == 0x01 { // IPv4
+                let port = u16::from_be_bytes([buf[offset + 2], buf[offset + 3]]);
+                let ip = [buf[offset + 4], buf[offset + 5], buf[offset + 6], buf[offset + 7]];
+                let addr = SocketAddr::from((ip, port));
+                return Ok(addr);
+            }
+        }
+        
+        offset += attr_len;
+        // 4바이트 정렬
+        if attr_len % 4 != 0 {
+            offset += 4 - (attr_len % 4);
+        }
+    }
+    
+    Err("STUN 응답에서 주소를 찾을 수 없음".to_string())
 }
