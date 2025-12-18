@@ -26,8 +26,8 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const MAX_USERS_PER_ROOM = 8;
-const USERS_FILE = path.join(__dirname, 'users.json');
-const AVATARS_DIR = path.join(__dirname, '../avatars');
+const USERS_FILE = path.join(__dirname, 'data', 'users.json');
+const AVATARS_DIR = path.join(__dirname, '..', 'avatars');
 const SALT_ROUNDS = 10;
 
 // 기본 Rate Limiting
@@ -70,7 +70,7 @@ const validatePassword = (p) => typeof p === 'string' && p.length >= 4 && p.leng
 const sanitize = (s) => String(s).replace(/[<>"'&]/g, '');
 
 // 세션 토큰 생성/검증 (파일 기반 영속성)
-const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
+const SESSIONS_FILE = path.join(__dirname, 'data', 'sessions.json');
 const loadSessions = () => {
   try {
     if (fs.existsSync(SESSIONS_FILE)) {

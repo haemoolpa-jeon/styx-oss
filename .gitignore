@@ -1,6 +1,31 @@
+# Dependencies
 node_modules/
+
+# User data
 avatars/
-server/users.json
-server/sessions.json
+server/data/
+
+# Environment
 .env
+.env.local
+.env.production
+
+# SSH keys
 key/
+*.pem
+*.key
+
+# Logs
+*.log
+server.log
+
+# Build outputs
+styx-desktop/src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

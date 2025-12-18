@@ -1,5 +1,0 @@
-
-> styx@1.0.0 start
-> node server/index.js
-
-Styx 서버 실행 중: 포트 3000
