@@ -104,6 +104,10 @@ setInterval(() => {
     saveSessions(sessions);
     console.log(`만료 세션 ${cleaned}개 정리됨`);
   }
+  // rateLimits 정리 (1분 지난 항목)
+  for (const [ip, record] of rateLimits) {
+    if (now - record.start > 60000) rateLimits.delete(ip);
+  }
 }, 60 * 60 * 1000);
 
 app.use(express.static(path.join(__dirname, '../client')));

@@ -394,6 +394,7 @@ function startRecording() {
   };
   
   mediaRecorder.onstop = () => {
+    audioCtx.close().catch(() => {}); // AudioContext 정리
     const blob = new Blob(recordedChunks, { type: 'audio/webm' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
