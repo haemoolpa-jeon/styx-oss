@@ -1117,11 +1117,11 @@ $('closeAdminBtn').onclick = () => {
 };
 
 // 방 입장
-window.joinRoom = async (roomName, hasPassword) => {
-  const room = roomName || $('room-input').value.trim();
-  if (!room) return;
+window.joinRoom = async (roomName, hasPassword, providedPassword) => {
+  const room = roomName;
+  if (!room) return toast('방 이름을 입력하세요', 'error');
 
-  let roomPassword = $('room-password').value || null;
+  let roomPassword = providedPassword || null;
   if (hasPassword && !roomPassword) {
     roomPassword = prompt('방 비밀번호를 입력하세요:');
     if (!roomPassword) return;
@@ -1130,8 +1130,8 @@ window.joinRoom = async (roomName, hasPassword) => {
   const audioConstraints = {
     audio: {
       deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-      echoCancellation: echoCancellation,
-      noiseSuppression: noiseSuppression,
+      echoCancellation: $('echo-cancel')?.checked ?? true,
+      noiseSuppression: $('noise-suppress')?.checked ?? true,
       autoGainControl: true,
       latency: 0
     }

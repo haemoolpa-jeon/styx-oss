@@ -62,44 +62,35 @@
         </div>
 
         <!-- 오디오 설정 섹션 -->
-        <div class="lobby-section">
+        <div class="lobby-section audio-section">
           <h3>🎧 오디오 설정</h3>
-          <div class="audio-settings-grid">
-            <div class="setting-item">
-              <label>🎤 입력 장치</label>
-              <select id="audio-device"></select>
+          <div class="audio-settings-container">
+            <div class="audio-devices">
+              <div class="device-row">
+                <label>🎤 입력 장치</label>
+                <select id="audio-device"></select>
+              </div>
+              <div class="device-row">
+                <label>🔊 출력 장치</label>
+                <select id="audio-output"></select>
+              </div>
             </div>
-            <div class="setting-item">
-              <label>🔊 출력 장치</label>
-              <select id="audio-output"></select>
+            <div class="audio-options">
+              <label class="checkbox-label"><input type="checkbox" id="echo-cancel" checked> 에코 제거</label>
+              <label class="checkbox-label"><input type="checkbox" id="noise-suppress" checked> 노이즈 억제</label>
+              <label class="checkbox-label"><input type="checkbox" id="auto-gain" checked> 자동 게인</label>
+              <label class="checkbox-label"><input type="checkbox" id="ptt-mode"> 푸시투톡 (Space)</label>
             </div>
-            <div class="setting-item">
-              <label>
-                <input type="checkbox" id="echo-cancel" checked>
-                🔇 에코 제거
-              </label>
-            </div>
-            <div class="setting-item">
-              <label>
-                <input type="checkbox" id="noise-suppress" checked>
-                🔕 노이즈 억제
-              </label>
-            </div>
-            <div class="setting-item">
-              <label>
-                <input type="checkbox" id="ptt-mode">
-                🎙️ 푸시투톡 (Space)
-              </label>
-            </div>
-            <div class="setting-item">
-              <button id="test-audio-btn" class="test-btn">🔍 마이크 테스트</button>
-              <div id="mic-level-bar" class="level-bar"><div id="mic-level" class="level"></div></div>
+            <div class="audio-test">
+              <button id="test-audio-btn" class="test-btn-large">🔍 마이크 테스트</button>
+              <div class="level-bar-large"><div id="mic-level" class="level"></div></div>
+              <span id="test-status-text"></span>
             </div>
           </div>
         </div>
 
         <!-- 방 목록 섹션 -->
-        <div class="room-section">
+        <div class="lobby-section room-section">
           <div class="room-section-header">
             <h3>📡 활성 방 목록</h3>
             <button id="createRoomBtn" class="create-room-btn">➕ 방 만들기</button>
@@ -128,14 +119,25 @@
           <div class="form-group">
             <label>최대 인원</label>
             <select id="new-room-max-users">
+              <option value="1">1명</option>
               <option value="2">2명</option>
+              <option value="3">3명</option>
               <option value="4">4명</option>
+              <option value="5">5명</option>
               <option value="6">6명</option>
+              <option value="7">7명</option>
               <option value="8" selected>8명</option>
             </select>
           </div>
           <div class="form-group">
-            <label>
+            <label>오디오 모드</label>
+            <select id="new-room-audio-mode">
+              <option value="voice">🎤 음성 (저지연)</option>
+              <option value="music">🎸 악기 (고품질)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
               <input type="checkbox" id="new-room-private">
               🔒 비공개 방 (목록에 표시 안 함)
             </label>
@@ -145,6 +147,10 @@
           <button class="btn-secondary" onclick="closeCreateRoomModal()">취소</button>
           <button class="btn-primary" onclick="createRoom()">방 만들기</button>
         </div>
+      </div>
+    </div>
+
+    <!-- 설정 패널 -->
       </div>
     </div>
 
