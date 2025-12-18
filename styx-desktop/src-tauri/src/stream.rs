@@ -1,4 +1,5 @@
 // 오디오 스트리밍 모듈 - UDP 전송용
+#![allow(dead_code)]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
 use std::sync::atomic::{AtomicBool, Ordering};
