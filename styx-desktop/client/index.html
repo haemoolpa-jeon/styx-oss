@@ -268,19 +268,25 @@
       </header>
 
       <div class="room-toolbar">
-        <div class="toolbar-left">
-          <label><input type="checkbox" id="room-echo-cancel" checked> 에코</label>
-          <label><input type="checkbox" id="room-noise-suppress" checked> 노이즈</label>
-          <label><input type="checkbox" id="room-ptt-mode"> PTT</label>
+        <div class="toolbar-section">
+          <label class="toolbar-check"><input type="checkbox" id="room-echo-cancel" checked> 에코 제거</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-noise-suppress" checked> 노이즈 억제</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-ptt-mode"> PTT</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-vad-mode" checked> VAD</label>
         </div>
-        <div class="toolbar-center">
+        <div class="toolbar-section">
+          <span class="toolbar-label">지터:</span>
+          <input type="range" id="room-jitter-slider" min="50" max="200" value="100" step="10" class="toolbar-slider">
+          <span id="room-jitter-value" class="toolbar-value">100ms</span>
+        </div>
+        <div class="toolbar-section">
           <button id="metronome-toggle" class="btn-metro">▶️</button>
-          <input type="number" id="bpm-input" value="120" min="30" max="300">
+          <input type="number" id="bpm-input" value="120" min="30" max="300" class="bpm-input">
           <span>BPM</span>
           <div id="metronome-tick" class="metro-tick"></div>
         </div>
-        <div class="toolbar-right">
-          <span class="meter-label">입력:</span>
+        <div class="toolbar-section">
+          <span class="toolbar-label">입력:</span>
           <div class="input-meter"><div id="audio-meter"></div></div>
         </div>
       </div>

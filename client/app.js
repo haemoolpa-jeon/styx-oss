@@ -1931,3 +1931,29 @@ if ($('room-ptt-mode')) {
     }
   };
 }
+
+// 방 내 지터 슬라이더
+if ($('room-jitter-slider')) {
+  $('room-jitter-slider').value = jitterBuffer;
+  $('room-jitter-value').textContent = jitterBuffer + 'ms';
+  $('room-jitter-slider').oninput = () => {
+    jitterBuffer = parseInt($('room-jitter-slider').value);
+    $('room-jitter-value').textContent = jitterBuffer + 'ms';
+    localStorage.setItem('styx-jitter-buffer', jitterBuffer);
+    // 로비 슬라이더도 동기화
+    if ($('jitter-slider')) {
+      $('jitter-slider').value = jitterBuffer;
+      $('jitter-value').textContent = jitterBuffer + 'ms';
+    }
+  };
+}
+
+// 방 내 VAD
+if ($('room-vad-mode')) {
+  $('room-vad-mode').checked = vadEnabled;
+  $('room-vad-mode').onchange = () => {
+    vadEnabled = $('room-vad-mode').checked;
+    localStorage.setItem('styx-vad', vadEnabled);
+    if ($('vad-mode')) $('vad-mode').checked = vadEnabled;
+  };
+}
