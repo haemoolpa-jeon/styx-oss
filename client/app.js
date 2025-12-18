@@ -2318,6 +2318,26 @@ if ($('room-vad-mode')) {
   };
 }
 
+// 방 내 자동 품질
+if ($('room-auto-adapt')) {
+  $('room-auto-adapt').checked = autoAdapt;
+  $('room-auto-adapt').onchange = () => {
+    autoAdapt = $('room-auto-adapt').checked;
+    localStorage.setItem('styx-auto-adapt', autoAdapt);
+    if ($('auto-adapt')) $('auto-adapt').checked = autoAdapt;
+  };
+}
+
+// 방 내 자동 볼륨 (덕킹)
+if ($('room-ducking')) {
+  $('room-ducking').checked = duckingEnabled;
+  $('room-ducking').onchange = () => {
+    duckingEnabled = $('room-ducking').checked;
+    localStorage.setItem('styx-ducking', duckingEnabled);
+    if ($('ducking-mode')) $('ducking-mode').checked = duckingEnabled;
+  };
+}
+
 // 지연 보상
 if ($('delay-compensation')) {
   $('delay-compensation').onchange = () => {
