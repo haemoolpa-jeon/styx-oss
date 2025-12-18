@@ -3,3 +3,4 @@ avatars/
 server/users.json
 server/sessions.json
 .env
+key/
