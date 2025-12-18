@@ -554,7 +554,6 @@ document.querySelectorAll('.tab').forEach(tab => {
 // Enter 키
 $('login-user').onkeypress = $('login-pass').onkeypress = (e) => { if (e.key === 'Enter') $('loginBtn').click(); };
 $('signup-user').onkeypress = $('signup-pass').onkeypress = (e) => { if (e.key === 'Enter') $('signupBtn').click(); };
-$('room-input').onkeypress = (e) => { if (e.key === 'Enter') $('joinRoomBtn').click(); };
 
 // 로그인
 $('loginBtn').onclick = () => {
@@ -1149,9 +1148,7 @@ window.joinRoom = async (roomName, hasPassword) => {
     return toast('마이크 접근이 거부되었습니다', 'error');
   }
 
-  $('joinRoomBtn').disabled = true;
   socket.emit('join', { room, username: currentUser.username, password: roomPassword }, res => {
-    $('joinRoomBtn').disabled = false;
     if (res.error) {
       localStream.getTracks().forEach(t => t.stop());
       const errorMsg = {
@@ -1208,8 +1205,6 @@ window.joinRoom = async (roomName, hasPassword) => {
     }
   });
 };
-
-$('joinRoomBtn').onclick = () => joinRoom();
 
 // 오디오 레벨 미터
 function startAudioMeter() {
