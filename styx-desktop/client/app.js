@@ -221,6 +221,24 @@ function updateThemeIcon() {
 
 initTheme();
 
+// Opus SDP 최적화: FEC, DTX, 비트레이트 설정
+function optimizeOpusSdp(sdp, mode) {
+  const opusConfig = audioModes[mode];
+  // Opus 파라미터 추가
+  const params = [
+    `maxaveragebitrate=${opusConfig.bitrate}`,
+    `useinbandfec=${opusConfig.fec ? 1 : 0}`,
+    `usedtx=${opusConfig.dtx ? 1 : 0}`,
+    `stereo=${opusConfig.stereo ? 1 : 0}`,
+    'maxplaybackrate=48000'
+  ].join(';');
+  
+  return sdp.replace(
+    /a=fmtp:111 (.+)/g,
+    `a=fmtp:111 $1;${params}`
+  );
+}
+
 // 오디오 설정 적용 (Opus 코덱)
 async function applyAudioSettings(pc) {
   const senders = pc.getSenders();
@@ -234,11 +252,13 @@ async function applyAudioSettings(pc) {
 
   const mode = audioModes[audioMode];
   params.encodings[0].maxBitrate = mode.bitrate;
+  params.encodings[0].priority = 'high';
+  params.encodings[0].networkPriority = 'high';
   
   try {
     await audioSender.setParameters(params);
   } catch (e) {
-    console.warn('오디오 파라미터 설정 실패:', e);
+    log('오디오 파라미터 설정 실패:', e);
   }
 }
 
@@ -434,7 +454,10 @@ async function autoRejoin() {
     const audioConstraints = {
       audio: {
         deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-        echoCancellation, noiseSuppression, autoGainControl: true
+        echoCancellation, noiseSuppression, autoGainControl: true,
+        sampleRate: 48000,
+        channelCount: 1,
+        latency: { ideal: 0.01 }
       }
     };
     localStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
@@ -1197,7 +1220,9 @@ window.joinRoom = async (roomName, hasPassword, providedPassword) => {
       echoCancellation: $('echo-cancel')?.checked ?? true,
       noiseSuppression: $('noise-suppress')?.checked ?? true,
       autoGainControl: true,
-      latency: 0
+      sampleRate: 48000,
+      channelCount: 1,
+      latency: { ideal: 0.01 }
     }
   };
 
@@ -1551,9 +1576,13 @@ function createPeerConnection(peerId, username, avatar, initiator) {
 
   if (initiator) {
     pc.createOffer()
-      .then(offer => pc.setLocalDescription(offer))
+      .then(offer => {
+        // Opus SDP 최적화 적용
+        offer.sdp = optimizeOpusSdp(offer.sdp, audioMode);
+        return pc.setLocalDescription(offer);
+      })
       .then(() => socket.emit('offer', { to: peerId, offer: pc.localDescription }))
-      .catch(e => console.error('Offer 생성 실패:', e));
+      .catch(e => log('Offer 생성 실패:', e));
   }
 
   renderUsers();
@@ -1653,16 +1682,29 @@ function startLatencyPing() {
         
         if (rtt > 0) { avgLatency += rtt; count++; }
         
-        // 자동 적응: 패킷 손실 높으면 비트레이트 낮춤
-        if (autoAdapt && lossRate > 3) {
+        // 자동 적응: 네트워크 상태에 따라 비트레이트 조절
+        if (autoAdapt) {
           const sender = peer.pc.getSenders().find(s => s.track?.kind === 'audio');
           if (sender) {
             const params = sender.getParameters();
             if (params.encodings?.[0]) {
-              const currentBitrate = params.encodings[0].maxBitrate || audioModes[audioMode].bitrate;
-              const newBitrate = Math.max(16000, currentBitrate * 0.8);
-              params.encodings[0].maxBitrate = newBitrate;
-              sender.setParameters(params).catch(() => {});
+              const targetBitrate = audioModes[audioMode].bitrate;
+              const currentBitrate = params.encodings[0].maxBitrate || targetBitrate;
+              let newBitrate = currentBitrate;
+              
+              // 품질 저하 시 비트레이트 감소
+              if (lossRate > 3 || jitter > 40) {
+                newBitrate = Math.max(16000, currentBitrate * 0.8);
+              } 
+              // 품질 좋으면 점진적 복구
+              else if (lossRate < 1 && jitter < 20 && currentBitrate < targetBitrate) {
+                newBitrate = Math.min(targetBitrate, currentBitrate * 1.1);
+              }
+              
+              if (newBitrate !== currentBitrate) {
+                params.encodings[0].maxBitrate = Math.round(newBitrate);
+                sender.setParameters(params).catch(() => {});
+              }
             }
           }
         }
@@ -1817,7 +1859,12 @@ socket.on('offer', async ({ from, offer }) => {
       await pc.setRemoteDescription(offer);
     }
     
-    const answer = await pc.createAnswer();
+    let answer = await pc.createAnswer();
+    // Opus SDP 최적화 적용
+    answer = new RTCSessionDescription({
+      type: answer.type,
+      sdp: optimizeOpusSdp(answer.sdp, audioMode)
+    });
     await pc.setLocalDescription(answer);
     socket.emit('answer', { to: from, answer });
   } catch (e) {
