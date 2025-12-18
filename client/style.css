@@ -423,7 +423,7 @@ h3 { font-size: 1.3em; color: var(--text-secondary); margin-bottom: 15px; }
 
 /* Logo */
 .logo { max-width: 280px; height: auto; margin-bottom: 10px; }
-.logo-large { width: 100%; max-width: 800px; height: auto; }
+.logo-large { width: 100%; max-width: 400px; height: auto; }
 .lobby-logo { text-align: center; padding: 20px 0; }
 #lobby-container { width: 100%; max-width: 2000px; margin: 0 auto; }
 #lobby-container.hidden { display: none; }
