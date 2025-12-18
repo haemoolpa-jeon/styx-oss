@@ -963,6 +963,15 @@ async function loadAudioDevices() {
   
   if (!inputSelect) return;
   
+  // HTTP에서는 mediaDevices가 없음 (HTTPS 필요)
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    console.warn('HTTPS 필요: 오디오 장치 접근 불가');
+    inputSelect.innerHTML = '<option>HTTPS 필요</option>';
+    if (outputSelect) outputSelect.innerHTML = '<option>HTTPS 필요</option>';
+    toast('오디오 장치 접근을 위해 HTTPS가 필요합니다', 'warning', 5000);
+    return;
+  }
+  
   try {
     // 먼저 권한 요청
     const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
