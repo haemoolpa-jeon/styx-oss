@@ -1465,6 +1465,9 @@ function createPeerConnection(peerId, username, avatar, initiator) {
     const peerData = peers.get(peerId);
     try {
       const ctx = new AudioContext();
+      // AudioContext가 suspended 상태면 resume
+      if (ctx.state === 'suspended') ctx.resume();
+      
       const source = ctx.createMediaStreamSource(e.streams[0]);
       
       // 압축기
@@ -1513,6 +1516,8 @@ function createPeerConnection(peerId, username, avatar, initiator) {
     if (audioEl.playsInline !== undefined) {
       audioEl.playsInline = true;
     }
+    // 오디오 재생 시작
+    audioEl.play().catch(() => {});
     renderUsers();
   };
 
