@@ -124,22 +124,22 @@ button { cursor: pointer; border: none; font-family: inherit; }
   border-radius: 14px; margin-bottom: 30px;
 }
 .header-logo { height: 50px; }
-.header-user { display: flex; align-items: center; gap: 16px; }
+.header-user { display: flex; align-items: center; gap: 20px; }
 .avatar {
-  width: 48px; height: 48px; border-radius: 50%;
+  width: 58px; height: 58px; border-radius: 50%;
   background: var(--bg-card); background-size: cover;
 }
-#my-username { font-weight: 500; font-size: 18px; }
-.header-actions { display: flex; gap: 10px; align-items: center; margin-left: auto; }
+#my-username { font-weight: 500; font-size: 22px; }
+.header-actions { display: flex; gap: 12px; align-items: center; margin-left: auto; }
 .header-actions button, .header-actions label {
-  width: 48px; height: 48px; border-radius: 10px;
+  width: 58px; height: 58px; border-radius: 12px;
   background: var(--bg-card); display: flex; align-items: center;
-  justify-content: center; cursor: pointer; font-size: 20px;
+  justify-content: center; cursor: pointer; font-size: 24px;
 }
 .header-actions button:hover, .header-actions label:hover { background: var(--border); }
 .avatar-upload input { display: none; }
 .btn-logout {
-  width: auto !important; padding: 0 20px; font-size: 16px;
+  width: auto !important; padding: 0 24px; font-size: 19px;
   color: var(--text-secondary);
 }
 
