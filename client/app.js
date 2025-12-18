@@ -1541,6 +1541,12 @@ function createPeerConnection(peerId, username, avatar, initiator) {
 
   pc.ontrack = (e) => {
     const peerData = peers.get(peerId);
+    
+    // 지터 버퍼 적용 (WebRTC playoutDelayHint)
+    if (e.receiver && e.receiver.playoutDelayHint !== undefined) {
+      e.receiver.playoutDelayHint = jitterBuffer / 1000; // ms → seconds
+    }
+    
     try {
       // 저지연 AudioContext 생성
       const ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
@@ -1839,6 +1845,19 @@ function applyDelayCompensation() {
     if (peer.delayNode && peer.latency !== null) {
       const compensation = Math.max(0, (maxLatency - peer.latency) / 1000); // ms -> sec
       peer.delayNode.delayTime.setTargetAtTime(compensation, peer.audioContext.currentTime, 0.1);
+    }
+  });
+}
+
+// 지터 버퍼 적용 (기존 피어에)
+function applyJitterBuffer() {
+  peers.forEach(peer => {
+    if (peer.pc) {
+      peer.pc.getReceivers().forEach(receiver => {
+        if (receiver.track?.kind === 'audio' && receiver.playoutDelayHint !== undefined) {
+          receiver.playoutDelayHint = jitterBuffer / 1000;
+        }
+      });
     }
   });
 }
@@ -2271,6 +2290,8 @@ if ($('room-jitter-slider')) {
       $('jitter-slider').value = jitterBuffer;
       $('jitter-value').textContent = jitterBuffer + 'ms';
     }
+    // 기존 피어에 지터 버퍼 적용
+    applyJitterBuffer();
   };
 }
 
