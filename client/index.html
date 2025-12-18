@@ -125,45 +125,82 @@
     <!-- 방 생성 모달 -->
     <div id="create-room-modal" class="modal hidden">
       <div class="modal-backdrop" onclick="closeCreateRoomModal()"></div>
-      <div class="modal-box">
+      <div class="modal-box modal-wide">
         <div class="modal-header">
           <h2>🎵 새 방 만들기</h2>
           <button class="modal-close" onclick="closeCreateRoomModal()">✕</button>
         </div>
         <div class="modal-body">
-          <div class="form-field">
-            <label>방 이름 *</label>
-            <input type="text" id="new-room-name" placeholder="방 이름 입력..." maxlength="30">
-          </div>
-          <div class="form-field">
-            <label>비밀번호 (선택)</label>
-            <input type="password" id="new-room-password" placeholder="비공개 방은 비밀번호 설정">
-          </div>
-          <div class="form-row">
+          <!-- 기본 설정 -->
+          <div class="form-section">
+            <h4>기본 설정</h4>
             <div class="form-field">
-              <label>최대 인원</label>
-              <select id="new-room-max-users">
-                <option value="2">2명</option>
-                <option value="3">3명</option>
-                <option value="4">4명</option>
-                <option value="5">5명</option>
-                <option value="6">6명</option>
-                <option value="7">7명</option>
-                <option value="8" selected>8명</option>
-              </select>
+              <label>방 이름 *</label>
+              <input type="text" id="new-room-name" placeholder="방 이름 입력..." maxlength="30">
             </div>
-            <div class="form-field">
-              <label>오디오 모드</label>
-              <select id="new-room-audio-mode">
-                <option value="voice">🎤 음성</option>
-                <option value="music">🎸 악기</option>
-              </select>
+            <div class="form-row">
+              <div class="form-field">
+                <label>비밀번호 (선택)</label>
+                <input type="password" id="new-room-password" placeholder="비공개 방은 비밀번호 설정">
+              </div>
+              <div class="form-field">
+                <label>최대 인원</label>
+                <select id="new-room-max-users">
+                  <option value="2">2명</option>
+                  <option value="3">3명</option>
+                  <option value="4">4명</option>
+                  <option value="5">5명</option>
+                  <option value="6">6명</option>
+                  <option value="7">7명</option>
+                  <option value="8" selected>8명</option>
+                </select>
+              </div>
             </div>
           </div>
-          <label class="checkbox-inline">
-            <input type="checkbox" id="new-room-private">
-            🔒 비공개 방
-          </label>
+
+          <!-- 오디오 설정 -->
+          <div class="form-section">
+            <h4>오디오 설정</h4>
+            <div class="form-row">
+              <div class="form-field">
+                <label>오디오 모드</label>
+                <select id="new-room-audio-mode">
+                  <option value="voice">🎤 음성 (저지연)</option>
+                  <option value="music">🎸 악기 (고품질)</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label>샘플레이트</label>
+                <select id="new-room-sample-rate">
+                  <option value="48000" selected>48 kHz (권장)</option>
+                  <option value="44100">44.1 kHz</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-field">
+                <label>비트레이트</label>
+                <select id="new-room-bitrate">
+                  <option value="64">64 kbps (저대역폭)</option>
+                  <option value="96" selected>96 kbps (권장)</option>
+                  <option value="128">128 kbps (고품질)</option>
+                  <option value="192">192 kbps (최고품질)</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label>기본 BPM</label>
+                <input type="number" id="new-room-bpm" value="120" min="30" max="300" placeholder="120">
+              </div>
+            </div>
+          </div>
+
+          <!-- 옵션 -->
+          <div class="form-section">
+            <label class="checkbox-inline">
+              <input type="checkbox" id="new-room-private">
+              🔒 비공개 방 (목록에 표시 안 함)
+            </label>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="closeCreateRoomModal()">취소</button>
