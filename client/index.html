@@ -74,6 +74,13 @@
                 <label>🔊 출력 장치</label>
                 <select id="audio-output"></select>
               </div>
+              <div class="form-field">
+                <label>🎵 오디오 모드</label>
+                <div class="mode-toggle">
+                  <button id="voiceModeBtn" class="mode-btn active" onclick="setAudioMode('voice')">🎤 음성</button>
+                  <button id="musicModeBtn" class="mode-btn" onclick="setAudioMode('music')">🎸 악기</button>
+                </div>
+              </div>
             </div>
             <div class="audio-col">
               <div class="checkbox-group">
@@ -81,14 +88,32 @@
                 <label><input type="checkbox" id="noise-suppress" checked> 노이즈 억제</label>
                 <label><input type="checkbox" id="auto-gain" checked> 자동 게인</label>
                 <label><input type="checkbox" id="ptt-mode"> 푸시투톡 (Space)</label>
+                <label><input type="checkbox" id="vad-mode" checked> 음성 감지 (말하는 사람 표시)</label>
+                <label><input type="checkbox" id="ducking-mode"> 오디오 덕킹</label>
+                <label><input type="checkbox" id="auto-adapt" checked> 자동 품질 조절</label>
               </div>
             </div>
             <div class="audio-col">
+              <div class="form-field">
+                <label>📊 지터 버퍼 <span id="jitter-value">100ms</span></label>
+                <input type="range" id="jitter-slider" min="50" max="200" value="100" step="10">
+                <span class="hint">높을수록 안정적, 지연 증가</span>
+              </div>
               <button id="test-audio-btn" class="btn-test">🎤 마이크 테스트</button>
               <div class="mic-meter">
                 <div id="mic-level"></div>
               </div>
               <span id="test-status-text" class="test-status"></span>
+            </div>
+          </div>
+          <!-- Tauri 앱 전용 설정 -->
+          <div id="tauri-settings" style="display:none; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);">
+            <div class="form-field">
+              <label>🔌 연결 모드</label>
+              <div class="mode-toggle">
+                <button id="webrtcModeBtn" class="mode-btn active" onclick="setConnectionMode('webrtc')">🌐 WebRTC</button>
+                <button id="udpModeBtn" class="mode-btn" onclick="setConnectionMode('udp')">⚡ UDP (저지연)</button>
+              </div>
             </div>
           </div>
         </section>
