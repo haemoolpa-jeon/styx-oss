@@ -1764,6 +1764,49 @@ socket.on('user-updated', ({ id, avatar }) => {
 });
 
 // 음소거
+// 음소거 UI 업데이트
+function updateMuteUI() {
+  $('muteBtn').textContent = isMuted ? '🔇' : '🎤';
+  $('muteBtn').classList.toggle('muted', isMuted);
+}
+
+// 오디오 스트림 재시작 (설정 변경 시)
+async function restartAudioStream() {
+  if (!localStream) return;
+  
+  const oldTracks = localStream.getAudioTracks();
+  oldTracks.forEach(t => t.stop());
+  
+  try {
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+        echoCancellation: $('room-echo-cancel')?.checked ?? $('echo-cancel')?.checked ?? true,
+        noiseSuppression: $('room-noise-suppress')?.checked ?? $('noise-suppress')?.checked ?? true,
+        autoGainControl: true
+      }
+    });
+    
+    const newTrack = newStream.getAudioTracks()[0];
+    localStream = newStream;
+    
+    // 모든 피어 연결에 새 트랙 적용
+    peers.forEach(peer => {
+      const sender = peer.pc.getSenders().find(s => s.track?.kind === 'audio');
+      if (sender) sender.replaceTrack(newTrack);
+    });
+    
+    // 음소거 상태 유지
+    if (isMuted || pttMode) {
+      newTrack.enabled = false;
+    }
+    
+  } catch (e) {
+    console.error('오디오 스트림 재시작 실패:', e);
+    toast('오디오 설정 변경 실패', 'error');
+  }
+}
+
 $('muteBtn').onclick = () => {
   isMuted = !isMuted;
   localStream?.getAudioTracks().forEach(t => t.enabled = !isMuted);
