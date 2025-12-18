@@ -1616,6 +1616,19 @@ function createPeerConnection(peerId, username, avatar, initiator) {
     if (e.candidate) socket.emit('ice-candidate', { to: peerId, candidate: e.candidate });
   };
 
+  pc.oniceconnectionstatechange = () => {
+    const peerData = peers.get(peerId);
+    if (pc.iceConnectionState === 'disconnected') {
+      // ICE 연결 끊김 - 자동 복구 시도
+      setTimeout(() => {
+        if (pc.iceConnectionState === 'disconnected') {
+          pc.restartIce();
+        }
+      }, 2000);
+    }
+    if (peerData) peerData.iceState = pc.iceConnectionState;
+  };
+
   pc.onconnectionstatechange = () => {
     const peerData = peers.get(peerId);
     if (pc.connectionState === 'connected') {
