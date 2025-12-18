@@ -1755,13 +1755,9 @@ socket.on('offer', async ({ from, offer }) => {
 });
 
 socket.on('answer', async ({ from, answer }) => {
-  try {
-    const peer = peers.get(from);
-    if (peer && peer.pc.signalingState === 'have-local-offer') {
-      await peer.pc.setRemoteDescription(answer);
-    }
-  } catch (e) {
-    console.error('Answer 처리 실패:', e);
+  const peer = peers.get(from);
+  if (peer?.pc.signalingState === 'have-local-offer') {
+    try { await peer.pc.setRemoteDescription(answer); } catch {}
   }
 });
 
