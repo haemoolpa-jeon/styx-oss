@@ -123,7 +123,7 @@ const saveSessions = async (sessions) => {
 };
 
 let sessions = new Map();
-(async () => { sessions = await loadSessions(); })();
+let sessionsReady = loadSessions().then(s => { sessions = s; });
 
 const generateToken = () => require('crypto').randomBytes(32).toString('hex');
 
@@ -207,6 +207,7 @@ io.on('connection', (socket) => {
   
   socket.on('login', async ({ username, password }, cb) => {
     try {
+      await sessionsReady;
       if (!validateUsername(username)) return cb({ error: 'Invalid username' });
       const data = await loadUsers();
       const user = data.users[username];
@@ -229,6 +230,7 @@ io.on('connection', (socket) => {
 
   socket.on('restore-session', async ({ username, token }, cb) => {
     try {
+      await sessionsReady;
       const session = sessions.get(username);
       if (!session || session.token !== token || session.expires < Date.now()) {
         sessions.delete(username);
@@ -253,14 +255,15 @@ io.on('connection', (socket) => {
       if (!validateUsername(username)) return cb({ error: 'Invalid username (2-20자, 영문/숫자/한글/_)' });
       if (!validatePassword(password)) return cb({ error: 'Invalid password (4-50자)' });
       
-      await withLock(async () => {
+      const result = await withLock(async () => {
         const data = await loadUsers();
-        if (data.users[username] || data.pending[username]) return cb({ error: 'Username taken' });
+        if (data.users[username] || data.pending[username]) return { error: 'Username taken' };
         const hash = await bcrypt.hash(password, SALT_ROUNDS);
         data.pending[username] = { password: hash, requestedAt: new Date().toISOString() };
         await saveUsers(data);
-        cb({ success: true, message: '가입 요청 완료' });
+        return { success: true, message: '가입 요청 완료' };
       });
+      cb(result);
     } catch (e) {
       console.error('회원가입 오류:', e.message);
       cb({ error: 'Server error' });
@@ -272,17 +275,18 @@ io.on('connection', (socket) => {
       if (!socket.username) return cb({ error: 'Not logged in' });
       if (!validatePassword(newPassword)) return cb({ error: 'Invalid new password' });
       
-      await withLock(async () => {
+      const result = await withLock(async () => {
         const data = await loadUsers();
         const user = data.users[socket.username];
         const valid = await bcrypt.compare(oldPassword, user.password);
-        if (!valid) return cb({ error: 'Wrong password' });
+        if (!valid) return { error: 'Wrong password' };
         user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
         await saveUsers(data);
         sessions.delete(socket.username);
         await saveSessions(sessions);
-        cb({ success: true });
+        return { success: true };
       });
+      cb(result);
     } catch (e) {
       console.error('비밀번호 변경 오류:', e.message);
       cb({ error: 'Server error' });
@@ -317,17 +321,18 @@ io.on('connection', (socket) => {
   socket.on('approve-user', async ({ username }, cb) => {
     try {
       if (!socket.isAdmin) return cb({ error: 'Not admin' });
-      await withLock(async () => {
+      const result = await withLock(async () => {
         const data = await loadUsers();
-        if (!data.pending[username]) return cb({ error: 'No pending request' });
+        if (!data.pending[username]) return { error: 'No pending request' };
         data.users[username] = {
           password: data.pending[username].password, approved: true, isAdmin: false,
           avatar: null, createdAt: new Date().toISOString()
         };
         delete data.pending[username];
         await saveUsers(data);
-        cb({ success: true });
+        return { success: true };
       });
+      cb(result);
     } catch (e) {
       console.error('사용자 승인 오류:', e.message);
       cb({ error: 'Server error' });
@@ -341,8 +346,8 @@ io.on('connection', (socket) => {
         const data = await loadUsers();
         delete data.pending[username];
         await saveUsers(data);
-        cb({ success: true });
       });
+      cb({ success: true });
     } catch (e) {
       console.error('사용자 거절 오류:', e.message);
       cb({ error: 'Server error' });
@@ -354,9 +359,9 @@ io.on('connection', (socket) => {
       if (!socket.isAdmin) return cb({ error: 'Not admin' });
       if (username === socket.username) return cb({ error: 'Cannot delete yourself' });
       
-      await withLock(async () => {
+      const result = await withLock(async () => {
         const data = await loadUsers();
-        if (!data.users[username]) return cb({ error: 'User not found' });
+        if (!data.users[username]) return { error: 'User not found' };
         delete data.users[username];
         await saveUsers(data);
         sessions.delete(username);
@@ -369,8 +374,9 @@ io.on('connection', (socket) => {
         } catch (e) {
           console.error('아바타 삭제 오류:', e.message);
         }
-        cb({ success: true });
+        return { success: true };
       });
+      cb(result);
     } catch (e) {
       console.error('사용자 삭제 오류:', e.message);
       cb({ error: 'Server error' });
@@ -428,15 +434,16 @@ io.on('connection', (socket) => {
       
       await fs.writeFile(path.join(AVATARS_DIR, filename), buffer);
       
-      await withLock(async () => {
+      const result = await withLock(async () => {
         const data = await loadUsers();
         data.users[username].avatar = `/avatars/${filename}?t=${Date.now()}`;
         await saveUsers(data);
         if (socket.room) {
           socket.to(socket.room).emit('user-updated', { id: socket.id, avatar: data.users[username].avatar });
         }
-        cb({ success: true, avatar: data.users[username].avatar });
+        return { success: true, avatar: data.users[username].avatar };
       });
+      cb(result);
     } catch (e) {
       console.error('아바타 업로드 오류:', e.message);
       cb({ error: 'Server error' });
@@ -446,10 +453,12 @@ io.on('connection', (socket) => {
   socket.on('save-settings', async ({ settings }, cb) => {
     try {
       if (!socket.username) return cb?.({ error: 'Not logged in' });
-      const data = await loadUsers();
-      if (!data.users[socket.username]) return cb?.({ error: 'User not found' });
-      data.users[socket.username].settings = settings;
-      await saveUsers(data);
+      await withLock(async () => {
+        const data = await loadUsers();
+        if (!data.users[socket.username]) return;
+        data.users[socket.username].settings = settings;
+        await saveUsers(data);
+      });
       cb?.({ success: true });
     } catch (e) {
       console.error('설정 저장 오류:', e.message);
