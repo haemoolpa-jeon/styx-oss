@@ -1741,14 +1741,12 @@ function renderPingGraph() {
 
 // 소켓 이벤트
 socket.on('user-joined', ({ id, username, avatar }) => {
-  console.log('[WR] user-joined:', id, 'my id:', socket.id);
   createPeerConnection(id, username, avatar, true);
   playSound('join');
   toast(`${username} 입장`, 'info', 2000);
 });
 
 socket.on('offer', async ({ from, offer }) => {
-  console.log('[WR] offer from:', from, 'state:', peers.get(from)?.pc?.signalingState, 'polite:', socket.id > from);
   try {
     let peer = peers.get(from);
     if (!peer) {
@@ -1759,15 +1757,11 @@ socket.on('offer', async ({ from, offer }) => {
     
     // Perfect negotiation: glare 처리
     const offerCollision = pc.signalingState !== 'stable';
-    const polite = socket.id > from; // ID가 큰 쪽이 양보
+    const polite = socket.id > from;
     
-    if (offerCollision && !polite) {
-      console.log('[WR] ignoring offer (impolite)');
-      return; // impolite 쪽은 들어온 offer 무시
-    }
+    if (offerCollision && !polite) return;
     
     if (offerCollision && polite) {
-      console.log('[WR] rollback and accept offer (polite)');
       await Promise.all([
         pc.setLocalDescription({ type: 'rollback' }),
         pc.setRemoteDescription(offer)
@@ -1779,17 +1773,15 @@ socket.on('offer', async ({ from, offer }) => {
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     socket.emit('answer', { to: from, answer });
-    console.log('[WR] sent answer to:', from);
   } catch (e) {
-    console.error('Offer 처리 실패:', e);
+    log('Offer 처리 실패:', e);
   }
 });
 
 socket.on('answer', async ({ from, answer }) => {
-  console.log('[WR] answer from:', from, 'state:', peers.get(from)?.pc?.signalingState);
   const peer = peers.get(from);
   if (peer?.pc.signalingState === 'have-local-offer') {
-    try { await peer.pc.setRemoteDescription(answer); console.log('[WR] answer applied'); } catch (e) { console.error('[WR] answer failed:', e); }
+    try { await peer.pc.setRemoteDescription(answer); } catch {}
   }
 });
 
