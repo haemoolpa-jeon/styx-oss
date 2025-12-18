@@ -288,10 +288,17 @@
           <input type="range" id="room-jitter-slider" min="50" max="200" value="100" step="10" class="toolbar-slider">
           <span id="room-jitter-value" class="toolbar-value">100ms</span>
         </div>
-        <div class="toolbar-section">
+        <div class="toolbar-section metronome-section">
           <button id="metronome-toggle" class="btn-metro">▶️</button>
           <input type="number" id="bpm-input" value="120" min="30" max="300" class="bpm-input">
           <span>BPM</span>
+          <label class="count-in-label"><input type="checkbox" id="count-in"> 카운트인</label>
+          <div class="beat-indicators">
+            <span class="beat-indicator">1</span>
+            <span class="beat-indicator">2</span>
+            <span class="beat-indicator">3</span>
+            <span class="beat-indicator">4</span>
+          </div>
           <div id="metronome-tick" class="metro-tick"></div>
         </div>
         <div class="toolbar-section">

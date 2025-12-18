@@ -1353,9 +1353,10 @@ $('metronome-toggle').onclick = () => {
   
   const bpm = parseInt($('bpm-input').value) || 120;
   const playing = !metronomeInterval;
+  const countIn = $('count-in')?.checked || false;
   
   if (playing) {
-    startMetronome(bpm);
+    startMetronome(bpm, null, countIn);
   } else {
     stopMetronome();
   }
@@ -1394,22 +1395,33 @@ socket.on('delay-compensation-sync', (enabled) => {
   toast(enabled ? '지연 맞추기 켜짐 - 모든 사람 타이밍 동기화' : '지연 맞추기 꺼짐', 'info');
 });
 
-function startMetronome(bpm, serverStartTime) {
+let metronomeBeat = 0; // 현재 박자 (0-3)
+const BEATS_PER_BAR = 4;
+
+function startMetronome(bpm, serverStartTime, countIn = false) {
   stopMetronome();
   
   const interval = 60000 / bpm;
   const tick = $('metronome-tick');
+  const beatIndicators = document.querySelectorAll('.beat-indicator');
   
   let delay = 0;
   if (serverStartTime) {
     const elapsed = Date.now() - serverStartTime;
     delay = interval - (elapsed % interval);
+    metronomeBeat = Math.floor((elapsed / interval) % BEATS_PER_BAR);
+  } else {
+    metronomeBeat = 0;
   }
   
-  const playTick = () => {
+  const playTick = (isAccent = false) => {
     tick.classList.add('active');
     
-    // AudioContext가 없거나 suspended면 생성/resume
+    // 비트 인디케이터 업데이트
+    beatIndicators.forEach((el, i) => {
+      el.classList.toggle('active', i === metronomeBeat);
+    });
+    
     if (!metronomeAudio || metronomeAudio.state === 'closed') {
       metronomeAudio = new AudioContext();
     }
@@ -1422,22 +1434,43 @@ function startMetronome(bpm, serverStartTime) {
       const gain = metronomeAudio.createGain();
       osc.connect(gain);
       gain.connect(metronomeAudio.destination);
-      osc.frequency.value = 1000;
-      gain.gain.setValueAtTime(0.3, metronomeAudio.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, metronomeAudio.currentTime + 0.1);
+      // 강박(첫 박)은 높은 음, 약박은 낮은 음
+      osc.frequency.value = isAccent ? 1200 : 800;
+      gain.gain.setValueAtTime(isAccent ? 0.4 : 0.25, metronomeAudio.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, metronomeAudio.currentTime + 0.08);
       osc.start();
-      osc.stop(metronomeAudio.currentTime + 0.1);
-    } catch (e) {
-      console.error('메트로놈 사운드 재생 실패:', e);
-    }
+      osc.stop(metronomeAudio.currentTime + 0.08);
+    } catch {}
     
-    setTimeout(() => tick.classList.remove('active'), 100);
+    setTimeout(() => tick.classList.remove('active'), 80);
+    metronomeBeat = (metronomeBeat + 1) % BEATS_PER_BAR;
   };
   
-  setTimeout(() => {
-    playTick();
-    metronomeInterval = setInterval(playTick, interval);
-  }, delay);
+  const startPlaying = () => {
+    metronomeBeat = 0;
+    playTick(true); // 첫 박은 강박
+    metronomeInterval = setInterval(() => {
+      playTick(metronomeBeat === 0);
+    }, interval);
+  };
+  
+  // 카운트인: 4박 후 시작
+  if (countIn && !serverStartTime) {
+    let countInBeat = 0;
+    const countInInterval = setInterval(() => {
+      playTick(countInBeat === 0);
+      countInBeat++;
+      if (countInBeat >= BEATS_PER_BAR) {
+        clearInterval(countInInterval);
+        startPlaying();
+      }
+    }, interval);
+    $('metronome-toggle').textContent = '⏳';
+  } else {
+    setTimeout(() => {
+      startPlaying();
+    }, delay);
+  }
   
   $('metronome-toggle').textContent = '⏹️';
   $('metronome-toggle').classList.add('playing');
@@ -1448,6 +1481,8 @@ function stopMetronome() {
     clearInterval(metronomeInterval);
     metronomeInterval = null;
   }
+  metronomeBeat = 0;
+  document.querySelectorAll('.beat-indicator').forEach(el => el.classList.remove('active'));
   $('metronome-toggle').textContent = '▶️';
   $('metronome-toggle').classList.remove('playing');
 }
@@ -1498,7 +1533,8 @@ function createPeerConnection(peerId, username, avatar, initiator) {
     pc, username, avatar, audioEl, 
     latency: null, volume: savedVolume,
     packetLoss: 0, jitter: 0, bitrate: 0,
-    quality: { grade: 'good', label: '연결중', color: '#ffa502' }
+    quality: { grade: 'good', label: '연결중', color: '#ffa502' },
+    pan: 0, muted: false, solo: false
   });
 
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
@@ -1521,6 +1557,10 @@ function createPeerConnection(peerId, username, avatar, initiator) {
       compressor.attack.value = 0.003;
       compressor.release.value = 0.25;
       
+      // 팬 노드 (스테레오 위치)
+      const panNode = ctx.createStereoPanner();
+      panNode.pan.value = 0;
+      
       // 덕킹용 게인 노드
       const gainNode = ctx.createGain();
       gainNode.gain.value = 1;
@@ -1536,13 +1576,15 @@ function createPeerConnection(peerId, username, avatar, initiator) {
       const dest = ctx.createMediaStreamDestination();
       source.connect(analyser);
       analyser.connect(compressor);
-      compressor.connect(delayNode);
+      compressor.connect(panNode);
+      panNode.connect(delayNode);
       delayNode.connect(gainNode);
       gainNode.connect(dest);
       
       audioEl.srcObject = dest.stream;
       if (peerData) {
         peerData.audioContext = ctx;
+        peerData.panNode = panNode;
         peerData.gainNode = gainNode;
         peerData.delayNode = delayNode;
         peerData.analyser = analyser;
@@ -1609,6 +1651,8 @@ function createPeerConnection(peerId, username, avatar, initiator) {
 
 function renderUsers() {
   usersGrid.innerHTML = '';
+  const hasSolo = [...peers.values()].some(p => p.solo);
+  
   peers.forEach((peer, id) => {
     const state = peer.pc.connectionState;
     const connected = state === 'connected';
@@ -1627,6 +1671,11 @@ function renderUsers() {
           <span class="stat">${peer.packetLoss.toFixed(1)}% 손실</span>
         </div>
       </div>
+      <div class="card-mixer">
+        <button class="mixer-btn ${peer.muted ? 'active' : ''}" data-action="mute">M</button>
+        <button class="mixer-btn ${peer.solo ? 'active' : ''}" data-action="solo">S</button>
+        <input type="range" min="-100" max="100" value="${peer.pan}" class="pan-slider" title="팬: ${peer.pan}">
+      </div>
       <div class="card-controls">
         <input type="range" min="0" max="100" value="${peer.volume}" class="volume-slider">
         <span class="volume-label">${peer.volume}%</span>
@@ -1634,6 +1683,7 @@ function renderUsers() {
       </div>
     `;
     
+    // 볼륨 슬라이더
     const slider = card.querySelector('.volume-slider');
     const label = card.querySelector('.volume-label');
     slider.oninput = () => {
@@ -1642,6 +1692,27 @@ function renderUsers() {
       peer.volume = vol;
       volumeStates.set(id, vol);
       label.textContent = vol + '%';
+    };
+    
+    // 뮤트 버튼
+    card.querySelector('[data-action="mute"]').onclick = () => {
+      peer.muted = !peer.muted;
+      applyMixerState();
+      renderUsers();
+    };
+    
+    // 솔로 버튼
+    card.querySelector('[data-action="solo"]').onclick = () => {
+      peer.solo = !peer.solo;
+      applyMixerState();
+      renderUsers();
+    };
+    
+    // 팬 슬라이더
+    const panSlider = card.querySelector('.pan-slider');
+    panSlider.oninput = () => {
+      peer.pan = parseInt(panSlider.value);
+      if (peer.panNode) peer.panNode.pan.value = peer.pan / 100;
     };
     
     const kickBtn = card.querySelector('.kick-btn');
@@ -1654,6 +1725,20 @@ function renderUsers() {
     }
     
     usersGrid.appendChild(card);
+  });
+}
+
+// 믹서 상태 적용 (뮤트/솔로)
+function applyMixerState() {
+  const hasSolo = [...peers.values()].some(p => p.solo);
+  peers.forEach(peer => {
+    if (peer.gainNode) {
+      if (peer.muted || (hasSolo && !peer.solo)) {
+        peer.gainNode.gain.value = 0;
+      } else {
+        peer.gainNode.gain.value = 1;
+      }
+    }
   });
 }
 
