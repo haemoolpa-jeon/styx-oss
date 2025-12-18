@@ -68,11 +68,15 @@ const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
     // 무료 TURN 서버 (OpenRelay)
     { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
   ],
-  iceCandidatePoolSize: 10
+  iceCandidatePoolSize: 10,
+  bundlePolicy: 'max-bundle',        // 단일 연결로 미디어 번들링
+  rtcpMuxPolicy: 'require'           // RTCP 멀티플렉싱 필수
 };
 
 // 오디오 모드별 설정
@@ -445,6 +449,18 @@ window.addEventListener('offline', () => {
   isOnline = false;
   toast('인터넷 연결 끊김', 'error', 5000);
 });
+
+// 네트워크 변경 감지 (WiFi ↔ 유선 전환 등)
+if (navigator.connection) {
+  navigator.connection.addEventListener('change', () => {
+    if (socket.room && peers.size > 0) {
+      toast('네트워크 변경 감지, 재연결 중...', 'info');
+      peers.forEach(peer => {
+        try { peer.pc.restartIce(); } catch {}
+      });
+    }
+  });
+}
 
 // 자동 재입장
 async function autoRejoin() {
@@ -1489,7 +1505,8 @@ function createPeerConnection(peerId, username, avatar, initiator) {
   pc.ontrack = (e) => {
     const peerData = peers.get(peerId);
     try {
-      const ctx = new AudioContext();
+      // 저지연 AudioContext 생성
+      const ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
       // AudioContext가 suspended 상태면 resume
       if (ctx.state === 'suspended') ctx.resume();
       
