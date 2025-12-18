@@ -397,7 +397,7 @@ function toggleRecording() {
   }
 }
 const authPanel = $('auth');
-const lobby = $('lobby');
+const lobby = $('lobby-container');
 const adminPanel = $('admin-panel');
 const roomView = $('room-view');
 const usersGrid = $('users-grid');
