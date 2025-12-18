@@ -1745,9 +1745,27 @@ socket.on('offer', async ({ from, offer }) => {
       createPeerConnection(from, '사용자', null, false);
       peer = peers.get(from);
     }
-    await peer.pc.setRemoteDescription(offer);
-    const answer = await peer.pc.createAnswer();
-    await peer.pc.setLocalDescription(answer);
+    const pc = peer.pc;
+    
+    // Perfect negotiation: glare 처리
+    const offerCollision = pc.signalingState !== 'stable';
+    const polite = socket.id > from; // ID가 큰 쪽이 양보
+    
+    if (offerCollision && !polite) {
+      return; // impolite 쪽은 들어온 offer 무시
+    }
+    
+    if (offerCollision && polite) {
+      await Promise.all([
+        pc.setLocalDescription({ type: 'rollback' }),
+        pc.setRemoteDescription(offer)
+      ]);
+    } else {
+      await pc.setRemoteDescription(offer);
+    }
+    
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
     socket.emit('answer', { to: from, answer });
   } catch (e) {
     console.error('Offer 처리 실패:', e);
