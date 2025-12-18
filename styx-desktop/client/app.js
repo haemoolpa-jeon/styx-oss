@@ -1206,8 +1206,8 @@ window.joinRoom = async (roomName, hasPassword, providedPassword) => {
       $('muteBtn').classList.add('muted');
     }
     
-    // 관리자면 방 닫기 버튼 표시
-    if (res.isAdmin) {
+    // 관리자 또는 방 생성자면 방 닫기 버튼 표시
+    if (res.isAdmin || res.isCreator) {
       $('closeRoomBtn')?.classList.remove('hidden');
     } else {
       $('closeRoomBtn')?.classList.add('hidden');
@@ -1861,6 +1861,10 @@ function leaveRoom() {
   
   localStream?.getTracks().forEach(t => t.stop());
   localStream = null;
+  
+  // 상태 초기화
+  isMuted = false;
+  isPttActive = false;
   
   // UDP 정리
   cleanupUdp();

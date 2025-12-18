@@ -352,8 +352,12 @@ io.on('connection', (socket) => {
 
   // 관리자: 방 닫기
   socket.on('close-room', ({ roomName }, cb) => {
-    if (!socket.isAdmin) return cb({ error: 'Not admin' });
     if (!rooms.has(roomName)) return cb({ error: 'Room not found' });
+    const roomData = rooms.get(roomName);
+    // 관리자 또는 방 생성자만 닫기 가능
+    if (!socket.isAdmin && roomData.creatorId !== socket.id) {
+      return cb({ error: 'Not authorized' });
+    }
     
     // 방의 모든 사용자에게 알림
     io.to(roomName).emit('room-closed');
@@ -446,6 +450,7 @@ io.on('connection', (socket) => {
         users: new Map(), 
         messages: [], 
         passwordHash,
+        creatorId: socket.id,
         metronome: { bpm: 120, playing: false, startTime: null }
       });
     }
@@ -481,7 +486,8 @@ io.on('connection', (socket) => {
     cb({ 
       success: true, 
       users: existingUsers, 
-      isAdmin: user.isAdmin, 
+      isAdmin: user.isAdmin,
+      isCreator: roomData.creatorId === socket.id,
       messages: roomData.messages.slice(-50),
       metronome: roomData.metronome
     });
