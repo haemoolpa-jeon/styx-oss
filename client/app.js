@@ -57,8 +57,8 @@ let latencyHistory = []; // 핑 그래프용
 
 // 추가 기능
 let isOnline = navigator.onLine;
-let lastRoom = null;
-let lastRoomPassword = null;
+let lastRoom = sessionStorage.getItem('styx-room');
+let lastRoomPassword = sessionStorage.getItem('styx-room-pw');
 let duckingEnabled = localStorage.getItem('styx-ducking') === 'true';
 let vadEnabled = localStorage.getItem('styx-vad') !== 'false';
 let vadIntervals = new Map(); // 피어별 VAD 인터벌
@@ -629,6 +629,11 @@ async function showLobby() {
   
   await loadAudioDevices();
   loadRoomList();
+  
+  // 새로고침 후 자동 재입장
+  if (lastRoom) {
+    setTimeout(() => joinRoom(lastRoom, !!lastRoomPassword, lastRoomPassword), 500);
+  }
 }
 
 // 안정성 설정 초기화
@@ -1224,6 +1229,9 @@ window.joinRoom = async (roomName, hasPassword, providedPassword) => {
     socket.room = room;
     lastRoom = room;
     lastRoomPassword = roomPassword;
+    sessionStorage.setItem('styx-room', room);
+    if (roomPassword) sessionStorage.setItem('styx-room-pw', roomPassword);
+    else sessionStorage.removeItem('styx-room-pw');
     
     // 방 내 오디오 설정 동기화
     syncRoomAudioSettings();
@@ -1922,6 +1930,8 @@ function leaveRoom() {
   socket.room = null;
   lastRoom = null;
   lastRoomPassword = null;
+  sessionStorage.removeItem('styx-room');
+  sessionStorage.removeItem('styx-room-pw');
   roomView.classList.add('hidden');
   lobby.classList.remove('hidden');
   loadRoomList();
