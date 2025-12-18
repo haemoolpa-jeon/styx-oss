@@ -61,10 +61,41 @@
           </div>
         </div>
 
-        <!-- 숨겨진 오디오 장치 선택 (JS 호환용) -->
-        <div style="display:none;">
-          <select id="audio-device"></select>
-          <select id="audio-output"></select>
+        <!-- 오디오 설정 섹션 -->
+        <div class="lobby-section">
+          <h3>🎧 오디오 설정</h3>
+          <div class="audio-settings-grid">
+            <div class="setting-item">
+              <label>🎤 입력 장치</label>
+              <select id="audio-device"></select>
+            </div>
+            <div class="setting-item">
+              <label>🔊 출력 장치</label>
+              <select id="audio-output"></select>
+            </div>
+            <div class="setting-item">
+              <label>
+                <input type="checkbox" id="echo-cancel" checked>
+                🔇 에코 제거
+              </label>
+            </div>
+            <div class="setting-item">
+              <label>
+                <input type="checkbox" id="noise-suppress" checked>
+                🔕 노이즈 억제
+              </label>
+            </div>
+            <div class="setting-item">
+              <label>
+                <input type="checkbox" id="ptt-mode">
+                🎙️ 푸시투톡 (Space)
+              </label>
+            </div>
+            <div class="setting-item">
+              <button id="test-audio-btn" class="test-btn">🔍 마이크 테스트</button>
+              <div id="mic-level-bar" class="level-bar"><div id="mic-level" class="level"></div></div>
+            </div>
+          </div>
         </div>
 
         <!-- 방 목록 섹션 -->

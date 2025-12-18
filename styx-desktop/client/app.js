@@ -1806,6 +1806,56 @@ function leaveRoom() {
   
 }
 
+// ===== 마이크 테스트 =====
+let testStream = null;
+let testAnalyser = null;
+let testAnimationId = null;
+
+$('test-audio-btn').onclick = async () => {
+  const btn = $('test-audio-btn');
+  
+  if (testStream) {
+    // 테스트 중지
+    testStream.getTracks().forEach(t => t.stop());
+    testStream = null;
+    if (testAnimationId) cancelAnimationFrame(testAnimationId);
+    $('mic-level').style.width = '0%';
+    btn.textContent = '🔍 마이크 테스트';
+    return;
+  }
+  
+  try {
+    testStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+        echoCancellation: $('echo-cancel').checked,
+        noiseSuppression: $('noise-suppress').checked
+      }
+    });
+    
+    const ctx = new AudioContext();
+    const source = ctx.createMediaStreamSource(testStream);
+    testAnalyser = ctx.createAnalyser();
+    testAnalyser.fftSize = 256;
+    source.connect(testAnalyser);
+    
+    btn.textContent = '⏹️ 테스트 중지';
+    
+    const dataArray = new Uint8Array(testAnalyser.frequencyBinCount);
+    function updateLevel() {
+      if (!testStream) return;
+      testAnalyser.getByteFrequencyData(dataArray);
+      const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+      $('mic-level').style.width = Math.min(100, avg * 1.5) + '%';
+      testAnimationId = requestAnimationFrame(updateLevel);
+    }
+    updateLevel();
+    
+  } catch (e) {
+    toast('마이크 접근이 거부되었습니다', 'error');
+  }
+};
+
 // ===== 방 생성 모달 =====
 window.openCreateRoomModal = () => {
   $('create-room-modal').classList.remove('hidden');
