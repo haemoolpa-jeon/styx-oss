@@ -707,7 +707,7 @@ function initStabilitySettings() {
       pttMode = pttCheck.checked;
       localStorage.setItem('styx-ptt', pttMode);
       scheduleSettingsSave();
-      toast(pttMode ? 'PTT 모드: Space 키를 누르고 말하세요' : 'PTT 모드 해제', 'info');
+      toast(pttMode ? '눌러서 말하기: Space 키를 누르고 말하세요' : '눌러서 말하기 해제', 'info');
     };
   }
   
@@ -1349,7 +1349,7 @@ socket.on('delay-compensation-sync', (enabled) => {
       if (peer.delayNode) peer.delayNode.delayTime.setTargetAtTime(0, peer.audioContext.currentTime, 0.1);
     });
   }
-  toast(enabled ? '지연 보상 활성화' : '지연 보상 비활성화', 'info');
+  toast(enabled ? '지연 맞추기 켜짐 - 모든 사람 타이밍 동기화' : '지연 맞추기 꺼짐', 'info');
 });
 
 function startMetronome(bpm, serverStartTime) {

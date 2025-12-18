@@ -78,17 +78,17 @@
             <div class="audio-col">
               <div class="checkbox-group">
                 <label><input type="checkbox" id="echo-cancel" checked> 에코 제거</label>
-                <label><input type="checkbox" id="noise-suppress" checked> 노이즈 억제</label>
-                <label><input type="checkbox" id="auto-gain" checked> 자동 게인</label>
-                <label><input type="checkbox" id="ptt-mode"> 푸시투톡 (Space)</label>
-                <label><input type="checkbox" id="vad-mode" checked> 음성 감지 (말하는 사람 표시)</label>
-                <label><input type="checkbox" id="ducking-mode"> 오디오 덕킹</label>
+                <label><input type="checkbox" id="noise-suppress" checked> 잡음 제거</label>
+                <label><input type="checkbox" id="auto-gain" checked> 자동 음량</label>
+                <label><input type="checkbox" id="ptt-mode"> 눌러서 말하기 (Space)</label>
+                <label><input type="checkbox" id="vad-mode" checked> 말할 때 표시</label>
+                <label><input type="checkbox" id="ducking-mode"> 자동 볼륨 낮춤</label>
                 <label><input type="checkbox" id="auto-adapt" checked> 자동 품질 조절</label>
               </div>
             </div>
             <div class="audio-col">
               <div class="form-field">
-                <label>📊 지터 버퍼 <span id="jitter-value">100ms</span></label>
+                <label>📊 버퍼 크기 <span id="jitter-value">100ms</span></label>
                 <input type="range" id="jitter-slider" min="50" max="200" value="100" step="10">
                 <span class="hint">높을수록 안정적, 지연 증가</span>
               </div>
@@ -232,8 +232,8 @@
           </div>
           <div class="shortcuts-info">
             <h4>키보드 단축키</h4>
-            <p><kbd>M</kbd> 음소거 토글</p>
-            <p><kbd>Space</kbd> 메트로놈 / PTT</p>
+            <p><kbd>M</kbd> 마이크 켜기/끄기</p>
+            <p><kbd>Space</kbd> 메트로놈 / 눌러서 말하기</p>
           </div>
         </div>
       </div>
@@ -276,15 +276,15 @@
       <div class="room-toolbar">
         <div class="toolbar-section">
           <label class="toolbar-check"><input type="checkbox" id="room-echo-cancel" checked> 에코 제거</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-noise-suppress" checked> 노이즈 억제</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-ptt-mode"> PTT</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-vad-mode" checked> VAD</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-noise-suppress" checked> 잡음 제거</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-ptt-mode"> 눌러서 말하기</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-vad-mode" checked> 말할 때 표시</label>
           <label class="toolbar-check"><input type="checkbox" id="room-auto-adapt" checked> 자동 품질</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-ducking"> 덕킹</label>
-          <label class="toolbar-check"><input type="checkbox" id="delay-compensation"> 지연 보상</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-ducking"> 자동 볼륨</label>
+          <label class="toolbar-check"><input type="checkbox" id="delay-compensation"> 지연 맞추기</label>
         </div>
         <div class="toolbar-section">
-          <span class="toolbar-label">지터:</span>
+          <span class="toolbar-label">버퍼:</span>
           <input type="range" id="room-jitter-slider" min="50" max="200" value="100" step="10" class="toolbar-slider">
           <span id="room-jitter-value" class="toolbar-value">100ms</span>
         </div>
