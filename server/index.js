@@ -152,6 +152,7 @@ const broadcastRoomList = () => {
       name, 
       userCount: data.users.size, 
       hasPassword: !!data.passwordHash,
+      creatorUsername: data.creatorUsername,
       users: [...data.users.values()].map(u => u.username) 
     });
   });
@@ -451,6 +452,7 @@ io.on('connection', (socket) => {
         messages: [], 
         passwordHash,
         creatorId: socket.id,
+        creatorUsername: username,
         metronome: { bpm: 120, playing: false, startTime: null }
       });
     }

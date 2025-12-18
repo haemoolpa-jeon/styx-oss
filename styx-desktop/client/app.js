@@ -1039,12 +1039,26 @@ function renderRoomList(rooms) {
     list.innerHTML = '<p class="no-rooms">활성화된 방이 없습니다</p>';
     return;
   }
-  list.innerHTML = rooms.map(r => `
-    <div class="room-item" onclick="joinRoom('${r.name.replace(/'/g, "\\'")}', ${r.hasPassword})">
-      <span class="room-name">${r.hasPassword ? '🔒 ' : ''}${escapeHtml(r.name)}</span>
-      <span class="room-users">${r.userCount}/8 👤</span>
+  list.innerHTML = rooms.map(r => {
+    const canClose = currentUser?.isAdmin || r.creatorUsername === currentUser?.username;
+    return `
+    <div class="room-item">
+      <div class="room-info" onclick="joinRoom('${r.name.replace(/'/g, "\\'")}', ${r.hasPassword})">
+        <span class="room-name">${r.hasPassword ? '🔒 ' : ''}${escapeHtml(r.name)}</span>
+        <span class="room-users">${r.userCount}/8 👤</span>
+      </div>
+      ${canClose ? `<button class="room-close-btn" onclick="event.stopPropagation(); closeRoomFromLobby('${r.name.replace(/'/g, "\\'")}')">✕</button>` : ''}
     </div>
-  `).join('');
+  `;
+  }).join('');
+}
+
+function closeRoomFromLobby(roomName) {
+  if (!confirm(`"${roomName}" 방을 닫으시겠습니까?`)) return;
+  socket.emit('close-room', { roomName }, res => {
+    if (res.error) toast(res.error, 'error');
+    else toast('방이 닫혔습니다', 'success');
+  });
 }
 
 // 아바타 업로드
