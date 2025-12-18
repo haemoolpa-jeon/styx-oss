@@ -77,6 +77,39 @@ app.use('/avatars', express.static(AVATARS_DIR));
 
 // 방 상태
 const rooms = new Map();
+const roomDeletionTimers = new Map(); // 방 삭제 타이머
+const ROOM_EMPTY_TIMEOUT = 5 * 60 * 1000; // 5분
+
+// 빈 방 삭제 예약
+function scheduleRoomDeletion(roomName) {
+  // 기존 타이머가 있으면 취소
+  if (roomDeletionTimers.has(roomName)) {
+    clearTimeout(roomDeletionTimers.get(roomName));
+  }
+  
+  console.log(`방 삭제 예약: ${roomName} (5분 후)`);
+  
+  const timer = setTimeout(() => {
+    const roomData = rooms.get(roomName);
+    if (roomData && roomData.users.size === 0) {
+      rooms.delete(roomName);
+      roomDeletionTimers.delete(roomName);
+      broadcastRoomList();
+      console.log(`방 삭제됨 (타임아웃): ${roomName}`);
+    }
+  }, ROOM_EMPTY_TIMEOUT);
+  
+  roomDeletionTimers.set(roomName, timer);
+}
+
+// 방 삭제 타이머 취소 (누군가 입장 시)
+function cancelRoomDeletion(roomName) {
+  if (roomDeletionTimers.has(roomName)) {
+    clearTimeout(roomDeletionTimers.get(roomName));
+    roomDeletionTimers.delete(roomName);
+    console.log(`방 삭제 취소: ${roomName}`);
+  }
+}
 
 const broadcastRoomList = () => {
   const list = [];
@@ -288,8 +321,7 @@ io.on('connection', (socket) => {
       console.log(`${socket.username} 퇴장: ${socket.room}`);
       
       if (roomData.users.size === 0) {
-        rooms.delete(socket.room);
-        console.log(`방 삭제됨: ${socket.room}`);
+        scheduleRoomDeletion(socket.room);
       }
       
       socket.room = null;
@@ -362,6 +394,9 @@ io.on('connection', (socket) => {
       });
     }
     const roomData = rooms.get(room);
+    
+    // 삭제 예약된 방에 입장하면 타이머 취소
+    cancelRoomDeletion(room);
     
     if (roomData.password && roomData.users.size > 0 && roomData.password !== roomPassword) {
       return cb({ error: 'Wrong room password' });
@@ -468,7 +503,7 @@ io.on('connection', (socket) => {
       roomData.users.delete(socket.id);
       socket.to(socket.room).emit('user-left', { id: socket.id });
       
-      if (roomData.users.size === 0) rooms.delete(socket.room);
+      if (roomData.users.size === 0) scheduleRoomDeletion(socket.room);
       broadcastRoomList();
       console.log(`${socket.username} 퇴장: ${socket.room}`);
     }
