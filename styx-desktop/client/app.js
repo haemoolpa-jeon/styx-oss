@@ -1,6 +1,10 @@
 // Styx 클라이언트 - HADES 실시간 오디오 협업
 // WebRTC P2P 오디오 + 안정성 중심 설계
 
+// 디버그 모드 (프로덕션에서는 false)
+const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const log = (...args) => DEBUG && log(...args);
+
 const serverUrl = window.STYX_SERVER_URL || '';
 const socket = io(serverUrl, { reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 10 });
 
@@ -454,7 +458,7 @@ async function autoRejoin() {
 
 // 소켓 연결 후 세션 복구 시도
 socket.on('connect', () => {
-  console.log('서버 연결됨');
+  log('서버 연결됨');
   $('connection-status')?.classList.remove('offline');
   
   // UDP 핸들러 설정 (Tauri 앱일 때만)
@@ -488,7 +492,7 @@ socket.on('connect', () => {
 });
 
 socket.on('disconnect', () => {
-  console.log('서버 연결 끊김');
+  log('서버 연결 끊김');
   $('connection-status')?.classList.add('offline');
   toast('서버 연결 끊김, 재연결 시도 중...', 'warning');
 });
@@ -754,7 +758,7 @@ async function initTauriFeatures() {
     
     // 오디오 장치 목록 로드
     const devices = await tauriInvoke('get_audio_devices');
-    console.log('Tauri 오디오 장치:', devices);
+    log('Tauri 오디오 장치:', devices);
     
     // ASIO 사용 가능 여부 확인
     const asioAvailable = await tauriInvoke('check_asio');
@@ -765,7 +769,7 @@ async function initTauriFeatures() {
     
     // 오디오 정보 가져오기
     const audioInfo = await tauriInvoke('get_audio_info');
-    console.log('Tauri 오디오 정보:', audioInfo);
+    log('Tauri 오디오 정보:', audioInfo);
   } catch (e) {
     console.error('Tauri 초기화 오류:', e);
   }
@@ -778,14 +782,14 @@ async function startUdpMode() {
   try {
     // UDP 소켓 바인딩 (0 = 자동 포트)
     udpPort = await tauriInvoke('udp_bind', { port: 0 });
-    console.log('UDP 포트 바인딩:', udpPort);
+    log('UDP 포트 바인딩:', udpPort);
     
     // STUN으로 공인 IP 획득
     let publicIp = null;
     try {
       const publicAddr = await tauriInvoke('get_public_ip');
       publicIp = publicAddr.split(':')[0]; // IP만 추출
-      console.log('공인 IP:', publicIp);
+      log('공인 IP:', publicIp);
     } catch (e) {
       console.warn('STUN 실패:', e);
       // STUN 실패 시 WebRTC로 fallback
@@ -814,7 +818,7 @@ async function startUdpMode() {
 function setupUdpHandlers() {
   socket.on('udp-peer-info', async ({ id, port, publicIp, username }) => {
     udpPeers.set(id, { port, publicIp, username });
-    console.log(`UDP 피어 추가: ${username} (${publicIp}:${port})`);
+    log(`UDP 피어 추가: ${username} (${publicIp}:${port})`);
     // Tauri에 피어 추가
     if (tauriInvoke && publicIp && port) {
       try {
@@ -832,7 +836,7 @@ function setupUdpHandlers() {
         } catch (e) { console.error('피어 추가 실패:', e); }
       }
     }
-    console.log('UDP 피어 목록:', udpPeers.size);
+    log('UDP 피어 목록:', udpPeers.size);
     // 피어가 있으면 스트림 시작
     if (udpPeers.size > 0) startUdpStream();
   });
@@ -871,7 +875,7 @@ async function startUdpStream() {
     await tauriInvoke('set_audio_devices', { input: inputDevice, output: outputDevice });
     
     await tauriInvoke('udp_start_stream');
-    console.log('UDP 스트림 시작됨');
+    log('UDP 스트림 시작됨');
     toast('UDP 오디오 스트림 시작', 'success');
     startUdpStatsMonitor();
   } catch (e) {
@@ -886,7 +890,7 @@ async function stopUdpStream() {
   
   try {
     await tauriInvoke('udp_stop_stream');
-    console.log('UDP 스트림 중지됨');
+    log('UDP 스트림 중지됨');
   } catch (e) {
     console.error('UDP 스트림 중지 실패:', e);
   }
@@ -1011,7 +1015,7 @@ async function loadAudioDevices() {
       outputSelect.innerHTML = '<option>스피커 없음</option>';
     }
     
-    console.log(`오디오 장치 로드: 입력 ${audioInputs.length}개, 출력 ${audioOutputs.length}개`);
+    log(`오디오 장치 로드: 입력 ${audioInputs.length}개, 출력 ${audioOutputs.length}개`);
   } catch (e) {
     console.error('오디오 장치 접근 실패:', e.message);
     inputSelect.innerHTML = '<option>마이크 권한 필요</option>';
@@ -1461,7 +1465,7 @@ function createPeerConnection(peerId, username, avatar, initiator) {
       if (peerData) peerData.retryCount = 0;
     }
     if (pc.connectionState === 'failed') {
-      console.log(`연결 실패: ${username}, 재시도...`);
+      log(`연결 실패: ${username}, 재시도...`);
       const retries = (peerData?.retryCount || 0) + 1;
       if (peerData) peerData.retryCount = retries;
       

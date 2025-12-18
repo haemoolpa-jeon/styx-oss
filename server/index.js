@@ -93,6 +93,19 @@ const saveSessions = (sessions) => {
 const sessions = loadSessions();
 const generateToken = () => require('crypto').randomBytes(32).toString('hex');
 
+// 세션 정리 스케줄러 (1시간마다)
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  for (const [k, v] of sessions) {
+    if (v.expires < now) { sessions.delete(k); cleaned++; }
+  }
+  if (cleaned > 0) {
+    saveSessions(sessions);
+    console.log(`만료 세션 ${cleaned}개 정리됨`);
+  }
+}, 60 * 60 * 1000);
+
 app.use(express.static(path.join(__dirname, '../client')));
 app.use('/avatars', express.static(AVATARS_DIR));
 
@@ -138,7 +151,7 @@ const broadcastRoomList = () => {
     list.push({ 
       name, 
       userCount: data.users.size, 
-      hasPassword: !!data.password,
+      hasPassword: !!data.passwordHash,
       users: [...data.users.values()].map(u => u.username) 
     });
   });
@@ -160,26 +173,31 @@ io.on('connection', (socket) => {
   
   // 로그인
   socket.on('login', async ({ username, password }, cb) => {
-    if (!validateUsername(username)) return cb({ error: 'Invalid username' });
-    
-    const data = loadUsers();
-    const user = data.users[username];
-    
-    if (!user) return cb({ error: 'User not found' });
-    
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return cb({ error: 'Wrong password' });
-    if (!user.approved) return cb({ error: 'Account pending approval' });
-    
-    socket.username = username;
-    socket.isAdmin = user.isAdmin;
-    
-    // 세션 토큰 생성
-    const token = generateToken();
-    sessions.set(username, { token, expires: Date.now() + 7 * 24 * 60 * 60 * 1000 }); // 7일
-    saveSessions(sessions);
-    
-    cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar }, token });
+    try {
+      if (!validateUsername(username)) return cb({ error: 'Invalid username' });
+      
+      const data = loadUsers();
+      const user = data.users[username];
+      
+      if (!user) return cb({ error: 'User not found' });
+      
+      const valid = await bcrypt.compare(password, user.password);
+      if (!valid) return cb({ error: 'Wrong password' });
+      if (!user.approved) return cb({ error: 'Account pending approval' });
+      
+      socket.username = username;
+      socket.isAdmin = user.isAdmin;
+      
+      // 세션 토큰 생성
+      const token = generateToken();
+      sessions.set(username, { token, expires: Date.now() + 7 * 24 * 60 * 60 * 1000 }); // 7일
+      saveSessions(sessions);
+      
+      cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar }, token });
+    } catch (e) {
+      console.error('로그인 오류:', e);
+      cb({ error: 'Server error' });
+    }
   });
 
   // 세션 복구 (토큰 검증)
@@ -223,25 +241,30 @@ io.on('connection', (socket) => {
 
   // 비밀번호 변경
   socket.on('change-password', async ({ oldPassword, newPassword }, cb) => {
-    if (!socket.username) return cb({ error: 'Not logged in' });
-    if (!validatePassword(newPassword)) return cb({ error: 'Invalid new password' });
-    
-    await withLock(async () => {
-      const data = loadUsers();
-      const user = data.users[socket.username];
+    try {
+      if (!socket.username) return cb({ error: 'Not logged in' });
+      if (!validatePassword(newPassword)) return cb({ error: 'Invalid new password' });
       
-      const valid = await bcrypt.compare(oldPassword, user.password);
-      if (!valid) return cb({ error: 'Wrong password' });
-      
-      user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
-      saveUsers(data);
-      
-      // 기존 세션 무효화
-      sessions.delete(socket.username);
-      saveSessions(sessions);
-      
-      cb({ success: true });
-    });
+      await withLock(async () => {
+        const data = loadUsers();
+        const user = data.users[socket.username];
+        
+        const valid = await bcrypt.compare(oldPassword, user.password);
+        if (!valid) return cb({ error: 'Wrong password' });
+        
+        user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
+        saveUsers(data);
+        
+        // 기존 세션 무효화
+        sessions.delete(socket.username);
+        saveSessions(sessions);
+        
+        cb({ success: true });
+      });
+    } catch (e) {
+      console.error('비밀번호 변경 오류:', e);
+      cb({ error: 'Server error' });
+    }
   });
 
   // 관리자: 대기 중인 사용자
@@ -400,7 +423,7 @@ io.on('connection', (socket) => {
       list.push({ 
         name, 
         userCount: data.users.size, 
-        hasPassword: !!data.password,
+        hasPassword: !!data.passwordHash,
         users: [...data.users.values()].map(u => u.username) 
       });
     });
@@ -408,7 +431,7 @@ io.on('connection', (socket) => {
   });
 
   // 방 입장
-  socket.on('join', ({ room, username, password: roomPassword }, cb) => {
+  socket.on('join', async ({ room, username, password: roomPassword }, cb) => {
     const data = loadUsers();
     const user = data.users[username];
     if (!user || !user.approved) return cb({ error: 'Not authorized' });
@@ -417,10 +440,12 @@ io.on('connection', (socket) => {
     if (!room || room.length > 30) return cb({ error: 'Invalid room name' });
 
     if (!rooms.has(room)) {
+      // 새 방 생성 시 비밀번호 해시
+      const passwordHash = roomPassword ? await bcrypt.hash(roomPassword, 8) : null;
       rooms.set(room, { 
         users: new Map(), 
         messages: [], 
-        password: roomPassword || null,
+        passwordHash,
         metronome: { bpm: 120, playing: false, startTime: null }
       });
     }
@@ -429,8 +454,10 @@ io.on('connection', (socket) => {
     // 삭제 예약된 방에 입장하면 타이머 취소
     cancelRoomDeletion(room);
     
-    if (roomData.password && roomData.users.size > 0 && roomData.password !== roomPassword) {
-      return cb({ error: 'Wrong room password' });
+    // 비밀번호 검증 (해시 비교)
+    if (roomData.passwordHash && roomData.users.size > 0) {
+      const valid = await bcrypt.compare(roomPassword || '', roomData.passwordHash);
+      if (!valid) return cb({ error: 'Wrong room password' });
     }
     
     if (roomData.users.size >= MAX_USERS_PER_ROOM) return cb({ error: 'Room full' });
