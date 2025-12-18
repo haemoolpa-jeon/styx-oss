@@ -5,7 +5,7 @@ const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
 
-const USERS_FILE = path.join(__dirname, 'server/users.json');
+const USERS_FILE = path.join(__dirname, 'server/data/users.json');
 
 async function setup() {
   const hash = await bcrypt.hash('admin123', 10);

@@ -55,15 +55,24 @@ npm start        # 서버 시작
 ```
 styx/
 ├── server/
-│   ├── index.js      # 시그널링 서버
-│   └── users.json    # 사용자 DB
-├── avatars/          # 아바타 이미지
+│   ├── index.js          # 시그널링 서버
+│   └── data/
+│       ├── users.json    # 사용자 DB
+│       └── sessions.json # 세션 데이터
+├── shared/
+│   └── client/           # 공유 클라이언트 코드
+│       ├── app.js        # 클라이언트 로직
+│       ├── index.html    # 웹 UI
+│       └── style.css     # 스타일
 ├── client/
-│   ├── index.html    # 웹 UI
-│   ├── app.js        # 클라이언트 로직
-│   └── style.css     # 스타일
+│   └── config.js         # 웹 버전 설정
+├── styx-desktop/
+│   ├── client/
+│   │   └── config.js     # 데스크톱 버전 설정
+│   └── src-tauri/        # Tauri 앱 소스
+├── avatars/              # 아바타 이미지
 ├── package.json
-├── setup.js          # 초기 설정
+├── setup.js              # 초기 설정
 └── README.md
 ```
 

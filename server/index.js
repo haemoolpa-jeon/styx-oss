@@ -5,55 +5,74 @@ const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const fs = require('fs');
+const fs = require('fs').promises;
+const fsSync = require('fs');
 const bcrypt = require('bcrypt');
+
+// 환경 변수 검증
+function validateEnv() {
+  const warnings = [];
+  if (!process.env.PORT) warnings.push('PORT not set, using default 3000');
+  if (!process.env.CORS_ORIGINS) warnings.push('CORS_ORIGINS not set, allowing same origin only');
+  if (process.env.NODE_ENV === 'production' && !process.env.FORCE_HTTPS) {
+    warnings.push('FORCE_HTTPS not set in production');
+  }
+  warnings.forEach(w => console.warn(`⚠️  ${w}`));
+  console.log('✓ Environment validated');
+}
+validateEnv();
 
 const app = express();
 const server = createServer(app);
 
-// CORS 설정 - 환경변수 또는 같은 서버에서만 허용
+// HTTPS 리다이렉트 (프로덕션)
+if (process.env.FORCE_HTTPS === 'true') {
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] !== 'https' && req.hostname !== 'localhost') {
+      return res.redirect(301, `https://${req.hostname}${req.url}`);
+    }
+    next();
+  });
+  console.log('✓ HTTPS redirect enabled');
+}
+
+// CORS 설정
 const ALLOWED_ORIGINS = process.env.CORS_ORIGINS 
   ? process.env.CORS_ORIGINS.split(',') 
-  : true; // true = 같은 origin만 허용
+  : true;
 
 const io = new Server(server, { 
-  cors: { 
-    origin: ALLOWED_ORIGINS,
-    credentials: true
-  }, 
+  cors: { origin: ALLOWED_ORIGINS, credentials: true }, 
   maxHttpBufferSize: 5e6 
 });
 
 const PORT = process.env.PORT || 3000;
-const MAX_USERS_PER_ROOM = 8;
 const USERS_FILE = path.join(__dirname, 'data', 'users.json');
+const SESSIONS_FILE = path.join(__dirname, 'data', 'sessions.json');
 const AVATARS_DIR = path.join(__dirname, '..', 'avatars');
 const SALT_ROUNDS = 10;
 
-// 기본 Rate Limiting
+// Rate Limiting
 const rateLimits = new Map();
-const RATE_LIMIT_WINDOW = 60000; // 1분
-const RATE_LIMIT_MAX = 100; // 분당 최대 요청
+const RATE_LIMIT_WINDOW = 60000;
+const RATE_LIMIT_MAX = 100;
 
 function checkRateLimit(ip) {
   const now = Date.now();
   const record = rateLimits.get(ip);
-  
   if (!record || now - record.start > RATE_LIMIT_WINDOW) {
     rateLimits.set(ip, { start: now, count: 1 });
     return true;
   }
-  
   record.count++;
-  if (record.count > RATE_LIMIT_MAX) {
-    return false;
-  }
-  return true;
+  return record.count <= RATE_LIMIT_MAX;
 }
 
-if (!fs.existsSync(AVATARS_DIR)) fs.mkdirSync(AVATARS_DIR, { recursive: true });
+// 디렉토리 초기화
+if (!fsSync.existsSync(AVATARS_DIR)) fsSync.mkdirSync(AVATARS_DIR, { recursive: true });
+if (!fsSync.existsSync(path.dirname(USERS_FILE))) fsSync.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
 
-// 파일 잠금을 위한 간단한 뮤텍스
+// 파일 잠금 뮤텍스
 let fileLock = false;
 const withLock = async (fn) => {
   while (fileLock) await new Promise(r => setTimeout(r, 10));
@@ -61,72 +80,87 @@ const withLock = async (fn) => {
   try { return await fn(); } finally { fileLock = false; }
 };
 
-const loadUsers = () => JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
-const saveUsers = (data) => fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
+// 비동기 파일 작업
+const loadUsers = async () => {
+  try {
+    const data = await fs.readFile(USERS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (e) {
+    console.error('사용자 파일 로드 실패:', e.message);
+    return { users: {}, pending: {} };
+  }
+};
+
+const saveUsers = async (data) => {
+  try {
+    await fs.writeFile(USERS_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error('사용자 파일 저장 실패:', e.message);
+  }
+};
+
+const loadSessions = async () => {
+  try {
+    const data = await fs.readFile(SESSIONS_FILE, 'utf8');
+    const parsed = JSON.parse(data);
+    const now = Date.now();
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v.expires < now) delete parsed[k];
+    }
+    return new Map(Object.entries(parsed));
+  } catch (e) {
+    if (e.code !== 'ENOENT') console.error('세션 파일 로드 실패:', e.message);
+    return new Map();
+  }
+};
+
+const saveSessions = async (sessions) => {
+  try {
+    await fs.writeFile(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions), null, 2));
+  } catch (e) {
+    console.error('세션 파일 저장 실패:', e.message);
+  }
+};
+
+let sessions = new Map();
+(async () => { sessions = await loadSessions(); })();
+
+const generateToken = () => require('crypto').randomBytes(32).toString('hex');
 
 // 입력 검증
 const validateUsername = (u) => typeof u === 'string' && u.length >= 2 && u.length <= 20 && /^[a-zA-Z0-9_가-힣]+$/.test(u);
 const validatePassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 50;
 const sanitize = (s) => String(s).replace(/[<>"'&]/g, '');
 
-// 세션 토큰 생성/검증 (파일 기반 영속성)
-const SESSIONS_FILE = path.join(__dirname, 'data', 'sessions.json');
-const loadSessions = () => {
-  try {
-    if (fs.existsSync(SESSIONS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
-      // 만료된 세션 제거
-      const now = Date.now();
-      for (const [k, v] of Object.entries(data)) {
-        if (v.expires < now) delete data[k];
-      }
-      return new Map(Object.entries(data));
-    }
-  } catch {}
-  return new Map();
-};
-const saveSessions = (sessions) => {
-  try {
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions), null, 2));
-  } catch {}
-};
-const sessions = loadSessions();
-const generateToken = () => require('crypto').randomBytes(32).toString('hex');
-
-// 세션 정리 스케줄러 (1시간마다)
-setInterval(() => {
+// 세션 정리 (1시간마다)
+setInterval(async () => {
   const now = Date.now();
   let cleaned = 0;
   for (const [k, v] of sessions) {
     if (v.expires < now) { sessions.delete(k); cleaned++; }
   }
   if (cleaned > 0) {
-    saveSessions(sessions);
+    await saveSessions(sessions);
     console.log(`만료 세션 ${cleaned}개 정리됨`);
   }
-  // rateLimits 정리 (1분 지난 항목)
   for (const [ip, record] of rateLimits) {
     if (now - record.start > 60000) rateLimits.delete(ip);
   }
 }, 60 * 60 * 1000);
 
-app.use(express.static(path.join(__dirname, '../client')));
+// Serve client files: config.js from client/, rest from shared/client/
+app.use(express.static(path.join(__dirname, '../client'))); // config.js override
+app.use(express.static(path.join(__dirname, '../shared/client'))); // shared files
 app.use('/avatars', express.static(AVATARS_DIR));
 
 // 방 상태
 const rooms = new Map();
-const roomDeletionTimers = new Map(); // 방 삭제 타이머
-const ROOM_EMPTY_TIMEOUT = 5 * 60 * 1000; // 5분
+const roomDeletionTimers = new Map();
+const ROOM_EMPTY_TIMEOUT = 5 * 60 * 1000;
 
-// 빈 방 삭제 예약
 function scheduleRoomDeletion(roomName) {
-  // 기존 타이머가 있으면 취소
-  if (roomDeletionTimers.has(roomName)) {
-    clearTimeout(roomDeletionTimers.get(roomName));
-  }
-  
+  if (roomDeletionTimers.has(roomName)) clearTimeout(roomDeletionTimers.get(roomName));
   console.log(`방 삭제 예약: ${roomName} (5분 후)`);
-  
   const timer = setTimeout(() => {
     const roomData = rooms.get(roomName);
     if (roomData && roomData.users.size === 0) {
@@ -136,11 +170,9 @@ function scheduleRoomDeletion(roomName) {
       console.log(`방 삭제됨 (타임아웃): ${roomName}`);
     }
   }, ROOM_EMPTY_TIMEOUT);
-  
   roomDeletionTimers.set(roomName, timer);
 }
 
-// 방 삭제 타이머 취소 (누군가 입장 시)
 function cancelRoomDeletion(roomName) {
   if (roomDeletionTimers.has(roomName)) {
     clearTimeout(roomDeletionTimers.get(roomName));
@@ -153,9 +185,7 @@ const broadcastRoomList = () => {
   const list = [];
   rooms.forEach((data, name) => {
     list.push({ 
-      name, 
-      userCount: data.users.size, 
-      hasPassword: !!data.passwordHash,
+      name, userCount: data.users.size, hasPassword: !!data.passwordHash,
       creatorUsername: data.creatorUsername,
       users: [...data.users.values()].map(u => u.username) 
     });
@@ -166,7 +196,6 @@ const broadcastRoomList = () => {
 io.on('connection', (socket) => {
   const clientIp = socket.handshake.address;
   
-  // Rate limiting 체크
   if (!checkRateLimit(clientIp)) {
     console.log(`Rate limit 초과: ${clientIp}`);
     socket.emit('error', { message: 'Too many requests' });
@@ -176,178 +205,178 @@ io.on('connection', (socket) => {
   
   console.log(`연결됨: ${socket.id}`);
   
-  // 로그인
   socket.on('login', async ({ username, password }, cb) => {
     try {
       if (!validateUsername(username)) return cb({ error: 'Invalid username' });
-      
-      const data = loadUsers();
+      const data = await loadUsers();
       const user = data.users[username];
-      
       if (!user) return cb({ error: 'User not found' });
-      
       const valid = await bcrypt.compare(password, user.password);
       if (!valid) return cb({ error: 'Wrong password' });
       if (!user.approved) return cb({ error: 'Account pending approval' });
       
       socket.username = username;
       socket.isAdmin = user.isAdmin;
-      
-      // 세션 토큰 생성
       const token = generateToken();
-      sessions.set(username, { token, expires: Date.now() + 7 * 24 * 60 * 60 * 1000 }); // 7일
-      saveSessions(sessions);
-      
+      sessions.set(username, { token, expires: Date.now() + 7 * 24 * 60 * 60 * 1000 });
+      await saveSessions(sessions);
       cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar }, token });
     } catch (e) {
-      console.error('로그인 오류:', e);
+      console.error('로그인 오류:', e.message);
       cb({ error: 'Server error' });
     }
   });
 
-  // 세션 복구 (토큰 검증)
-  socket.on('restore-session', ({ username, token }, cb) => {
-    const session = sessions.get(username);
-    if (!session || session.token !== token || session.expires < Date.now()) {
-      sessions.delete(username);
-      saveSessions(sessions);
-      return cb({ error: 'Invalid session' });
+  socket.on('restore-session', async ({ username, token }, cb) => {
+    try {
+      const session = sessions.get(username);
+      if (!session || session.token !== token || session.expires < Date.now()) {
+        sessions.delete(username);
+        await saveSessions(sessions);
+        return cb({ error: 'Invalid session' });
+      }
+      const data = await loadUsers();
+      const user = data.users[username];
+      if (!user || !user.approved) return cb({ error: 'Invalid session' });
+      socket.username = username;
+      socket.isAdmin = user.isAdmin;
+      session.expires = Date.now() + 7 * 24 * 60 * 60 * 1000;
+      cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar } });
+    } catch (e) {
+      console.error('세션 복구 오류:', e.message);
+      cb({ error: 'Server error' });
     }
-    
-    const data = loadUsers();
-    const user = data.users[username];
-    if (!user || !user.approved) return cb({ error: 'Invalid session' });
-    
-    socket.username = username;
-    socket.isAdmin = user.isAdmin;
-    
-    // 토큰 갱신
-    session.expires = Date.now() + 7 * 24 * 60 * 60 * 1000;
-    
-    cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar } });
   });
 
   socket.on('signup', async ({ username, password }, cb) => {
-    if (!validateUsername(username)) return cb({ error: 'Invalid username (2-20자, 영문/숫자/한글/_)' });
-    if (!validatePassword(password)) return cb({ error: 'Invalid password (4-50자)' });
-    
-    await withLock(async () => {
-      const data = loadUsers();
-      if (data.users[username] || data.pending[username]) {
-        return cb({ error: 'Username taken' });
-      }
+    try {
+      if (!validateUsername(username)) return cb({ error: 'Invalid username (2-20자, 영문/숫자/한글/_)' });
+      if (!validatePassword(password)) return cb({ error: 'Invalid password (4-50자)' });
       
-      const hash = await bcrypt.hash(password, SALT_ROUNDS);
-      data.pending[username] = { password: hash, requestedAt: new Date().toISOString() };
-      saveUsers(data);
-      cb({ success: true, message: '가입 요청 완료' });
-    });
+      await withLock(async () => {
+        const data = await loadUsers();
+        if (data.users[username] || data.pending[username]) return cb({ error: 'Username taken' });
+        const hash = await bcrypt.hash(password, SALT_ROUNDS);
+        data.pending[username] = { password: hash, requestedAt: new Date().toISOString() };
+        await saveUsers(data);
+        cb({ success: true, message: '가입 요청 완료' });
+      });
+    } catch (e) {
+      console.error('회원가입 오류:', e.message);
+      cb({ error: 'Server error' });
+    }
   });
 
-  // 비밀번호 변경
   socket.on('change-password', async ({ oldPassword, newPassword }, cb) => {
     try {
       if (!socket.username) return cb({ error: 'Not logged in' });
       if (!validatePassword(newPassword)) return cb({ error: 'Invalid new password' });
       
       await withLock(async () => {
-        const data = loadUsers();
+        const data = await loadUsers();
         const user = data.users[socket.username];
-        
         const valid = await bcrypt.compare(oldPassword, user.password);
         if (!valid) return cb({ error: 'Wrong password' });
-        
         user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
-        saveUsers(data);
-        
-        // 기존 세션 무효화
+        await saveUsers(data);
         sessions.delete(socket.username);
-        saveSessions(sessions);
-        
+        await saveSessions(sessions);
         cb({ success: true });
       });
     } catch (e) {
-      console.error('비밀번호 변경 오류:', e);
+      console.error('비밀번호 변경 오류:', e.message);
       cb({ error: 'Server error' });
     }
   });
 
-  // 관리자: 대기 중인 사용자
-  socket.on('get-pending', (_, cb) => {
-    if (!socket.isAdmin) return cb({ error: 'Not admin' });
-    const data = loadUsers();
-    cb({ pending: Object.keys(data.pending) });
+  socket.on('get-pending', async (_, cb) => {
+    try {
+      if (!socket.isAdmin) return cb({ error: 'Not admin' });
+      const data = await loadUsers();
+      cb({ pending: Object.keys(data.pending) });
+    } catch (e) {
+      console.error('대기 목록 조회 오류:', e.message);
+      cb({ error: 'Server error' });
+    }
   });
 
-  // 관리자: 모든 사용자 목록
-  socket.on('get-users', (_, cb) => {
-    if (!socket.isAdmin) return cb({ error: 'Not admin' });
-    const data = loadUsers();
-    const users = Object.entries(data.users).map(([username, u]) => ({
-      username, isAdmin: u.isAdmin, createdAt: u.createdAt
-    }));
-    cb({ users });
+  socket.on('get-users', async (_, cb) => {
+    try {
+      if (!socket.isAdmin) return cb({ error: 'Not admin' });
+      const data = await loadUsers();
+      const users = Object.entries(data.users).map(([username, u]) => ({
+        username, isAdmin: u.isAdmin, createdAt: u.createdAt
+      }));
+      cb({ users });
+    } catch (e) {
+      console.error('사용자 목록 조회 오류:', e.message);
+      cb({ error: 'Server error' });
+    }
   });
 
-  // 관리자: 사용자 승인
   socket.on('approve-user', async ({ username }, cb) => {
-    if (!socket.isAdmin) return cb({ error: 'Not admin' });
-    
-    await withLock(async () => {
-      const data = loadUsers();
-      if (!data.pending[username]) return cb({ error: 'No pending request' });
-      
-      data.users[username] = {
-        password: data.pending[username].password,
-        approved: true,
-        isAdmin: false,
-        avatar: null,
-        createdAt: new Date().toISOString()
-      };
-      delete data.pending[username];
-      saveUsers(data);
-      cb({ success: true });
-    });
+    try {
+      if (!socket.isAdmin) return cb({ error: 'Not admin' });
+      await withLock(async () => {
+        const data = await loadUsers();
+        if (!data.pending[username]) return cb({ error: 'No pending request' });
+        data.users[username] = {
+          password: data.pending[username].password, approved: true, isAdmin: false,
+          avatar: null, createdAt: new Date().toISOString()
+        };
+        delete data.pending[username];
+        await saveUsers(data);
+        cb({ success: true });
+      });
+    } catch (e) {
+      console.error('사용자 승인 오류:', e.message);
+      cb({ error: 'Server error' });
+    }
   });
 
-  // 관리자: 사용자 거절
   socket.on('reject-user', async ({ username }, cb) => {
-    if (!socket.isAdmin) return cb({ error: 'Not admin' });
-    
-    await withLock(async () => {
-      const data = loadUsers();
-      delete data.pending[username];
-      saveUsers(data);
-      cb({ success: true });
-    });
+    try {
+      if (!socket.isAdmin) return cb({ error: 'Not admin' });
+      await withLock(async () => {
+        const data = await loadUsers();
+        delete data.pending[username];
+        await saveUsers(data);
+        cb({ success: true });
+      });
+    } catch (e) {
+      console.error('사용자 거절 오류:', e.message);
+      cb({ error: 'Server error' });
+    }
   });
 
-  // 관리자: 사용자 삭제
   socket.on('delete-user', async ({ username }, cb) => {
-    if (!socket.isAdmin) return cb({ error: 'Not admin' });
-    if (username === socket.username) return cb({ error: 'Cannot delete yourself' });
-    
-    await withLock(async () => {
-      const data = loadUsers();
-      if (!data.users[username]) return cb({ error: 'User not found' });
+    try {
+      if (!socket.isAdmin) return cb({ error: 'Not admin' });
+      if (username === socket.username) return cb({ error: 'Cannot delete yourself' });
       
-      delete data.users[username];
-      saveUsers(data);
-      sessions.delete(username);
-      saveSessions(sessions);
-      
-      // 아바타 파일 삭제 (확장자 찾기)
-      try {
-        const files = fs.readdirSync(AVATARS_DIR);
-        const avatarFile = files.find(f => f.startsWith(username + '.'));
-        if (avatarFile) fs.unlinkSync(path.join(AVATARS_DIR, avatarFile));
-      } catch {}
-      
-      cb({ success: true });
-    });
+      await withLock(async () => {
+        const data = await loadUsers();
+        if (!data.users[username]) return cb({ error: 'User not found' });
+        delete data.users[username];
+        await saveUsers(data);
+        sessions.delete(username);
+        await saveSessions(sessions);
+        
+        try {
+          const files = await fs.readdir(AVATARS_DIR);
+          const avatarFile = files.find(f => f.startsWith(username + '.'));
+          if (avatarFile) await fs.unlink(path.join(AVATARS_DIR, avatarFile));
+        } catch (e) {
+          console.error('아바타 삭제 오류:', e.message);
+        }
+        cb({ success: true });
+      });
+    } catch (e) {
+      console.error('사용자 삭제 오류:', e.message);
+      cb({ error: 'Server error' });
+    }
   });
 
-  // 관리자: 방에서 강퇴
   socket.on('kick-user', ({ socketId }, cb) => {
     if (!socket.isAdmin) return cb({ error: 'Not admin' });
     if (!socketId) return cb({ error: 'Invalid socket ID' });
@@ -355,208 +384,177 @@ io.on('connection', (socket) => {
     cb({ success: true });
   });
 
-  // 관리자: 방 닫기
   socket.on('close-room', ({ roomName }, cb) => {
     if (!rooms.has(roomName)) return cb({ error: 'Room not found' });
     const roomData = rooms.get(roomName);
-    // 관리자 또는 방 생성자만 닫기 가능
-    if (!socket.isAdmin && roomData.creatorId !== socket.id) {
-      return cb({ error: 'Not authorized' });
-    }
-    
-    // 방의 모든 사용자에게 알림
+    if (!socket.isAdmin && roomData.creatorId !== socket.id) return cb({ error: 'Not authorized' });
     io.to(roomName).emit('room-closed');
-    
-    // 방 삭제
     rooms.delete(roomName);
     broadcastRoomList();
     cb({ success: true });
   });
 
-  // 방 나가기 (명시적)
   socket.on('leave-room', () => {
     if (socket.room && rooms.has(socket.room)) {
       const roomData = rooms.get(socket.room);
       roomData.users.delete(socket.id);
       socket.to(socket.room).emit('user-left', { id: socket.id });
       socket.leave(socket.room);
-      
       console.log(`${socket.username} 퇴장: ${socket.room}`);
-      
-      if (roomData.users.size === 0) {
-        scheduleRoomDeletion(socket.room);
-      }
-      
+      if (roomData.users.size === 0) scheduleRoomDeletion(socket.room);
       socket.room = null;
       broadcastRoomList();
     }
   });
 
-  // 아바타 업로드
   socket.on('upload-avatar', async ({ username, avatarData }, cb) => {
-    if (!socket.username || socket.username !== username) return cb({ error: 'Unauthorized' });
-    
-    const match = avatarData.match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/);
-    if (!match) return cb({ error: 'Invalid image' });
-    
-    const buffer = Buffer.from(match[2], 'base64');
-    if (buffer.length > 2 * 1024 * 1024) return cb({ error: 'Image too large (max 2MB)' });
-    
-    const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-    const filename = `${username}.${ext}`;
-    
-    // 기존 아바타 삭제
     try {
-      const files = fs.readdirSync(AVATARS_DIR);
-      const oldAvatar = files.find(f => f.startsWith(username + '.') && f !== filename);
-      if (oldAvatar) fs.unlinkSync(path.join(AVATARS_DIR, oldAvatar));
-    } catch {}
-    
-    fs.writeFileSync(path.join(AVATARS_DIR, filename), buffer);
-    
-    await withLock(async () => {
-      const data = loadUsers();
-      data.users[username].avatar = `/avatars/${filename}?t=${Date.now()}`;
-      saveUsers(data);
+      if (!socket.username || socket.username !== username) return cb({ error: 'Unauthorized' });
+      const match = avatarData.match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/);
+      if (!match) return cb({ error: 'Invalid image' });
+      const buffer = Buffer.from(match[2], 'base64');
+      if (buffer.length > 2 * 1024 * 1024) return cb({ error: 'Image too large (max 2MB)' });
       
-      if (socket.room) {
-        socket.to(socket.room).emit('user-updated', { id: socket.id, avatar: data.users[username].avatar });
+      const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+      const filename = `${username}.${ext}`;
+      
+      try {
+        const files = await fs.readdir(AVATARS_DIR);
+        const oldAvatar = files.find(f => f.startsWith(username + '.') && f !== filename);
+        if (oldAvatar) await fs.unlink(path.join(AVATARS_DIR, oldAvatar));
+      } catch (e) {
+        console.error('기존 아바타 삭제 오류:', e.message);
       }
-      cb({ success: true, avatar: data.users[username].avatar });
-    });
+      
+      await fs.writeFile(path.join(AVATARS_DIR, filename), buffer);
+      
+      await withLock(async () => {
+        const data = await loadUsers();
+        data.users[username].avatar = `/avatars/${filename}?t=${Date.now()}`;
+        await saveUsers(data);
+        if (socket.room) {
+          socket.to(socket.room).emit('user-updated', { id: socket.id, avatar: data.users[username].avatar });
+        }
+        cb({ success: true, avatar: data.users[username].avatar });
+      });
+    } catch (e) {
+      console.error('아바타 업로드 오류:', e.message);
+      cb({ error: 'Server error' });
+    }
   });
 
-  // 사용자 설정 저장
-  socket.on('save-settings', ({ settings }, cb) => {
-    if (!socket.username) return cb?.({ error: 'Not logged in' });
-    const data = loadUsers();
-    if (!data.users[socket.username]) return cb?.({ error: 'User not found' });
-    data.users[socket.username].settings = settings;
-    saveUsers(data);
-    cb?.({ success: true });
+  socket.on('save-settings', async ({ settings }, cb) => {
+    try {
+      if (!socket.username) return cb?.({ error: 'Not logged in' });
+      const data = await loadUsers();
+      if (!data.users[socket.username]) return cb?.({ error: 'User not found' });
+      data.users[socket.username].settings = settings;
+      await saveUsers(data);
+      cb?.({ success: true });
+    } catch (e) {
+      console.error('설정 저장 오류:', e.message);
+      cb?.({ error: 'Server error' });
+    }
   });
 
-  // 사용자 설정 로드
-  socket.on('get-settings', (_, cb) => {
-    if (!socket.username) return cb?.({ error: 'Not logged in' });
-    const data = loadUsers();
-    const user = data.users[socket.username];
-    cb?.({ settings: user?.settings || null });
+  socket.on('get-settings', async (_, cb) => {
+    try {
+      if (!socket.username) return cb?.({ error: 'Not logged in' });
+      const data = await loadUsers();
+      const user = data.users[socket.username];
+      cb?.({ settings: user?.settings || null });
+    } catch (e) {
+      console.error('설정 로드 오류:', e.message);
+      cb?.({ error: 'Server error' });
+    }
   });
 
   socket.on('get-rooms', (_, cb) => {
     const list = [];
     rooms.forEach((data, name) => {
-      // 비공개 방은 목록에서 숨김
       if (data.isPrivate) return;
       list.push({ 
-        name, 
-        userCount: data.users.size,
-        maxUsers: data.maxUsers || 8,
-        hasPassword: !!data.passwordHash,
-        audioMode: data.audioMode || 'music',
+        name, userCount: data.users.size, maxUsers: data.maxUsers || 8,
+        hasPassword: !!data.passwordHash, audioMode: data.audioMode || 'music',
         users: [...data.users.values()].map(u => u.username) 
       });
     });
     cb(list);
   });
 
-  // 방 입장
   socket.on('join', async ({ room, username, password: roomPassword, settings }, cb) => {
-    const data = loadUsers();
-    const user = data.users[username];
-    if (!user || !user.approved) return cb({ error: 'Not authorized' });
+    try {
+      const data = await loadUsers();
+      const user = data.users[username];
+      if (!user || !user.approved) return cb({ error: 'Not authorized' });
 
-    room = sanitize(room);
-    if (!room || room.length > 30) return cb({ error: 'Invalid room name' });
+      room = sanitize(room);
+      if (!room || room.length > 30) return cb({ error: 'Invalid room name' });
 
-    if (!rooms.has(room)) {
-      // 새 방 생성 시 설정 적용
-      const passwordHash = roomPassword ? await bcrypt.hash(roomPassword, 8) : null;
-      const s = settings || {};
-      rooms.set(room, { 
-        users: new Map(), 
-        messages: [], 
-        passwordHash,
-        creatorId: socket.id,
-        creatorUsername: username,
-        metronome: { bpm: s.bpm || 120, playing: false, startTime: null },
-        delayCompensation: false,
-        // 방 설정
-        maxUsers: Math.min(Math.max(s.maxUsers || 8, 2), 8),
-        audioMode: s.audioMode || 'music',
-        bitrate: s.bitrate || 96,
-        sampleRate: s.sampleRate || 48000,
-        isPrivate: s.isPrivate || false
-      });
-    }
-    const roomData = rooms.get(room);
-    
-    // 삭제 예약된 방에 입장하면 타이머 취소
-    cancelRoomDeletion(room);
-    
-    // 비밀번호 검증 (해시 비교)
-    if (roomData.passwordHash && roomData.users.size > 0) {
-      const valid = await bcrypt.compare(roomPassword || '', roomData.passwordHash);
-      if (!valid) return cb({ error: 'Wrong room password' });
-    }
-    
-    if (roomData.users.size >= roomData.maxUsers) return cb({ error: 'Room full' });
-
-    for (const [, u] of roomData.users) {
-      if (u.username === username) return cb({ error: 'Username already in room' });
-    }
-
-    socket.join(room);
-    roomData.users.set(socket.id, { username, avatar: user.avatar });
-    socket.username = username;
-    socket.room = room;
-    socket.isAdmin = user.isAdmin;
-
-    const existingUsers = [];
-    for (const [id, u] of roomData.users) {
-      if (id !== socket.id) existingUsers.push({ id, username: u.username, avatar: u.avatar });
-    }
-
-    socket.to(room).emit('user-joined', { id: socket.id, username, avatar: user.avatar });
-    cb({ 
-      success: true, 
-      users: existingUsers, 
-      isAdmin: user.isAdmin,
-      isCreator: roomData.creatorId === socket.id,
-      creatorUsername: roomData.creatorUsername,
-      messages: roomData.messages.slice(-50),
-      metronome: roomData.metronome,
-      delayCompensation: roomData.delayCompensation,
-      // 방 설정 전달
-      roomSettings: {
-        maxUsers: roomData.maxUsers,
-        audioMode: roomData.audioMode,
-        bitrate: roomData.bitrate,
-        sampleRate: roomData.sampleRate,
-        isPrivate: roomData.isPrivate
+      if (!rooms.has(room)) {
+        const passwordHash = roomPassword ? await bcrypt.hash(roomPassword, 8) : null;
+        const s = settings || {};
+        rooms.set(room, { 
+          users: new Map(), messages: [], passwordHash,
+          creatorId: socket.id, creatorUsername: username,
+          metronome: { bpm: s.bpm || 120, playing: false, startTime: null },
+          delayCompensation: false,
+          maxUsers: Math.min(Math.max(s.maxUsers || 8, 2), 8),
+          audioMode: s.audioMode || 'music', bitrate: s.bitrate || 96,
+          sampleRate: s.sampleRate || 48000, isPrivate: s.isPrivate || false
+        });
       }
-    });
-    
-    broadcastRoomList();
-    console.log(`${username} 입장: ${room} (${roomData.users.size}/${roomData.maxUsers})`);
+      const roomData = rooms.get(room);
+      cancelRoomDeletion(room);
+      
+      if (roomData.passwordHash && roomData.users.size > 0) {
+        const valid = await bcrypt.compare(roomPassword || '', roomData.passwordHash);
+        if (!valid) return cb({ error: 'Wrong room password' });
+      }
+      
+      if (roomData.users.size >= roomData.maxUsers) return cb({ error: 'Room full' });
+      for (const [, u] of roomData.users) {
+        if (u.username === username) return cb({ error: 'Username already in room' });
+      }
+
+      socket.join(room);
+      roomData.users.set(socket.id, { username, avatar: user.avatar });
+      socket.username = username;
+      socket.room = room;
+      socket.isAdmin = user.isAdmin;
+
+      const existingUsers = [];
+      for (const [id, u] of roomData.users) {
+        if (id !== socket.id) existingUsers.push({ id, username: u.username, avatar: u.avatar });
+      }
+
+      socket.to(room).emit('user-joined', { id: socket.id, username, avatar: user.avatar });
+      cb({ 
+        success: true, users: existingUsers, isAdmin: user.isAdmin,
+        isCreator: roomData.creatorId === socket.id, creatorUsername: roomData.creatorUsername,
+        messages: roomData.messages.slice(-50), metronome: roomData.metronome,
+        delayCompensation: roomData.delayCompensation,
+        roomSettings: {
+          maxUsers: roomData.maxUsers, audioMode: roomData.audioMode,
+          bitrate: roomData.bitrate, sampleRate: roomData.sampleRate, isPrivate: roomData.isPrivate
+        }
+      });
+      broadcastRoomList();
+      console.log(`${username} 입장: ${room} (${roomData.users.size}/${roomData.maxUsers})`);
+    } catch (e) {
+      console.error('방 입장 오류:', e.message);
+      cb({ error: 'Server error' });
+    }
   });
 
-  // 메트로놈 동기화
   socket.on('metronome-update', ({ bpm, playing }) => {
     if (!socket.room) return;
     const roomData = rooms.get(socket.room);
     if (!roomData) return;
-    
-    roomData.metronome = { 
-      bpm: Math.min(300, Math.max(30, bpm || 120)), 
-      playing, 
-      startTime: playing ? Date.now() : null 
-    };
+    roomData.metronome = { bpm: Math.min(300, Math.max(30, bpm || 120)), playing, startTime: playing ? Date.now() : null };
     socket.to(socket.room).emit('metronome-sync', roomData.metronome);
   });
 
-  // 지연 보상 토글
   socket.on('delay-compensation', (enabled) => {
     if (!socket.room) return;
     const roomData = rooms.get(socket.room);
@@ -565,22 +563,14 @@ io.on('connection', (socket) => {
     io.to(socket.room).emit('delay-compensation-sync', enabled);
   });
 
-  // 방 설정 변경 (방장만)
   socket.on('update-room-settings', ({ setting, value }, cb) => {
     if (!socket.room) return cb?.({ error: 'Not in room' });
     const roomData = rooms.get(socket.room);
     if (!roomData) return cb?.({ error: 'Room not found' });
+    if (roomData.creatorId !== socket.id && !socket.isAdmin) return cb?.({ error: 'Not authorized' });
     
-    // 방장 또는 관리자만 변경 가능
-    if (roomData.creatorId !== socket.id && !socket.isAdmin) {
-      return cb?.({ error: 'Not authorized' });
-    }
-    
-    // 허용된 설정만 변경
     const allowed = ['audioMode', 'bitrate', 'sampleRate'];
     if (!allowed.includes(setting)) return cb?.({ error: 'Invalid setting' });
-    
-    // 값 검증
     if (setting === 'audioMode' && !['voice', 'music'].includes(value)) return cb?.({ error: 'Invalid value' });
     if (setting === 'bitrate' && ![64, 96, 128, 192].includes(value)) return cb?.({ error: 'Invalid value' });
     if (setting === 'sampleRate' && ![44100, 48000].includes(value)) return cb?.({ error: 'Invalid value' });
@@ -590,47 +580,34 @@ io.on('connection', (socket) => {
     cb?.({ success: true });
   });
 
-  // 채팅
   socket.on('chat', (text, cb) => {
     if (!socket.room || !socket.username) return;
     const roomData = rooms.get(socket.room);
     if (!roomData) return;
-
     text = sanitize(text).slice(0, 500);
     if (!text) return;
-
     const msg = { username: socket.username, text, time: Date.now() };
     roomData.messages.push(msg);
     if (roomData.messages.length > 100) roomData.messages.shift();
-    
     io.to(socket.room).emit('chat', msg);
     cb?.();
   });
 
-  // WebRTC 시그널링
   socket.on('offer', ({ to, offer }) => io.to(to).emit('offer', { from: socket.id, offer }));
   socket.on('answer', ({ to, answer }) => io.to(to).emit('answer', { from: socket.id, answer }));
   socket.on('ice-candidate', ({ to, candidate }) => io.to(to).emit('ice-candidate', { from: socket.id, candidate }));
 
-  // UDP P2P 시그널링
   socket.on('udp-info', ({ port, publicIp }) => {
     if (!socket.room) return;
     socket.udpPort = port;
     socket.udpPublicIp = publicIp;
-    // 방의 다른 사용자들에게 UDP 정보 전달
-    socket.to(socket.room).emit('udp-peer-info', { 
-      id: socket.id, 
-      port, 
-      publicIp,
-      username: socket.username 
-    });
+    socket.to(socket.room).emit('udp-peer-info', { id: socket.id, port, publicIp, username: socket.username });
   });
 
   socket.on('udp-request-peers', () => {
     if (!socket.room) return;
     const roomData = rooms.get(socket.room);
     if (!roomData) return;
-    // 방의 모든 UDP 피어 정보 전송
     const peers = [];
     for (const [id, u] of roomData.users) {
       const peerSocket = io.sockets.sockets.get(id);
@@ -646,7 +623,6 @@ io.on('connection', (socket) => {
       const roomData = rooms.get(socket.room);
       roomData.users.delete(socket.id);
       socket.to(socket.room).emit('user-left', { id: socket.id });
-      
       if (roomData.users.size === 0) scheduleRoomDeletion(socket.room);
       broadcastRoomList();
       console.log(`${socket.username} 퇴장: ${socket.room}`);

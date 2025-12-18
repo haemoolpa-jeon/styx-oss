@@ -6,6 +6,20 @@ echo   Styx Desktop - Windows Build
 echo ========================================
 echo.
 
+REM Copy shared client files (keep local config.js)
+echo [INFO] Copying shared client files...
+cd /d "%~dp0"
+copy /Y "..\shared\client\app.js" "client\" >nul
+copy /Y "..\shared\client\index.html" "client\" >nul
+copy /Y "..\shared\client\style.css" "client\" >nul
+copy /Y "..\shared\client\logo.png" "client\" >nul
+copy /Y "..\shared\client\favicon.ico" "client\" >nul
+copy /Y "..\shared\client\favicon-16.png" "client\" >nul
+copy /Y "..\shared\client\favicon-32.png" "client\" >nul
+copy /Y "..\shared\client\apple-touch-icon.png" "client\" >nul
+copy /Y "..\shared\client\icon-192.png" "client\" 2>nul
+echo [OK] Shared files copied
+
 REM Check Rust
 where rustc >nul 2>&1
 if %errorlevel% neq 0 (
