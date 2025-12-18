@@ -210,6 +210,7 @@ function toggleTheme() {
   document.body.dataset.theme = next;
   localStorage.setItem('styx-theme', next);
   updateThemeIcon();
+  scheduleSettingsSave();
 }
 
 function updateThemeIcon() {
@@ -620,9 +621,14 @@ async function showLobby() {
   $('my-avatar').style.backgroundImage = currentUser.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
   if (currentUser.isAdmin) $('adminBtn').classList.remove('hidden');
   
+  // 서버에서 설정 로드
+  socket.emit('get-settings', null, res => {
+    if (res?.settings) applySettings(res.settings);
+    initStabilitySettings();
+  });
+  
   await loadAudioDevices();
   loadRoomList();
-  initStabilitySettings();
 }
 
 // 안정성 설정 초기화
@@ -650,6 +656,7 @@ function initStabilitySettings() {
       jitterBuffer = parseInt(slider.value);
       valueLabel.textContent = jitterBuffer + 'ms';
       localStorage.setItem('styx-jitter-buffer', jitterBuffer);
+      scheduleSettingsSave();
     };
   }
   
@@ -660,6 +667,7 @@ function initStabilitySettings() {
     autoCheck.onchange = () => {
       autoAdapt = autoCheck.checked;
       localStorage.setItem('styx-auto-adapt', autoAdapt);
+      scheduleSettingsSave();
     };
   }
   
@@ -670,6 +678,7 @@ function initStabilitySettings() {
     echoCheck.onchange = () => {
       echoCancellation = echoCheck.checked;
       localStorage.setItem('styx-echo', echoCancellation);
+      scheduleSettingsSave();
     };
   }
   
@@ -680,6 +689,7 @@ function initStabilitySettings() {
     noiseCheck.onchange = () => {
       noiseSuppression = noiseCheck.checked;
       localStorage.setItem('styx-noise', noiseSuppression);
+      scheduleSettingsSave();
     };
   }
   
@@ -690,6 +700,7 @@ function initStabilitySettings() {
     pttCheck.onchange = () => {
       pttMode = pttCheck.checked;
       localStorage.setItem('styx-ptt', pttMode);
+      scheduleSettingsSave();
       toast(pttMode ? 'PTT 모드: Space 키를 누르고 말하세요' : 'PTT 모드 해제', 'info');
     };
   }
@@ -701,6 +712,7 @@ function initStabilitySettings() {
     vadCheck.onchange = () => {
       vadEnabled = vadCheck.checked;
       localStorage.setItem('styx-vad', vadEnabled);
+      scheduleSettingsSave();
     };
   }
   
@@ -711,6 +723,7 @@ function initStabilitySettings() {
     duckCheck.onchange = () => {
       duckingEnabled = duckCheck.checked;
       localStorage.setItem('styx-ducking', duckingEnabled);
+      scheduleSettingsSave();
     };
   }
   
@@ -949,6 +962,7 @@ window.setAudioMode = (mode) => {
   localStorage.setItem('styx-audio-mode', mode);
   updateModeButtons();
   applyAudioSettingsToAll();
+  scheduleSettingsSave();
   toast(`${audioModes[mode].name} 모드로 변경됨`, 'info');
 };
 
@@ -2067,3 +2081,48 @@ document.querySelector('.modal-footer .btn-primary')?.addEventListener('click', 
 $('inviteBtn')?.addEventListener('click', createInviteLink);
 $('recordBtn')?.addEventListener('click', toggleRecording);
 $('closeRoomBtn')?.addEventListener('click', closeRoom);
+
+// 설정 동기화
+function collectSettings() {
+  return {
+    audioMode, jitterBuffer, autoAdapt, echoCancellation, noiseSuppression,
+    pttMode, pttKey, duckingEnabled, vadEnabled, connectionMode,
+    theme: document.documentElement.getAttribute('data-theme') || 'dark'
+  };
+}
+
+function applySettings(s) {
+  if (!s) return;
+  audioMode = s.audioMode ?? audioMode;
+  jitterBuffer = s.jitterBuffer ?? jitterBuffer;
+  autoAdapt = s.autoAdapt ?? autoAdapt;
+  echoCancellation = s.echoCancellation ?? echoCancellation;
+  noiseSuppression = s.noiseSuppression ?? noiseSuppression;
+  pttMode = s.pttMode ?? pttMode;
+  pttKey = s.pttKey ?? pttKey;
+  duckingEnabled = s.duckingEnabled ?? duckingEnabled;
+  vadEnabled = s.vadEnabled ?? vadEnabled;
+  connectionMode = s.connectionMode ?? connectionMode;
+  if (s.theme) document.documentElement.setAttribute('data-theme', s.theme);
+  // localStorage 동기화
+  localStorage.setItem('styx-audio-mode', audioMode);
+  localStorage.setItem('styx-jitter-buffer', jitterBuffer);
+  localStorage.setItem('styx-auto-adapt', autoAdapt);
+  localStorage.setItem('styx-echo', echoCancellation);
+  localStorage.setItem('styx-noise', noiseSuppression);
+  localStorage.setItem('styx-ptt', pttMode);
+  localStorage.setItem('styx-ptt-key', pttKey);
+  localStorage.setItem('styx-ducking', duckingEnabled);
+  localStorage.setItem('styx-vad', vadEnabled);
+  localStorage.setItem('styx-connection-mode', connectionMode);
+  localStorage.setItem('styx-theme', s.theme || 'dark');
+}
+
+let settingsSaveTimer = null;
+function scheduleSettingsSave() {
+  if (settingsSaveTimer) return;
+  settingsSaveTimer = setTimeout(() => {
+    settingsSaveTimer = null;
+    socket.emit('save-settings', { settings: collectSettings() });
+  }, 10000);
+}

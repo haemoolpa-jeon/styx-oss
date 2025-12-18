@@ -422,6 +422,24 @@ io.on('connection', (socket) => {
     });
   });
 
+  // 사용자 설정 저장
+  socket.on('save-settings', ({ settings }, cb) => {
+    if (!socket.username) return cb?.({ error: 'Not logged in' });
+    const data = loadUsers();
+    if (!data.users[socket.username]) return cb?.({ error: 'User not found' });
+    data.users[socket.username].settings = settings;
+    saveUsers(data);
+    cb?.({ success: true });
+  });
+
+  // 사용자 설정 로드
+  socket.on('get-settings', (_, cb) => {
+    if (!socket.username) return cb?.({ error: 'Not logged in' });
+    const data = loadUsers();
+    const user = data.users[socket.username];
+    cb?.({ settings: user?.settings || null });
+  });
+
   socket.on('get-rooms', (_, cb) => {
     const list = [];
     rooms.forEach((data, name) => {
