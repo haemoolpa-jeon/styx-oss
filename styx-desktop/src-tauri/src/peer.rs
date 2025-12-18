@@ -12,7 +12,7 @@ use crate::udp::AudioPacketHeader;
 
 const FRAME_SIZE: usize = 480; // 10ms @ 48kHz
 const MAX_PACKET_SIZE: usize = 1500;
-const JITTER_BUFFER_SIZE: usize = 10; // 100ms @ 10ms frames (안정성 우선)
+const JITTER_BUFFER_SIZE: usize = 5; // 50ms @ 10ms frames (지연↔안정성 균형)
 
 // 지터 버퍼
 pub struct JitterBuffer {
