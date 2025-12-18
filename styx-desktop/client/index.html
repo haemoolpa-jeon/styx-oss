@@ -13,15 +13,15 @@
 </head>
 <body data-theme="dark">
   <div id="connection-status" title="서버 연결 상태"></div>
-  <div id="udp-stats-badge" class="stats-badge hidden" title="UDP 연결 상태"></div>
   <div id="toast-container"></div>
+
   <div id="app">
-    <!-- 로그인 패널 -->
-    <div id="auth" class="panel">
-      <img src="logo.png" alt="Styx" class="logo">
-      <p class="subtitle">HADES 실시간 오디오 협업</p>
+    <!-- 로그인 -->
+    <div id="auth" class="panel auth-panel">
+      <img src="logo.png" alt="Styx" class="auth-logo">
+      <p class="auth-subtitle">HADES 실시간 오디오 협업</p>
       
-      <div id="auth-tabs">
+      <div class="auth-tabs">
         <button class="tab active" data-tab="login">로그인</button>
         <button class="tab" data-tab="signup">회원가입</button>
       </div>
@@ -29,119 +29,121 @@
       <div id="login-form" class="auth-form">
         <input type="text" id="login-user" placeholder="사용자명" autocomplete="username">
         <input type="password" id="login-pass" placeholder="비밀번호" autocomplete="current-password">
-        <button id="loginBtn">로그인</button>
+        <button id="loginBtn" class="btn-primary">로그인</button>
       </div>
 
       <div id="signup-form" class="auth-form hidden">
         <input type="text" id="signup-user" placeholder="사용자명 (2-20자)">
         <input type="password" id="signup-pass" placeholder="비밀번호 (4자 이상)">
-        <button id="signupBtn">가입 요청</button>
+        <button id="signupBtn" class="btn-primary">가입 요청</button>
       </div>
 
       <div id="auth-msg"></div>
     </div>
 
     <!-- 로비 -->
-    <div id="lobby-container" class="hidden">
-      <div class="lobby-logo">
-        <img src="logo.png" alt="Styx" class="logo-large">
-      </div>
-      <div id="lobby" class="panel">
-        <div class="lobby-header">
-          <div class="user-info">
-            <div id="my-avatar" class="avatar"></div>
-            <span id="my-username"></span>
-          </div>
-          <div class="lobby-actions">
-            <button id="themeBtn" onclick="toggleTheme()" title="테마 변경">☀️</button>
-            <label class="avatar-upload" title="아바타 변경">📷<input type="file" id="avatar-input" accept="image/*"></label>
-            <button id="settingsBtn" title="설정">⚙️</button>
-            <button id="adminBtn" class="hidden" title="관리자">👑</button>
-            <button id="logoutBtn">로그아웃</button>
-          </div>
+    <div id="lobby" class="hidden">
+      <header class="lobby-header">
+        <img src="logo.png" alt="Styx" class="header-logo">
+        <div class="header-user">
+          <div id="my-avatar" class="avatar"></div>
+          <span id="my-username"></span>
         </div>
+        <div class="header-actions">
+          <button id="themeBtn" onclick="toggleTheme()" title="테마 변경">☀️</button>
+          <label class="avatar-upload" title="아바타 변경">📷<input type="file" id="avatar-input" accept="image/*"></label>
+          <button id="settingsBtn" title="설정">⚙️</button>
+          <button id="adminBtn" class="hidden" title="관리자">👑</button>
+          <button id="logoutBtn" class="btn-logout">로그아웃</button>
+        </div>
+      </header>
 
-        <!-- 오디오 설정 섹션 -->
-        <div class="lobby-section audio-section">
+      <main class="lobby-main">
+        <!-- 오디오 설정 -->
+        <section class="lobby-card">
           <h3>🎧 오디오 설정</h3>
-          <div class="audio-settings-container">
-            <div class="audio-devices">
-              <div class="device-row">
+          <div class="audio-grid">
+            <div class="audio-col">
+              <div class="form-field">
                 <label>🎤 입력 장치</label>
                 <select id="audio-device"></select>
               </div>
-              <div class="device-row">
+              <div class="form-field">
                 <label>🔊 출력 장치</label>
                 <select id="audio-output"></select>
               </div>
             </div>
-            <div class="audio-options">
-              <label class="checkbox-label"><input type="checkbox" id="echo-cancel" checked> 에코 제거</label>
-              <label class="checkbox-label"><input type="checkbox" id="noise-suppress" checked> 노이즈 억제</label>
-              <label class="checkbox-label"><input type="checkbox" id="auto-gain" checked> 자동 게인</label>
-              <label class="checkbox-label"><input type="checkbox" id="ptt-mode"> 푸시투톡 (Space)</label>
+            <div class="audio-col">
+              <div class="checkbox-group">
+                <label><input type="checkbox" id="echo-cancel" checked> 에코 제거</label>
+                <label><input type="checkbox" id="noise-suppress" checked> 노이즈 억제</label>
+                <label><input type="checkbox" id="auto-gain" checked> 자동 게인</label>
+                <label><input type="checkbox" id="ptt-mode"> 푸시투톡 (Space)</label>
+              </div>
             </div>
-            <div class="audio-test">
-              <button id="test-audio-btn" class="test-btn-large">🔍 마이크 테스트</button>
-              <div class="level-bar-large"><div id="mic-level" class="level"></div></div>
-              <span id="test-status-text"></span>
+            <div class="audio-col">
+              <button id="test-audio-btn" class="btn-test">🎤 마이크 테스트</button>
+              <div class="mic-meter">
+                <div id="mic-level"></div>
+              </div>
+              <span id="test-status-text" class="test-status"></span>
             </div>
           </div>
-        </div>
+        </section>
 
-        <!-- 방 목록 섹션 -->
-        <div class="lobby-section room-section">
-          <div class="room-section-header">
+        <!-- 방 목록 -->
+        <section class="lobby-card">
+          <div class="card-header">
             <h3>📡 활성 방 목록</h3>
-            <button id="createRoomBtn" class="create-room-btn">➕ 방 만들기</button>
+            <button id="createRoomBtn" class="btn-create">➕ 방 만들기</button>
           </div>
-          <div id="room-list" class="room-list"></div>
-        </div>
-      </div>
+          <div id="room-list" class="room-grid"></div>
+        </section>
+      </main>
     </div>
 
     <!-- 방 생성 모달 -->
     <div id="create-room-modal" class="modal hidden">
-      <div class="modal-content">
+      <div class="modal-backdrop" onclick="closeCreateRoomModal()"></div>
+      <div class="modal-box">
         <div class="modal-header">
           <h2>🎵 새 방 만들기</h2>
           <button class="modal-close" onclick="closeCreateRoomModal()">✕</button>
         </div>
         <div class="modal-body">
-          <div class="form-group">
+          <div class="form-field">
             <label>방 이름 *</label>
             <input type="text" id="new-room-name" placeholder="방 이름 입력..." maxlength="30">
           </div>
-          <div class="form-group">
+          <div class="form-field">
             <label>비밀번호 (선택)</label>
             <input type="password" id="new-room-password" placeholder="비공개 방은 비밀번호 설정">
           </div>
-          <div class="form-group">
-            <label>최대 인원</label>
-            <select id="new-room-max-users">
-              <option value="1">1명</option>
-              <option value="2">2명</option>
-              <option value="3">3명</option>
-              <option value="4">4명</option>
-              <option value="5">5명</option>
-              <option value="6">6명</option>
-              <option value="7">7명</option>
-              <option value="8" selected>8명</option>
-            </select>
+          <div class="form-row">
+            <div class="form-field">
+              <label>최대 인원</label>
+              <select id="new-room-max-users">
+                <option value="2">2명</option>
+                <option value="3">3명</option>
+                <option value="4">4명</option>
+                <option value="5">5명</option>
+                <option value="6">6명</option>
+                <option value="7">7명</option>
+                <option value="8" selected>8명</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label>오디오 모드</label>
+              <select id="new-room-audio-mode">
+                <option value="voice">🎤 음성</option>
+                <option value="music">🎸 악기</option>
+              </select>
+            </div>
           </div>
-          <div class="form-group">
-            <label>오디오 모드</label>
-            <select id="new-room-audio-mode">
-              <option value="voice">🎤 음성 (저지연)</option>
-              <option value="music">🎸 악기 (고품질)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="checkbox-label">
-              <input type="checkbox" id="new-room-private">
-              🔒 비공개 방 (목록에 표시 안 함)
-            </label>
-          </div>
+          <label class="checkbox-inline">
+            <input type="checkbox" id="new-room-private">
+            🔒 비공개 방
+          </label>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="closeCreateRoomModal()">취소</button>
@@ -151,114 +153,84 @@
     </div>
 
     <!-- 설정 패널 -->
+    <div id="settings-panel" class="modal hidden">
+      <div class="modal-backdrop" onclick="$('settings-panel').classList.add('hidden')"></div>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2>⚙️ 설정</h2>
+          <button class="modal-close" id="closeSettingsBtn">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-field">
+            <label>비밀번호 변경</label>
+            <input type="password" id="old-password" placeholder="현재 비밀번호">
+            <input type="password" id="new-password" placeholder="새 비밀번호" style="margin-top:8px;">
+            <button id="changePasswordBtn" class="btn-primary" style="margin-top:12px;">변경</button>
+          </div>
+          <div class="shortcuts-info">
+            <h4>키보드 단축키</h4>
+            <p><kbd>M</kbd> 음소거 토글</p>
+            <p><kbd>Space</kbd> 메트로놈 / PTT</p>
+          </div>
+        </div>
       </div>
-    </div>
-
-    <!-- 설정 패널 -->
-    <div id="settings-panel" class="panel hidden">
-      <h2>⚙️ 설정</h2>
-      
-      <div class="settings-section">
-        <h3>비밀번호 변경</h3>
-        <input type="password" id="old-password" placeholder="현재 비밀번호">
-        <input type="password" id="new-password" placeholder="새 비밀번호">
-        <button id="changePasswordBtn">변경</button>
-      </div>
-
-      <div class="settings-section">
-        <h3>키보드 단축키</h3>
-        <p class="shortcut-hint">M - 음소거 토글</p>
-        <p class="shortcut-hint">Space - 메트로놈 토글</p>
-      </div>
-      
-      <button id="closeSettingsBtn">닫기</button>
     </div>
 
     <!-- 관리자 패널 -->
-    <div id="admin-panel" class="panel hidden">
-      <h2>👑 관리자</h2>
-      
-      <div class="admin-section">
-        <h3>가입 승인 대기</h3>
-        <div id="pending-list"></div>
+    <div id="admin-panel" class="modal hidden">
+      <div class="modal-backdrop" onclick="$('admin-panel').classList.add('hidden')"></div>
+      <div class="modal-box modal-wide">
+        <div class="modal-header">
+          <h2>👑 관리자</h2>
+          <button class="modal-close" id="closeAdminBtn">✕</button>
+        </div>
+        <div class="modal-body">
+          <h4>가입 승인 대기</h4>
+          <div id="pending-list" class="admin-list"></div>
+          <h4>사용자 관리</h4>
+          <div id="users-list" class="admin-list"></div>
+        </div>
       </div>
-      
-      <div class="admin-section">
-        <h3>사용자 관리</h3>
-        <div id="users-list"></div>
-      </div>
-      
-      <button id="closeAdminBtn">닫기</button>
     </div>
 
     <!-- 방 화면 -->
-    <div id="room-view" class="panel hidden">
-      <!-- 오디오 설정 상단 바 -->
-      <div class="audio-settings-bar">
-        <div class="audio-setting-item">
-          <label>🎤</label>
-          <select id="room-audio-device"></select>
+    <div id="room-view" class="hidden">
+      <header class="room-header">
+        <div class="room-title">
+          <h2>🎸 <span id="roomName"></span></h2>
         </div>
-        <div class="audio-setting-item">
-          <label>🔊</label>
-          <select id="room-audio-output"></select>
-        </div>
-        <div class="audio-setting-item">
-          <label>
-            <input type="checkbox" id="room-echo-cancel" checked>
-            에코 제거
-          </label>
-        </div>
-        <div class="audio-setting-item">
-          <label>
-            <input type="checkbox" id="room-noise-suppress" checked>
-            노이즈 억제
-          </label>
-        </div>
-        <div class="audio-setting-item">
-          <label>
-            <input type="checkbox" id="room-ptt-mode">
-            푸시투톡
-          </label>
-        </div>
-      </div>
-
-      <div class="room-header">
-        <h2>🎸 <span id="roomName"></span></h2>
         <div class="room-controls">
-          <button id="inviteBtn" onclick="createInviteLink()" title="초대 링크">🔗 초대</button>
-          <button id="recordBtn" onclick="toggleRecording()" title="녹음">⏺️ 녹음</button>
-          <button id="closeRoomBtn" class="hidden" onclick="closeRoom()" title="방 닫기">🚪 닫기</button>
-          <button id="muteBtn" title="음소거 (M)">🎤</button>
-          <button id="leaveBtn">나가기</button>
+          <select id="room-audio-device" title="입력 장치"></select>
+          <select id="room-audio-output" title="출력 장치"></select>
+          <button id="muteBtn" class="btn-icon" title="음소거 (M)">🎤</button>
+          <button id="inviteBtn" class="btn-icon" onclick="createInviteLink()" title="초대 링크">🔗</button>
+          <button id="recordBtn" class="btn-icon" onclick="toggleRecording()" title="녹음">⏺️</button>
+          <button id="closeRoomBtn" class="btn-icon hidden" onclick="closeRoom()" title="방 닫기">🚪</button>
+          <button id="leaveBtn" class="btn-leave">나가기</button>
+        </div>
+      </header>
+
+      <div class="room-toolbar">
+        <div class="toolbar-left">
+          <label><input type="checkbox" id="room-echo-cancel" checked> 에코</label>
+          <label><input type="checkbox" id="room-noise-suppress" checked> 노이즈</label>
+          <label><input type="checkbox" id="room-ptt-mode"> PTT</label>
+        </div>
+        <div class="toolbar-center">
+          <button id="metronome-toggle" class="btn-metro">▶️</button>
+          <input type="number" id="bpm-input" value="120" min="30" max="300">
+          <span>BPM</span>
+          <div id="metronome-tick" class="metro-tick"></div>
+        </div>
+        <div class="toolbar-right">
+          <span class="meter-label">입력:</span>
+          <div class="input-meter"><div id="audio-meter"></div></div>
         </div>
       </div>
 
-      <!-- 메트로놈 -->
-      <div class="metronome-bar">
-        <button id="metronome-toggle" title="메트로놈 (Space)">▶️</button>
-        <input type="number" id="bpm-input" value="120" min="30" max="300" title="BPM">
-        <span>BPM</span>
-        <div id="metronome-tick"></div>
-      </div>
-
-      <!-- 오디오 레벨 미터 -->
-      <div class="audio-meter-container">
-        <span>입력 레벨:</span>
-        <div class="audio-meter-bg">
-          <div id="audio-meter"></div>
-        </div>
-      </div>
-
-      <!-- 핑 그래프 -->
-      <div class="ping-graph-container">
-        <span>지연 (평균):</span>
-        <canvas id="ping-graph" width="200" height="40"></canvas>
-      </div>
-
-      <div class="room-content">
-        <div class="users-section">
-          <div id="users-grid"></div>
+      <main class="room-main">
+        <section class="users-section">
+          <div id="users-grid" class="users-grid"></div>
           <div id="my-card" class="user-card self">
             <div class="card-avatar"></div>
             <div class="card-info">
@@ -266,24 +238,20 @@
               <span class="card-latency">로컬</span>
             </div>
           </div>
-        </div>
+        </section>
 
-        <div class="chat-section">
-          <div id="chat-messages"></div>
+        <section class="chat-section">
+          <div id="chat-messages" class="chat-messages"></div>
           <div class="chat-input">
             <input type="text" id="chat-text" placeholder="메시지 입력..." maxlength="500">
-            <button id="sendBtn">전송</button>
+            <button id="sendBtn" class="btn-send">전송</button>
           </div>
-        </div>
-      </div>
+        </section>
+      </main>
     </div>
   </div>
 
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <script>
-    // Tauri 앱용 서버 URL 설정
-    window.STYX_SERVER_URL = localStorage.getItem('styx-server-url') || 'http://localhost:3000';
-  </script>
   <script src="app.js"></script>
 </body>
 </html>
