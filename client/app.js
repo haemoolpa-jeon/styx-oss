@@ -3,6 +3,10 @@
 
 const serverUrl = window.STYX_SERVER_URL || '';
 const socket = io(serverUrl, { reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 10 });
+
+// 아바타 URL을 절대 경로로 변환
+const avatarUrl = (path) => path ? (path.startsWith('/') ? serverUrl + path : path) : '';
+
 const peers = new Map();
 const volumeStates = new Map();
 let localStream = null;
@@ -609,7 +613,7 @@ async function showLobby() {
   authPanel.classList.add('hidden');
   lobby.classList.remove('hidden');
   $('my-username').textContent = currentUser.username;
-  $('my-avatar').style.backgroundImage = currentUser.avatar ? `url(${currentUser.avatar})` : '';
+  $('my-avatar').style.backgroundImage = currentUser.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
   if (currentUser.isAdmin) $('adminBtn').classList.remove('hidden');
   
   await loadAudioDevices();
@@ -1048,7 +1052,7 @@ $('avatar-input').onchange = (e) => {
     socket.emit('upload-avatar', { username: currentUser.username, avatarData: reader.result }, res => {
       if (res.success) {
         currentUser.avatar = res.avatar;
-        $('my-avatar').style.backgroundImage = `url(${res.avatar})`;
+        $('my-avatar').style.backgroundImage = `url(${avatarUrl(res.avatar)})`;
         toast('아바타가 변경되었습니다', 'success');
       } else {
         toast(res.error, 'error');
@@ -1204,7 +1208,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword) => {
     }
     
     document.querySelector('#my-card .card-avatar').style.backgroundImage = 
-      currentUser.avatar ? `url(${currentUser.avatar})` : '';
+      currentUser.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
 
     chatMessages.innerHTML = '';
     res.messages?.forEach(addChatMessage);
@@ -1496,7 +1500,7 @@ function renderUsers() {
     const card = document.createElement('div');
     card.className = `user-card ${connected ? 'connected' : 'connecting'} ${speaking}`;
     card.innerHTML = `
-      <div class="card-avatar" style="background-image: ${peer.avatar ? `url(${peer.avatar})` : 'none'}"></div>
+      <div class="card-avatar" style="background-image: ${peer.avatar ? `url(${avatarUrl(peer.avatar)})` : 'none'}"></div>
       <div class="card-info">
         <span class="card-name">${peer.isSpeaking ? '🎤 ' : ''}${escapeHtml(peer.username)}</span>
         <div class="card-stats">
