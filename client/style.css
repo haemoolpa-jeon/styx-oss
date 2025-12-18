@@ -420,3 +420,7 @@ h3 { font-size: 1.3em; color: var(--text-secondary); margin-bottom: 15px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--bg-card); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+/* Logo */
+.logo { max-width: 280px; height: auto; margin-bottom: 10px; }
+.logo-small { height: 40px; width: auto; margin-right: 15px; }
