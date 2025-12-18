@@ -23,8 +23,8 @@ let recordedChunks = [];
 let isRecording = false;
 
 // Tauri 감지
-const isTauri = typeof window.__TAURI__ !== 'undefined';
-const tauriInvoke = isTauri ? window.__TAURI__.core.invoke : null;
+const _isTauriApp = typeof window.__TAURI__ !== 'undefined';
+const tauriInvoke = _isTauriApp ? window.__TAURI__.core.invoke : null;
 
 // 연결 모드: 'webrtc' | 'udp'
 let connectionMode = localStorage.getItem('styx-connection-mode') || 'webrtc';
@@ -454,7 +454,7 @@ socket.on('connect', () => {
   $('connection-status')?.classList.remove('offline');
   
   // UDP 핸들러 설정 (Tauri 앱일 때만)
-  if (isTauri) setupUdpHandlers();
+  if (_isTauriApp) setupUdpHandlers();
   
   // 세션 복구 (최초 연결 시에만)
   if (!sessionRestored) {
@@ -620,7 +620,7 @@ async function showLobby() {
 // 안정성 설정 초기화
 function initStabilitySettings() {
   // Tauri 앱이면 연결 모드 선택 표시
-  if (isTauri) {
+  if (_isTauriApp) {
     const modeRow = $('connection-mode-row');
     if (modeRow) modeRow.style.display = 'flex';
     updateConnectionModeButtons();
@@ -1220,7 +1220,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword) => {
     initPttTouch();
     
     // UDP 모드면 UDP 시작
-    if (isTauri && connectionMode === 'udp') {
+    if (_isTauriApp && connectionMode === 'udp') {
       startUdpMode();
     }
   });
