@@ -629,6 +629,8 @@ async function showLobby() {
 function initStabilitySettings() {
   // Tauri 앱이면 연결 모드 선택 표시
   if (_isTauriApp) {
+    const tauriSettings = $('tauri-settings');
+    if (tauriSettings) tauriSettings.style.display = 'block';
     const modeRow = $('connection-mode-row');
     if (modeRow) modeRow.style.display = 'flex';
     updateConnectionModeButtons();
@@ -2042,8 +2044,8 @@ document.querySelectorAll('.modal-backdrop').forEach(el => {
   };
 });
 document.querySelectorAll('.modal-close').forEach(el => el.onclick = closeCreateRoomModal);
-document.querySelector('.modal-actions .btn-secondary')?.addEventListener('click', closeCreateRoomModal);
-document.querySelector('.modal-actions .btn-primary')?.addEventListener('click', createRoom);
+document.querySelector('.modal-footer .btn-secondary')?.addEventListener('click', closeCreateRoomModal);
+document.querySelector('.modal-footer .btn-primary')?.addEventListener('click', createRoom);
 $('inviteBtn')?.addEventListener('click', createInviteLink);
 $('recordBtn')?.addEventListener('click', toggleRecording);
 $('closeRoomBtn')?.addEventListener('click', closeRoom);

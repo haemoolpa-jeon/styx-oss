@@ -376,9 +376,27 @@ input[type="range"]::-webkit-slider-thumb {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
 
+/* Animation classes */
+.hide { opacity: 0; transform: translateY(-10px); transition: all 0.3s; }
+.muted { opacity: 0.6; background: var(--error) !important; }
+.playing { background: var(--success) !important; }
+.ptt-active { background: var(--warning) !important; animation: pulse 0.5s infinite; }
+.recording { background: var(--error) !important; animation: pulse 1s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+
 /* Responsive */
 @media (max-width: 768px) {
   .chat-section { display: none; }
   .room-controls select { display: none; }
   .toolbar-left { display: none; }
 }
+
+/* Stats badge */
+.stats-badge {
+  display: inline-block; padding: 6px 12px; border-radius: 6px;
+  font-size: 12px; background: var(--bg-card); color: var(--text-secondary);
+}
+.stats-badge.good { background: rgba(46, 213, 115, 0.2); color: var(--success); }
+.stats-badge.warning { background: rgba(255, 165, 2, 0.2); color: var(--warning); }
+.stats-badge.bad { background: rgba(255, 71, 87, 0.2); color: var(--error); }
+.stats-badge.idle { opacity: 0.5; }
