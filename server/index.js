@@ -606,6 +606,11 @@ io.on('connection', (socket) => {
   socket.on('answer', ({ to, answer }) => io.to(to).emit('answer', { from: socket.id, answer }));
   socket.on('ice-candidate', ({ to, candidate }) => io.to(to).emit('ice-candidate', { from: socket.id, candidate }));
 
+  // 시간 동기화 (메트로놈용)
+  socket.on('time-sync', (clientTime, cb) => {
+    cb(Date.now());
+  });
+
   socket.on('udp-info', ({ port, publicIp }) => {
     if (!socket.room) return;
     socket.udpPort = port;

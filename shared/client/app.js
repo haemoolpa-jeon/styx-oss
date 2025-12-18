@@ -54,6 +54,7 @@ let gainNode = null;
 let compressorNode = null;
 let noiseGateInterval = null;
 let latencyHistory = []; // 핑 그래프용
+let serverTimeOffset = 0; // 서버 시간과 클라이언트 시간 차이 (ms)
 
 // 추가 기능
 let isOnline = navigator.onLine;
@@ -491,7 +492,8 @@ async function autoRejoin() {
       } else {
         toast('방에 재입장했습니다', 'success');
         socket.room = lastRoom;
-        res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, true));
+        // 기존 사용자들에 대한 피어 연결 (initiator=false: 기존 사용자가 offer를 보냄)
+        res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, false));
         startLatencyPing();
         startAudioMeter();
       }
@@ -505,6 +507,9 @@ async function autoRejoin() {
 socket.on('connect', () => {
   log('서버 연결됨');
   $('connection-status')?.classList.remove('offline');
+  
+  // 서버 시간 동기화 (메트로놈용)
+  syncServerTime();
   
   // UDP 핸들러 설정 (Tauri 앱일 때만)
   if (_isTauriApp) setupUdpHandlers();
@@ -535,6 +540,35 @@ socket.on('connect', () => {
     autoRejoin();
   }
 });
+
+// 서버 시간 동기화 (NTP 방식)
+function syncServerTime() {
+  const samples = [];
+  const takeSample = () => {
+    const t0 = Date.now();
+    socket.emit('time-sync', t0, (serverTime) => {
+      const t1 = Date.now();
+      const rtt = t1 - t0;
+      const offset = serverTime - t0 - (rtt / 2);
+      samples.push({ offset, rtt });
+      
+      if (samples.length < 5) {
+        setTimeout(takeSample, 100);
+      } else {
+        // RTT가 가장 낮은 샘플의 offset 사용 (가장 정확)
+        samples.sort((a, b) => a.rtt - b.rtt);
+        serverTimeOffset = samples[0].offset;
+        log('서버 시간 오프셋:', serverTimeOffset, 'ms');
+      }
+    });
+  };
+  takeSample();
+}
+
+// 서버 시간 기준으로 현재 시간 반환
+function getServerTime() {
+  return Date.now() + serverTimeOffset;
+}
 
 socket.on('disconnect', () => {
   log('서버 연결 끊김');
@@ -1316,7 +1350,8 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     delayCompensation = res.delayCompensation || false;
     if ($('delay-compensation')) $('delay-compensation').checked = delayCompensation;
 
-    res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, true));
+    // 기존 사용자들에 대한 피어 연결 생성 (initiator=false: 기존 사용자가 offer를 보냄)
+    res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, false));
     startLatencyPing();
     startAudioMeter();
     initPttTouch();
@@ -1416,9 +1451,13 @@ function startMetronome(bpm, serverStartTime, countIn = false) {
   
   let delay = 0;
   if (serverStartTime) {
-    const elapsed = Date.now() - serverStartTime;
+    // 서버 시간 오프셋을 적용하여 정확한 경과 시간 계산
+    const serverNow = getServerTime();
+    const elapsed = serverNow - serverStartTime;
     delay = interval - (elapsed % interval);
+    if (delay < 0) delay += interval; // 음수 방지
     metronomeBeat = Math.floor((elapsed / interval) % BEATS_PER_BAR);
+    if (metronomeBeat < 0) metronomeBeat = 0;
   } else {
     metronomeBeat = 0;
   }
@@ -1640,12 +1679,15 @@ function createPeerConnection(peerId, username, avatar, initiator) {
 
   pc.onconnectionstatechange = () => {
     const peerData = peers.get(peerId);
+    log(`연결 상태 변경: ${username} -> ${pc.connectionState}`);
+    
     if (pc.connectionState === 'connected') {
       applyAudioSettings(pc);
       if (peerData) peerData.retryCount = 0;
+      log(`연결 성공: ${username}`);
     }
     if (pc.connectionState === 'failed') {
-      log(`연결 실패: ${username}, 재시도...`);
+      console.error(`연결 실패: ${username}`);
       const retries = (peerData?.retryCount || 0) + 1;
       if (peerData) peerData.retryCount = retries;
       
@@ -1663,14 +1705,18 @@ function createPeerConnection(peerId, username, avatar, initiator) {
   };
 
   if (initiator) {
+    log(`Offer 생성 시작: ${username} (${peerId})`);
     pc.createOffer()
       .then(offer => {
         // Opus SDP 최적화 적용
         offer.sdp = optimizeOpusSdp(offer.sdp, audioMode);
         return pc.setLocalDescription(offer);
       })
-      .then(() => socket.emit('offer', { to: peerId, offer: pc.localDescription }))
-      .catch(e => log('Offer 생성 실패:', e));
+      .then(() => {
+        socket.emit('offer', { to: peerId, offer: pc.localDescription });
+        log(`Offer 전송 완료: ${username}`);
+      })
+      .catch(e => console.error('Offer 생성 실패:', e));
   }
 
   renderUsers();
@@ -1974,6 +2020,7 @@ function renderPingGraph() {
 
 // 소켓 이벤트
 socket.on('user-joined', ({ id, username, avatar }) => {
+  log(`새 사용자 입장: ${username} (${id}), initiator=true`);
   createPeerConnection(id, username, avatar, true);
   playSound('join');
   toast(`${username} 입장`, 'info', 2000);
@@ -1981,8 +2028,10 @@ socket.on('user-joined', ({ id, username, avatar }) => {
 
 socket.on('offer', async ({ from, offer }) => {
   try {
+    log(`Offer 수신: ${from}`);
     let peer = peers.get(from);
     if (!peer) {
+      log(`피어 없음, 새로 생성: ${from}`);
       createPeerConnection(from, '사용자', null, false);
       peer = peers.get(from);
     }
@@ -1992,9 +2041,15 @@ socket.on('offer', async ({ from, offer }) => {
     const offerCollision = pc.signalingState !== 'stable';
     const polite = socket.id > from;
     
-    if (offerCollision && !polite) return;
+    log(`Offer 처리: signalingState=${pc.signalingState}, collision=${offerCollision}, polite=${polite}`);
+    
+    if (offerCollision && !polite) {
+      log('Offer 무시 (glare, impolite)');
+      return;
+    }
     
     if (offerCollision && polite) {
+      log('Rollback 후 Offer 적용');
       await Promise.all([
         pc.setLocalDescription({ type: 'rollback' }),
         pc.setRemoteDescription(offer)
@@ -2011,15 +2066,24 @@ socket.on('offer', async ({ from, offer }) => {
     });
     await pc.setLocalDescription(answer);
     socket.emit('answer', { to: from, answer });
+    log(`Answer 전송: ${from}`);
   } catch (e) {
-    log('Offer 처리 실패:', e);
+    console.error('Offer 처리 실패:', e);
   }
 });
 
 socket.on('answer', async ({ from, answer }) => {
+  log(`Answer 수신: ${from}`);
   const peer = peers.get(from);
   if (peer?.pc.signalingState === 'have-local-offer') {
-    try { await peer.pc.setRemoteDescription(answer); } catch {}
+    try { 
+      await peer.pc.setRemoteDescription(answer); 
+      log(`Answer 적용 완료: ${from}`);
+    } catch (e) {
+      console.error('Answer 적용 실패:', e);
+    }
+  } else {
+    log(`Answer 무시: signalingState=${peer?.pc.signalingState}`);
   }
 });
 
