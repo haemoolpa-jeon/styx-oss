@@ -1977,3 +1977,22 @@ if ($('room-vad-mode')) {
     if ($('vad-mode')) $('vad-mode').checked = vadEnabled;
   };
 }
+
+
+// ===== Inline 이벤트 핸들러 대체 =====
+$('themeBtn').onclick = toggleTheme;
+$('webrtcModeBtn')?.addEventListener('click', () => setConnectionMode('webrtc'));
+$('udpModeBtn')?.addEventListener('click', () => setConnectionMode('udp'));
+document.querySelectorAll('.modal-backdrop').forEach(el => {
+  el.onclick = () => {
+    closeCreateRoomModal();
+    $('settings-panel')?.classList.add('hidden');
+    $('admin-panel')?.classList.add('hidden');
+  };
+});
+document.querySelectorAll('.modal-close').forEach(el => el.onclick = closeCreateRoomModal);
+document.querySelector('.modal-actions .btn-secondary')?.addEventListener('click', closeCreateRoomModal);
+document.querySelector('.modal-actions .btn-primary')?.addEventListener('click', createRoom);
+$('inviteBtn')?.addEventListener('click', createInviteLink);
+$('recordBtn')?.addEventListener('click', toggleRecording);
+$('closeRoomBtn')?.addEventListener('click', closeRoom);

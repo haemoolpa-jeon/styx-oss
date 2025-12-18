@@ -52,7 +52,7 @@
           <span id="my-username"></span>
         </div>
         <div class="header-actions">
-          <button id="themeBtn" onclick="toggleTheme()" title="테마 변경">☀️</button>
+          <button id="themeBtn" title="테마 변경">☀️</button>
           <label class="avatar-upload" title="아바타 변경">📷<input type="file" id="avatar-input" accept="image/*"></label>
           <button id="settingsBtn" title="설정">⚙️</button>
           <button id="adminBtn" class="hidden" title="관리자">👑</button>
@@ -104,8 +104,8 @@
             <div class="form-field">
               <label>🔌 연결 모드</label>
               <div class="mode-toggle">
-                <button id="webrtcModeBtn" class="mode-btn active" onclick="setConnectionMode('webrtc')">🌐 WebRTC</button>
-                <button id="udpModeBtn" class="mode-btn" onclick="setConnectionMode('udp')">⚡ UDP (저지연)</button>
+                <button id="webrtcModeBtn" class="mode-btn active">🌐 WebRTC</button>
+                <button id="udpModeBtn" class="mode-btn">⚡ UDP (저지연)</button>
               </div>
             </div>
           </div>
@@ -124,11 +124,11 @@
 
     <!-- 방 생성 모달 -->
     <div id="create-room-modal" class="modal hidden">
-      <div class="modal-backdrop" onclick="closeCreateRoomModal()"></div>
+      <div class="modal-backdrop"></div>
       <div class="modal-box modal-wide">
         <div class="modal-header">
           <h2>🎵 새 방 만들기</h2>
-          <button class="modal-close" onclick="closeCreateRoomModal()">✕</button>
+          <button class="modal-close">✕</button>
         </div>
         <div class="modal-body">
           <!-- 기본 설정 -->
@@ -203,15 +203,15 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn-secondary" onclick="closeCreateRoomModal()">취소</button>
-          <button class="btn-primary" onclick="createRoom()">방 만들기</button>
+          <button class="btn-secondary">취소</button>
+          <button class="btn-primary">방 만들기</button>
         </div>
       </div>
     </div>
 
     <!-- 설정 패널 -->
     <div id="settings-panel" class="modal hidden">
-      <div class="modal-backdrop" onclick="$('settings-panel').classList.add('hidden')"></div>
+      <div class="modal-backdrop"></div>
       <div class="modal-box">
         <div class="modal-header">
           <h2>⚙️ 설정</h2>
@@ -235,7 +235,7 @@
 
     <!-- 관리자 패널 -->
     <div id="admin-panel" class="modal hidden">
-      <div class="modal-backdrop" onclick="$('admin-panel').classList.add('hidden')"></div>
+      <div class="modal-backdrop"></div>
       <div class="modal-box modal-wide">
         <div class="modal-header">
           <h2>👑 관리자</h2>
@@ -260,9 +260,9 @@
           <select id="room-audio-device" title="입력 장치"></select>
           <select id="room-audio-output" title="출력 장치"></select>
           <button id="muteBtn" class="btn-icon" title="음소거 (M)">🎤</button>
-          <button id="inviteBtn" class="btn-icon" onclick="createInviteLink()" title="초대 링크">🔗</button>
-          <button id="recordBtn" class="btn-icon" onclick="toggleRecording()" title="녹음">⏺️</button>
-          <button id="closeRoomBtn" class="btn-icon hidden" onclick="closeRoom()" title="방 닫기">🚪</button>
+          <button id="inviteBtn" class="btn-icon" title="초대 링크">🔗</button>
+          <button id="recordBtn" class="btn-icon" title="녹음">⏺️</button>
+          <button id="closeRoomBtn" class="btn-icon hidden" title="방 닫기">🚪</button>
           <button id="leaveBtn" class="btn-leave">나가기</button>
         </div>
       </header>
