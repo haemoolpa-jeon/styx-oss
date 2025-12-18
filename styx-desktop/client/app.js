@@ -2061,7 +2061,7 @@ document.querySelectorAll('.modal-backdrop').forEach(el => {
     $('admin-panel')?.classList.add('hidden');
   };
 });
-document.querySelectorAll('.modal-close').forEach(el => el.onclick = closeCreateRoomModal);
+$('create-room-modal')?.querySelector('.modal-close')?.addEventListener('click', closeCreateRoomModal);
 document.querySelector('.modal-footer .btn-secondary')?.addEventListener('click', closeCreateRoomModal);
 document.querySelector('.modal-footer .btn-primary')?.addEventListener('click', createRoom);
 $('inviteBtn')?.addEventListener('click', createInviteLink);
