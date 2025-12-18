@@ -423,4 +423,5 @@ h3 { font-size: 1.3em; color: var(--text-secondary); margin-bottom: 15px; }
 
 /* Logo */
 .logo { max-width: 280px; height: auto; margin-bottom: 10px; }
-.logo-small { height: 40px; width: auto; margin-right: 15px; }
+.logo-small { height: 50px; width: auto; }
+.lobby-logo { text-align: center; padding: 15px 0; }
