@@ -23,11 +23,8 @@ let recordedChunks = [];
 let isRecording = false;
 
 // Tauri 감지
-const isTauri = window.__TAURI__ !== undefined;
-let tauriInvoke = null;
-if (isTauri) {
-  tauriInvoke = window.__TAURI__.core.invoke;
-}
+const isTauri = typeof window.__TAURI__ !== 'undefined';
+const tauriInvoke = isTauri ? window.__TAURI__.core.invoke : null;
 
 // 연결 모드: 'webrtc' | 'udp'
 let connectionMode = localStorage.getItem('styx-connection-mode') || 'webrtc';
