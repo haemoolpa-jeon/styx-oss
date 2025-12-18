@@ -958,7 +958,13 @@ $('logoutBtn').onclick = () => {
 
 // 오디오 장치 로드 (입력 + 출력)
 async function loadAudioDevices() {
+  const inputSelect = $('audio-device');
+  const outputSelect = $('audio-output');
+  
+  if (!inputSelect) return;
+  
   try {
+    // 먼저 권한 요청
     const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     tempStream.getTracks().forEach(t => t.stop());
     
@@ -967,15 +973,17 @@ async function loadAudioDevices() {
     const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
     
     // 입력 장치
-    const inputSelect = $('audio-device');
-    inputSelect.innerHTML = audioInputs.map((d, i) => 
-      `<option value="${d.deviceId}">${d.label || '마이크 ' + (i + 1)}</option>`
-    ).join('');
-    selectedDeviceId = audioInputs[0]?.deviceId;
-    inputSelect.onchange = () => selectedDeviceId = inputSelect.value;
+    if (audioInputs.length) {
+      inputSelect.innerHTML = audioInputs.map((d, i) => 
+        `<option value="${d.deviceId}">${d.label || '마이크 ' + (i + 1)}</option>`
+      ).join('');
+      selectedDeviceId = audioInputs[0]?.deviceId;
+      inputSelect.onchange = () => selectedDeviceId = inputSelect.value;
+    } else {
+      inputSelect.innerHTML = '<option>마이크 없음</option>';
+    }
     
     // 출력 장치
-    const outputSelect = $('audio-output');
     if (outputSelect && audioOutputs.length) {
       outputSelect.innerHTML = audioOutputs.map((d, i) => 
         `<option value="${d.deviceId}">${d.label || '스피커 ' + (i + 1)}</option>`
@@ -983,16 +991,22 @@ async function loadAudioDevices() {
       selectedOutputId = audioOutputs[0]?.deviceId;
       outputSelect.onchange = () => {
         selectedOutputId = outputSelect.value;
-        // 모든 오디오 엘리먼트에 출력 장치 적용
         peers.forEach(peer => {
-          if (peer.audioEl.setSinkId) {
+          if (peer.audioEl?.setSinkId) {
             peer.audioEl.setSinkId(selectedOutputId).catch(() => {});
           }
         });
       };
+    } else if (outputSelect) {
+      outputSelect.innerHTML = '<option>스피커 없음</option>';
     }
+    
+    console.log(`오디오 장치 로드: 입력 ${audioInputs.length}개, 출력 ${audioOutputs.length}개`);
   } catch (e) {
-    console.error('오디오 장치 접근 거부됨');
+    console.error('오디오 장치 접근 실패:', e.message);
+    inputSelect.innerHTML = '<option>마이크 권한 필요</option>';
+    if (outputSelect) outputSelect.innerHTML = '<option>스피커 권한 필요</option>';
+    toast('마이크 권한을 허용해 주세요', 'warning');
   }
 }
 
