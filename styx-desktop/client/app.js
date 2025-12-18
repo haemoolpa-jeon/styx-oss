@@ -62,6 +62,7 @@ let lastRoomPassword = sessionStorage.getItem('styx-room-pw');
 let duckingEnabled = localStorage.getItem('styx-ducking') === 'true';
 let vadEnabled = localStorage.getItem('styx-vad') !== 'false';
 let vadIntervals = new Map(); // 피어별 VAD 인터벌
+let delayCompensation = false;
 
 const rtcConfig = {
   iceServers: [
@@ -1259,6 +1260,10 @@ window.joinRoom = async (roomName, hasPassword, providedPassword) => {
       $('bpm-input').value = res.metronome.bpm;
       if (res.metronome.playing) startMetronome(res.metronome.bpm, res.metronome.startTime);
     }
+    
+    // 지연 보상 상태 적용
+    delayCompensation = res.delayCompensation || false;
+    if ($('delay-compensation')) $('delay-compensation').checked = delayCompensation;
 
     res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, true));
     startLatencyPing();
@@ -1332,6 +1337,19 @@ socket.on('metronome-sync', ({ bpm, playing, startTime }) => {
   } else {
     stopMetronome();
   }
+});
+
+socket.on('delay-compensation-sync', (enabled) => {
+  delayCompensation = enabled;
+  const checkbox = $('delay-compensation');
+  if (checkbox) checkbox.checked = enabled;
+  if (!enabled) {
+    // 비활성화 시 모든 딜레이 제거
+    peers.forEach(peer => {
+      if (peer.delayNode) peer.delayNode.delayTime.setTargetAtTime(0, peer.audioContext.currentTime, 0.1);
+    });
+  }
+  toast(enabled ? '지연 보상 활성화' : '지연 보상 비활성화', 'info');
 });
 
 function startMetronome(bpm, serverStartTime) {
@@ -1461,6 +1479,10 @@ function createPeerConnection(peerId, username, avatar, initiator) {
       const gainNode = ctx.createGain();
       gainNode.gain.value = 1;
       
+      // 지연 보상용 딜레이 노드
+      const delayNode = ctx.createDelay(1.0); // 최대 1초
+      delayNode.delayTime.value = 0;
+      
       // VAD용 분석기
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
@@ -1468,13 +1490,15 @@ function createPeerConnection(peerId, username, avatar, initiator) {
       const dest = ctx.createMediaStreamDestination();
       source.connect(analyser);
       analyser.connect(compressor);
-      compressor.connect(gainNode);
+      compressor.connect(delayNode);
+      delayNode.connect(gainNode);
       gainNode.connect(dest);
       
       audioEl.srcObject = dest.stream;
       if (peerData) {
         peerData.audioContext = ctx;
         peerData.gainNode = gainNode;
+        peerData.delayNode = delayNode;
         peerData.analyser = analyser;
         peerData.isSpeaking = false;
       }
@@ -1640,6 +1664,9 @@ function startLatencyPing() {
       } catch (e) {}
     }
     
+    // 지연 보상 적용
+    if (delayCompensation) applyDelayCompensation();
+    
     // 핑 그래프용 히스토리 저장
     if (count > 0) {
       latencyHistory.push(Math.round(avgLatency / count));
@@ -1649,6 +1676,21 @@ function startLatencyPing() {
     
     renderUsers();
   }, 2000);
+}
+
+// 지연 보상: 가장 느린 피어에 맞춰 다른 피어들에게 딜레이 추가
+function applyDelayCompensation() {
+  let maxLatency = 0;
+  peers.forEach(peer => {
+    if (peer.latency > maxLatency) maxLatency = peer.latency;
+  });
+  
+  peers.forEach(peer => {
+    if (peer.delayNode && peer.latency !== null) {
+      const compensation = Math.max(0, (maxLatency - peer.latency) / 1000); // ms -> sec
+      peer.delayNode.delayTime.setTargetAtTime(compensation, peer.audioContext.currentTime, 0.1);
+    }
+  });
 }
 
 // VAD (음성 활동 감지)
@@ -2084,6 +2126,14 @@ if ($('room-vad-mode')) {
     vadEnabled = $('room-vad-mode').checked;
     localStorage.setItem('styx-vad', vadEnabled);
     if ($('vad-mode')) $('vad-mode').checked = vadEnabled;
+  };
+}
+
+// 지연 보상
+if ($('delay-compensation')) {
+  $('delay-compensation').onchange = () => {
+    delayCompensation = $('delay-compensation').checked;
+    socket.emit('delay-compensation', delayCompensation);
   };
 }
 

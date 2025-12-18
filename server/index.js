@@ -471,7 +471,8 @@ io.on('connection', (socket) => {
         passwordHash,
         creatorId: socket.id,
         creatorUsername: username,
-        metronome: { bpm: 120, playing: false, startTime: null }
+        metronome: { bpm: 120, playing: false, startTime: null },
+        delayCompensation: false
       });
     }
     const roomData = rooms.get(room);
@@ -509,7 +510,8 @@ io.on('connection', (socket) => {
       isAdmin: user.isAdmin,
       isCreator: roomData.creatorId === socket.id,
       messages: roomData.messages.slice(-50),
-      metronome: roomData.metronome
+      metronome: roomData.metronome,
+      delayCompensation: roomData.delayCompensation
     });
     
     broadcastRoomList();
@@ -528,6 +530,15 @@ io.on('connection', (socket) => {
       startTime: playing ? Date.now() : null 
     };
     socket.to(socket.room).emit('metronome-sync', roomData.metronome);
+  });
+
+  // 지연 보상 토글
+  socket.on('delay-compensation', (enabled) => {
+    if (!socket.room) return;
+    const roomData = rooms.get(socket.room);
+    if (!roomData) return;
+    roomData.delayCompensation = !!enabled;
+    io.to(socket.room).emit('delay-compensation-sync', enabled);
   });
 
   // 채팅
