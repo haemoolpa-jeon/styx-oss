@@ -30,6 +30,27 @@ const USERS_FILE = path.join(__dirname, 'users.json');
 const AVATARS_DIR = path.join(__dirname, '../avatars');
 const SALT_ROUNDS = 10;
 
+// 기본 Rate Limiting
+const rateLimits = new Map();
+const RATE_LIMIT_WINDOW = 60000; // 1분
+const RATE_LIMIT_MAX = 100; // 분당 최대 요청
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const record = rateLimits.get(ip);
+  
+  if (!record || now - record.start > RATE_LIMIT_WINDOW) {
+    rateLimits.set(ip, { start: now, count: 1 });
+    return true;
+  }
+  
+  record.count++;
+  if (record.count > RATE_LIMIT_MAX) {
+    return false;
+  }
+  return true;
+}
+
 if (!fs.existsSync(AVATARS_DIR)) fs.mkdirSync(AVATARS_DIR, { recursive: true });
 
 // 파일 잠금을 위한 간단한 뮤텍스
@@ -125,6 +146,16 @@ const broadcastRoomList = () => {
 };
 
 io.on('connection', (socket) => {
+  const clientIp = socket.handshake.address;
+  
+  // Rate limiting 체크
+  if (!checkRateLimit(clientIp)) {
+    console.log(`Rate limit 초과: ${clientIp}`);
+    socket.emit('error', { message: 'Too many requests' });
+    socket.disconnect(true);
+    return;
+  }
+  
   console.log(`연결됨: ${socket.id}`);
   
   // 로그인
