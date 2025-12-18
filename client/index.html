@@ -61,99 +61,59 @@
           </div>
         </div>
 
-      <!-- 오디오 장치 선택 -->
-      <div class="device-selectors">
-        <div class="device-selector">
-          <label>🎤 입력</label>
+        <!-- 숨겨진 오디오 장치 선택 (JS 호환용) -->
+        <div style="display:none;">
           <select id="audio-device"></select>
-        </div>
-        <div class="device-selector">
-          <label>🔊 출력</label>
           <select id="audio-output"></select>
         </div>
-      </div>
 
-      <!-- 안정성 설정 -->
-      <div class="stability-settings">
-        <!-- 연결 모드 선택 (Tauri 앱에서만 표시) -->
-        <div class="setting-row" id="connection-mode-row" style="display:none;">
-          <label>🔌 연결 모드</label>
-          <div class="mode-toggle">
-            <button id="webrtcModeBtn" class="mode-btn active" onclick="setConnectionMode('webrtc')">🌐 WebRTC</button>
-            <button id="udpModeBtn" class="mode-btn" onclick="setConnectionMode('udp')">⚡ Custom UDP</button>
+        <!-- 방 목록 섹션 -->
+        <div class="room-section">
+          <div class="room-section-header">
+            <h3>📡 활성 방 목록</h3>
+            <button id="createRoomBtn" class="create-room-btn">➕ 방 만들기</button>
           </div>
-          <span class="hint" id="connection-mode-hint">WebRTC: 호환성 좋음 | UDP: 저지연 (데스크톱 앱 전용)</span>
+          <div id="room-list" class="room-list"></div>
         </div>
-        
-        <!-- Tauri 오디오 장치 선택 (UDP 모드용) -->
-        <div class="setting-row" id="tauri-audio-row" style="display:none;">
-          <label>🎛️ 오디오 드라이버</label>
-          <select id="tauri-audio-host"></select>
-          <span class="hint" id="tauri-audio-hint">ASIO: 저지연 | WASAPI: 기본</span>
+      </div>
+    </div>
+
+    <!-- 방 생성 모달 -->
+    <div id="create-room-modal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>🎵 새 방 만들기</h2>
+          <button class="modal-close" onclick="closeCreateRoomModal()">✕</button>
         </div>
-        
-        <div class="setting-row">
-          <label>🎵 오디오 모드</label>
-          <div class="mode-toggle">
-            <button id="voiceModeBtn" class="mode-btn active" onclick="setAudioMode('voice')">🎤 음성</button>
-            <button id="musicModeBtn" class="mode-btn" onclick="setAudioMode('music')">🎸 악기</button>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>방 이름 *</label>
+            <input type="text" id="new-room-name" placeholder="방 이름 입력..." maxlength="30">
+          </div>
+          <div class="form-group">
+            <label>비밀번호 (선택)</label>
+            <input type="password" id="new-room-password" placeholder="비공개 방은 비밀번호 설정">
+          </div>
+          <div class="form-group">
+            <label>최대 인원</label>
+            <select id="new-room-max-users">
+              <option value="2">2명</option>
+              <option value="4">4명</option>
+              <option value="6">6명</option>
+              <option value="8" selected>8명</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="new-room-private">
+              🔒 비공개 방 (목록에 표시 안 함)
+            </label>
           </div>
         </div>
-        <div class="setting-row">
-          <label>📊 지터 버퍼 <span id="jitter-value">100ms</span></label>
-          <input type="range" id="jitter-slider" min="50" max="200" value="100" step="10">
-          <span class="hint">높을수록 안정적, 지연 증가</span>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="closeCreateRoomModal()">취소</button>
+          <button class="btn-primary" onclick="createRoom()">방 만들기</button>
         </div>
-        <div class="setting-row">
-          <label>
-            <input type="checkbox" id="auto-adapt" checked>
-            🔄 자동 품질 조절
-          </label>
-        </div>
-        <div class="setting-row">
-          <label>
-            <input type="checkbox" id="echo-cancel" checked>
-            🔇 에코 제거
-          </label>
-          <label>
-            <input type="checkbox" id="noise-suppress" checked>
-            🔕 노이즈 억제
-          </label>
-        </div>
-        <div class="setting-row">
-          <label>
-            <input type="checkbox" id="ptt-mode">
-            🎙️ 푸시투톡 (Space 키)
-          </label>
-          <label>
-            <input type="checkbox" id="vad-mode" checked>
-            👄 음성 감지 (말하는 사람 표시)
-          </label>
-        </div>
-        <div class="setting-row">
-          <label>
-            <input type="checkbox" id="ducking-mode">
-            🔉 오디오 덕킹 (다른 사람 말할 때 볼륨 낮춤)
-          </label>
-        </div>
-        <div class="setting-row">
-          <button id="test-connection-btn" class="test-btn">🔍 연결 테스트</button>
-          <span id="test-status"></span>
-        </div>
-        <div id="test-results" class="hidden"></div>
-      </div>
-
-      <!-- 방 목록 -->
-      <div class="room-browser">
-        <h3>📡 활성 방 목록</h3>
-        <div id="room-list"></div>
-      </div>
-
-      <div class="room-join">
-        <input type="text" id="room-input" placeholder="방 이름 입력...">
-        <input type="password" id="room-password" placeholder="비밀번호 (선택)">
-        <button id="joinRoomBtn">입장</button>
-      </div>
       </div>
     </div>
 
@@ -196,6 +156,36 @@
 
     <!-- 방 화면 -->
     <div id="room-view" class="panel hidden">
+      <!-- 오디오 설정 상단 바 -->
+      <div class="audio-settings-bar">
+        <div class="audio-setting-item">
+          <label>🎤</label>
+          <select id="room-audio-device"></select>
+        </div>
+        <div class="audio-setting-item">
+          <label>🔊</label>
+          <select id="room-audio-output"></select>
+        </div>
+        <div class="audio-setting-item">
+          <label>
+            <input type="checkbox" id="room-echo-cancel" checked>
+            에코 제거
+          </label>
+        </div>
+        <div class="audio-setting-item">
+          <label>
+            <input type="checkbox" id="room-noise-suppress" checked>
+            노이즈 억제
+          </label>
+        </div>
+        <div class="audio-setting-item">
+          <label>
+            <input type="checkbox" id="room-ptt-mode">
+            푸시투톡
+          </label>
+        </div>
+      </div>
+
       <div class="room-header">
         <h2>🎸 <span id="roomName"></span></h2>
         <div class="room-controls">

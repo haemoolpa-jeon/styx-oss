@@ -1170,6 +1170,9 @@ window.joinRoom = async (roomName, hasPassword) => {
     lastRoom = room;
     lastRoomPassword = roomPassword;
     
+    // 방 내 오디오 설정 동기화
+    syncRoomAudioSettings();
+    
     // PTT 모드면 음소거 버튼 상태 업데이트
     if (pttMode) {
       $('muteBtn').textContent = '🔇';
@@ -1801,4 +1804,85 @@ function leaveRoom() {
   lobby.classList.remove('hidden');
   loadRoomList();
   
+}
+
+// ===== 방 생성 모달 =====
+window.openCreateRoomModal = () => {
+  $('create-room-modal').classList.remove('hidden');
+  $('new-room-name').value = '';
+  $('new-room-password').value = '';
+  $('new-room-name').focus();
+};
+
+window.closeCreateRoomModal = () => {
+  $('create-room-modal').classList.add('hidden');
+};
+
+window.createRoom = () => {
+  const name = $('new-room-name').value.trim();
+  const password = $('new-room-password').value;
+  
+  if (!name) {
+    toast('방 이름을 입력하세요', 'error');
+    return;
+  }
+  
+  closeCreateRoomModal();
+  joinRoom(name, !!password, password);
+};
+
+// 방 만들기 버튼 이벤트
+$('createRoomBtn').onclick = openCreateRoomModal;
+
+// 방 내 오디오 설정 동기화
+function syncRoomAudioSettings() {
+  const roomInput = $('room-audio-device');
+  const roomOutput = $('room-audio-output');
+  const lobbyInput = $('audio-device');
+  const lobbyOutput = $('audio-output');
+  
+  if (lobbyInput && roomInput) {
+    roomInput.innerHTML = lobbyInput.innerHTML;
+    roomInput.value = lobbyInput.value;
+  }
+  if (lobbyOutput && roomOutput) {
+    roomOutput.innerHTML = lobbyOutput.innerHTML;
+    roomOutput.value = lobbyOutput.value;
+  }
+}
+
+// 방 내 오디오 장치 변경
+if ($('room-audio-device')) {
+  $('room-audio-device').onchange = async (e) => {
+    selectedDeviceId = e.target.value;
+    if (localStream) await restartAudioStream();
+  };
+}
+
+if ($('room-audio-output')) {
+  $('room-audio-output').onchange = (e) => {
+    selectedOutputId = e.target.value;
+    peers.forEach(peer => {
+      if (peer.audioEl?.setSinkId) peer.audioEl.setSinkId(selectedOutputId).catch(() => {});
+    });
+  };
+}
+
+if ($('room-echo-cancel')) {
+  $('room-echo-cancel').onchange = async () => { if (localStream) await restartAudioStream(); };
+}
+
+if ($('room-noise-suppress')) {
+  $('room-noise-suppress').onchange = async () => { if (localStream) await restartAudioStream(); };
+}
+
+if ($('room-ptt-mode')) {
+  $('room-ptt-mode').onchange = (e) => {
+    pttMode = e.target.checked;
+    if (pttMode && localStream) {
+      localStream.getAudioTracks().forEach(t => t.enabled = false);
+      isMuted = true;
+      updateMuteUI();
+    }
+  };
 }
