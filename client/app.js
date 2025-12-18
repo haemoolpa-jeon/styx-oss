@@ -63,6 +63,9 @@ let duckingEnabled = localStorage.getItem('styx-ducking') === 'true';
 let vadEnabled = localStorage.getItem('styx-vad') !== 'false';
 let vadIntervals = new Map(); // 피어별 VAD 인터벌
 let delayCompensation = false;
+let currentRoomSettings = {}; // 현재 방 설정
+let isRoomCreator = false; // 방장 여부
+let roomCreatorUsername = ''; // 방장 이름
 
 const rtcConfig = {
   iceServers: [
@@ -1221,7 +1224,7 @@ $('closeAdminBtn').onclick = () => {
 };
 
 // 방 입장
-window.joinRoom = async (roomName, hasPassword, providedPassword) => {
+window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) => {
   const room = roomName;
   if (!room) return toast('방 이름을 입력하세요', 'error');
 
@@ -1254,7 +1257,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword) => {
     return toast('마이크 접근이 거부되었습니다', 'error');
   }
 
-  socket.emit('join', { room, username: currentUser.username, password: roomPassword }, res => {
+  socket.emit('join', { room, username: currentUser.username, password: roomPassword, settings: roomSettings }, res => {
     if (res.error) {
       localStream.getTracks().forEach(t => t.stop());
       const errorMsg = {
@@ -1275,6 +1278,12 @@ window.joinRoom = async (roomName, hasPassword, providedPassword) => {
     sessionStorage.setItem('styx-room', room);
     if (roomPassword) sessionStorage.setItem('styx-room-pw', roomPassword);
     else sessionStorage.removeItem('styx-room-pw');
+    
+    // 방 설정 저장 및 표시
+    currentRoomSettings = res.roomSettings || {};
+    isRoomCreator = res.isCreator || false;
+    roomCreatorUsername = res.creatorUsername || '';
+    displayRoomSettings();
     
     // 방 내 오디오 설정 동기화
     syncRoomAudioSettings();
@@ -2230,12 +2239,87 @@ window.createRoom = () => {
     return;
   }
   
+  // 방 설정 수집
+  const settings = {
+    maxUsers: parseInt($('new-room-max-users')?.value) || 8,
+    audioMode: $('new-room-audio-mode')?.value || 'music',
+    sampleRate: parseInt($('new-room-sample-rate')?.value) || 48000,
+    bitrate: parseInt($('new-room-bitrate')?.value) || 96,
+    bpm: parseInt($('new-room-bpm')?.value) || 120,
+    isPrivate: $('new-room-private')?.checked || false
+  };
+  
   closeCreateRoomModal();
-  joinRoom(name, !!password, password);
+  joinRoom(name, !!password, password, settings);
 };
 
 // 방 만들기 버튼 이벤트
 $('createRoomBtn').onclick = openCreateRoomModal;
+
+// 방 설정 표시
+function displayRoomSettings() {
+  const container = $('room-settings-display');
+  if (!container) return;
+  
+  const s = currentRoomSettings;
+  const modeLabel = s.audioMode === 'voice' ? '🎤 음성' : '🎸 악기';
+  const creatorLabel = roomCreatorUsername ? ` (방장: ${roomCreatorUsername})` : '';
+  
+  // 방장이면 변경 가능한 UI 표시
+  if (isRoomCreator || currentUser?.isAdmin) {
+    container.innerHTML = `
+      <span class="room-setting-item" title="오디오 모드">
+        <select id="room-mode-select" class="room-setting-select">
+          <option value="voice" ${s.audioMode === 'voice' ? 'selected' : ''}>🎤 음성</option>
+          <option value="music" ${s.audioMode === 'music' ? 'selected' : ''}>🎸 악기</option>
+        </select>
+      </span>
+      <span class="room-setting-item" title="비트레이트">
+        <select id="room-bitrate-select" class="room-setting-select">
+          <option value="64" ${s.bitrate === 64 ? 'selected' : ''}>64k</option>
+          <option value="96" ${s.bitrate === 96 ? 'selected' : ''}>96k</option>
+          <option value="128" ${s.bitrate === 128 ? 'selected' : ''}>128k</option>
+          <option value="192" ${s.bitrate === 192 ? 'selected' : ''}>192k</option>
+        </select>
+      </span>
+      <span class="room-setting-item">${s.maxUsers || 8}명${creatorLabel}</span>
+    `;
+    // 변경 이벤트
+    $('room-mode-select').onchange = (e) => updateRoomSetting('audioMode', e.target.value);
+    $('room-bitrate-select').onchange = (e) => updateRoomSetting('bitrate', parseInt(e.target.value));
+  } else {
+    container.innerHTML = `
+      <span class="room-setting-item">${modeLabel}</span>
+      <span class="room-setting-item">${s.bitrate || 96}kbps</span>
+      <span class="room-setting-item">${s.maxUsers || 8}명${creatorLabel}</span>
+    `;
+  }
+}
+
+// 방 설정 변경
+function updateRoomSetting(setting, value) {
+  socket.emit('update-room-settings', { setting, value }, res => {
+    if (res?.error) {
+      toast('설정 변경 실패: ' + res.error, 'error');
+    }
+  });
+}
+
+// 방 설정 변경 수신
+socket.on('room-settings-changed', ({ setting, value }) => {
+  currentRoomSettings[setting] = value;
+  displayRoomSettings();
+  
+  // 오디오 모드 변경 시 코덱 설정 업데이트
+  if (setting === 'audioMode') {
+    audioMode = value;
+    peers.forEach(peer => applyAudioSettings(peer.pc));
+    toast(`오디오 모드: ${value === 'voice' ? '음성' : '악기'}`, 'info');
+  }
+  if (setting === 'bitrate') {
+    toast(`비트레이트: ${value}kbps`, 'info');
+  }
+});
 
 // 방 내 오디오 설정 동기화
 function syncRoomAudioSettings() {

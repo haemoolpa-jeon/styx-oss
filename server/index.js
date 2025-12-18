@@ -447,10 +447,14 @@ io.on('connection', (socket) => {
   socket.on('get-rooms', (_, cb) => {
     const list = [];
     rooms.forEach((data, name) => {
+      // 비공개 방은 목록에서 숨김
+      if (data.isPrivate) return;
       list.push({ 
         name, 
-        userCount: data.users.size, 
+        userCount: data.users.size,
+        maxUsers: data.maxUsers || 8,
         hasPassword: !!data.passwordHash,
+        audioMode: data.audioMode || 'music',
         users: [...data.users.values()].map(u => u.username) 
       });
     });
@@ -458,7 +462,7 @@ io.on('connection', (socket) => {
   });
 
   // 방 입장
-  socket.on('join', async ({ room, username, password: roomPassword }, cb) => {
+  socket.on('join', async ({ room, username, password: roomPassword, settings }, cb) => {
     const data = loadUsers();
     const user = data.users[username];
     if (!user || !user.approved) return cb({ error: 'Not authorized' });
@@ -467,16 +471,23 @@ io.on('connection', (socket) => {
     if (!room || room.length > 30) return cb({ error: 'Invalid room name' });
 
     if (!rooms.has(room)) {
-      // 새 방 생성 시 비밀번호 해시
+      // 새 방 생성 시 설정 적용
       const passwordHash = roomPassword ? await bcrypt.hash(roomPassword, 8) : null;
+      const s = settings || {};
       rooms.set(room, { 
         users: new Map(), 
         messages: [], 
         passwordHash,
         creatorId: socket.id,
         creatorUsername: username,
-        metronome: { bpm: 120, playing: false, startTime: null },
-        delayCompensation: false
+        metronome: { bpm: s.bpm || 120, playing: false, startTime: null },
+        delayCompensation: false,
+        // 방 설정
+        maxUsers: Math.min(Math.max(s.maxUsers || 8, 2), 8),
+        audioMode: s.audioMode || 'music',
+        bitrate: s.bitrate || 96,
+        sampleRate: s.sampleRate || 48000,
+        isPrivate: s.isPrivate || false
       });
     }
     const roomData = rooms.get(room);
@@ -490,7 +501,7 @@ io.on('connection', (socket) => {
       if (!valid) return cb({ error: 'Wrong room password' });
     }
     
-    if (roomData.users.size >= MAX_USERS_PER_ROOM) return cb({ error: 'Room full' });
+    if (roomData.users.size >= roomData.maxUsers) return cb({ error: 'Room full' });
 
     for (const [, u] of roomData.users) {
       if (u.username === username) return cb({ error: 'Username already in room' });
@@ -513,13 +524,22 @@ io.on('connection', (socket) => {
       users: existingUsers, 
       isAdmin: user.isAdmin,
       isCreator: roomData.creatorId === socket.id,
+      creatorUsername: roomData.creatorUsername,
       messages: roomData.messages.slice(-50),
       metronome: roomData.metronome,
-      delayCompensation: roomData.delayCompensation
+      delayCompensation: roomData.delayCompensation,
+      // 방 설정 전달
+      roomSettings: {
+        maxUsers: roomData.maxUsers,
+        audioMode: roomData.audioMode,
+        bitrate: roomData.bitrate,
+        sampleRate: roomData.sampleRate,
+        isPrivate: roomData.isPrivate
+      }
     });
     
     broadcastRoomList();
-    console.log(`${username} 입장: ${room} (${roomData.users.size}/${MAX_USERS_PER_ROOM})`);
+    console.log(`${username} 입장: ${room} (${roomData.users.size}/${roomData.maxUsers})`);
   });
 
   // 메트로놈 동기화
@@ -543,6 +563,31 @@ io.on('connection', (socket) => {
     if (!roomData) return;
     roomData.delayCompensation = !!enabled;
     io.to(socket.room).emit('delay-compensation-sync', enabled);
+  });
+
+  // 방 설정 변경 (방장만)
+  socket.on('update-room-settings', ({ setting, value }, cb) => {
+    if (!socket.room) return cb?.({ error: 'Not in room' });
+    const roomData = rooms.get(socket.room);
+    if (!roomData) return cb?.({ error: 'Room not found' });
+    
+    // 방장 또는 관리자만 변경 가능
+    if (roomData.creatorId !== socket.id && !socket.isAdmin) {
+      return cb?.({ error: 'Not authorized' });
+    }
+    
+    // 허용된 설정만 변경
+    const allowed = ['audioMode', 'bitrate', 'sampleRate'];
+    if (!allowed.includes(setting)) return cb?.({ error: 'Invalid setting' });
+    
+    // 값 검증
+    if (setting === 'audioMode' && !['voice', 'music'].includes(value)) return cb?.({ error: 'Invalid value' });
+    if (setting === 'bitrate' && ![64, 96, 128, 192].includes(value)) return cb?.({ error: 'Invalid value' });
+    if (setting === 'sampleRate' && ![44100, 48000].includes(value)) return cb?.({ error: 'Invalid value' });
+    
+    roomData[setting] = value;
+    io.to(socket.room).emit('room-settings-changed', { setting, value });
+    cb?.({ success: true });
   });
 
   // 채팅

@@ -278,6 +278,17 @@ input[type="range"]::-webkit-slider-thumb {
   border-bottom: 1px solid var(--border);
 }
 .room-title h2 { font-size: 22px; display: flex; align-items: center; gap: 10px; }
+.room-settings-display {
+  display: flex; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--text-secondary);
+}
+.room-setting-item {
+  background: var(--bg-card); padding: 2px 8px; border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.room-setting-select {
+  background: var(--bg-input); color: var(--text-primary); border: none;
+  font-size: 12px; padding: 2px 4px; border-radius: 4px; cursor: pointer;
+}
 .room-controls { display: flex; gap: 10px; align-items: center; }
 .room-controls select {
   padding: 10px 14px; border: 2px solid var(--border); border-radius: 8px;
