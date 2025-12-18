@@ -12,7 +12,7 @@ use crate::udp::AudioPacketHeader;
 
 const FRAME_SIZE: usize = 480; // 10ms @ 48kHz
 const MAX_PACKET_SIZE: usize = 1500;
-const JITTER_BUFFER_SIZE: usize = 5; // 50ms @ 10ms frames
+const JITTER_BUFFER_SIZE: usize = 10; // 100ms @ 10ms frames (안정성 우선)
 
 // 지터 버퍼
 pub struct JitterBuffer {
@@ -93,8 +93,13 @@ impl Default for UdpStreamState {
 
 // Opus 인코더/디코더 생성
 pub fn create_encoder() -> Result<Encoder, String> {
-    Encoder::new(48000, Channels::Mono, Application::Voip)
-        .map_err(|e| format!("Opus 인코더 생성 실패: {:?}", e))
+    let mut encoder = Encoder::new(48000, Channels::Mono, Application::LowDelay)
+        .map_err(|e| format!("Opus 인코더 생성 실패: {:?}", e))?;
+    // 안정성 설정
+    encoder.set_bitrate(opus::Bitrate::Bits(96000)).ok(); // 96kbps for music
+    encoder.set_inband_fec(true).ok(); // Forward Error Correction
+    encoder.set_packet_loss_perc(10).ok(); // 10% 손실 대비
+    Ok(encoder)
 }
 
 pub fn create_decoder() -> Result<Decoder, String> {
@@ -113,8 +118,17 @@ pub fn encode_frame(encoder: &mut Encoder, samples: &[f32]) -> Result<Vec<u8>, S
 
 pub fn decode_frame(decoder: &mut Decoder, data: &[u8]) -> Result<Vec<f32>, String> {
     let mut pcm = vec![0f32; FRAME_SIZE];
-    let len = decoder.decode_float(data, &mut pcm, false)
+    let len = decoder.decode_float(data, &mut pcm, true) // true = FEC 활성화
         .map_err(|e| format!("디코딩 실패: {:?}", e))?;
+    pcm.truncate(len);
+    Ok(pcm)
+}
+
+// 패킷 손실 시 PLC (Packet Loss Concealment)
+pub fn decode_plc(decoder: &mut Decoder) -> Result<Vec<f32>, String> {
+    let mut pcm = vec![0f32; FRAME_SIZE];
+    let len = decoder.decode_float(&[], &mut pcm, true)
+        .map_err(|e| format!("PLC 실패: {:?}", e))?;
     pcm.truncate(len);
     Ok(pcm)
 }
