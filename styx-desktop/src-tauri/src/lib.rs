@@ -120,7 +120,7 @@ fn set_jitter_buffer(state: State<'_, AppState>, size: usize) {
         for buffer in jb.values_mut() {
             buffer.set_target(size.max(2).min(15)); // 20ms - 150ms
         }
-    }
+    };
 }
 
 #[tauri::command]
