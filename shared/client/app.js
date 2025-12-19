@@ -273,37 +273,38 @@ async function runConnectionTest() {
     testPc.close();
   } catch { if (testPc) testPc.close(); results.network = false; }
   
-  // 5. TURN 연결 테스트 (실제 서버 TURN 사용)
-  updateStatus('🔄 TURN 서버 테스트 중...');
-  testPc = null;
-  try {
-    // 서버에서 TURN 자격증명 요청
-    const turnCreds = await new Promise((resolve) => {
-      socket.emit('get-turn-credentials', null, resolve);
-      setTimeout(() => resolve(null), 3000);
-    });
-    
-    const turnServer = turnCreds || { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' };
-    
-    testPc = new RTCPeerConnection({ 
-      iceServers: [turnServer],
-      iceTransportPolicy: 'relay'
-    });
-    testPc.createDataChannel('test');
-    await testPc.createOffer().then(o => testPc.setLocalDescription(o));
-    
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => { testPc?.close(); reject('timeout'); }, 5000);
-      testPc.onicecandidate = (e) => {
-        if (e.candidate?.type === 'relay') {
-          clearTimeout(timeout);
-          results.turn = true;
-          resolve();
-        }
-      };
-    });
-    testPc.close();
-  } catch { if (testPc) testPc.close(); results.turn = false; }
+  // 5. TURN 테스트 (P2P 실패 시에만)
+  if (!results.network) {
+    updateStatus('🔄 TURN 서버 테스트 중...');
+    testPc = null;
+    try {
+      const turnCreds = await new Promise((resolve) => {
+        socket.emit('get-turn-credentials', null, resolve);
+        setTimeout(() => resolve(null), 3000);
+      });
+      
+      const turnServer = turnCreds || { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' };
+      
+      testPc = new RTCPeerConnection({ 
+        iceServers: [turnServer],
+        iceTransportPolicy: 'relay'
+      });
+      testPc.createDataChannel('test');
+      await testPc.createOffer().then(o => testPc.setLocalDescription(o));
+      
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => { testPc?.close(); reject('timeout'); }, 5000);
+        testPc.onicecandidate = (e) => {
+          if (e.candidate?.type === 'relay') {
+            clearTimeout(timeout);
+            results.turn = true;
+            resolve();
+          }
+        };
+      });
+      testPc.close();
+    } catch { if (testPc) testPc.close(); results.turn = false; }
+  }
   
   updateStatus('테스트 완료');
   return results;
@@ -323,7 +324,7 @@ function showTestResults(results) {
     <div class="test-item ${results.mic ? 'pass' : 'fail'}">🎤 마이크: ${results.mic ? '✓' : '✗'}</div>
     <div class="test-item ${results.speaker ? 'pass' : 'fail'}">🔊 스피커: ${results.speaker ? '✓' : '✗'}</div>
     <div class="test-item ${results.network ? 'pass' : 'fail'}">🌐 P2P 연결: ${results.network ? '✓' : '✗'}</div>
-    <div class="test-item ${results.turn ? 'pass' : 'fail'}">🔄 TURN 릴레이: ${results.turn ? '✓' : '✗'}</div>
+    ${!results.network ? `<div class="test-item ${results.turn ? 'pass' : 'fail'}">🔄 TURN 릴레이: ${results.turn ? '✓ (폴백 사용)' : '✗ 연결 불가'}</div>` : ''}
     ${q ? `<div class="test-item" style="color:${qualityColor}">📡 네트워크: ${qualityLabel} (${q.latency}ms, 지터 ${q.jitter}ms)</div>` : ''}
     ${q?.isWifi ? '<div class="test-item warn">⚠️ Wi-Fi 감지 - 유선 연결 권장</div>' : ''}
   `;
