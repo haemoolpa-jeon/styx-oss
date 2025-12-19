@@ -1,79 +1,81 @@
 # 🎵 Styx
 
-HADES를 위한 실시간 오디오 협업 플랫폼
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 기능
+Real-time audio collaboration platform for musicians and voice chat.
 
-### 오디오
-- **실시간 P2P 오디오** - WebRTC 기반 저지연 스트리밍
-- **최대 8명** - 방당 최대 8명 동시 접속
-- **TURN 서버** - NAT/방화벽 뒤에서도 안정적 연결
-- **개별 볼륨 조절** - 사용자별 볼륨/팬/뮤트/솔로
-- **음성/음악 모드** - 용도에 맞는 오디오 최적화
+## Features
 
-### 메트로놈
-- **공유 메트로놈** - 방 전체 BPM 동기화
-- **서버 시간 동기화** - 정확한 박자 맞춤
-- **카운트인** - 4박 카운트 후 시작
+### Audio
+- **Real-time P2P audio** - Low-latency WebRTC streaming
+- **Up to 8 users** - Per room
+- **TURN server support** - Reliable connection behind NAT/firewall
+- **Individual volume control** - Per-user volume/pan/mute/solo
+- **Voice/Music modes** - Optimized audio settings
 
-### 사용자 관리
-- **회원가입/로그인** - bcrypt 암호화
-- **관리자 승인** - 가입 요청 승인/거절
-- **아바타** - 프로필 이미지 업로드
+### Metronome
+- **Shared metronome** - Room-wide BPM sync
+- **Server time sync** - Accurate beat alignment
+- **Count-in** - 4-beat countdown
 
-### 방 기능
-- **방 브라우저** - 활성 방 목록
-- **비공개 방** - 비밀번호 설정
-- **채팅** - 방 내 텍스트 채팅
+### User Management
+- **Registration/Login** - bcrypt encrypted passwords
+- **Admin approval** - Approve/reject sign-up requests
+- **Avatars** - Profile image upload
 
-## 빠른 시작
+### Room Features
+- **Room browser** - Active room list
+- **Private rooms** - Password protection
+- **Chat** - In-room text chat
+
+## Quick Start
 
 ```bash
 git clone https://github.com/haemoolpa-jeon/styx.git
 cd styx
 npm install
-npm run setup    # 관리자 계정 생성
-npm start        # 서버 시작
+npm run setup    # Create admin account
+npm start        # Start server
 ```
 
-브라우저에서 `http://localhost:3000` 접속
+Open `http://localhost:3000` in browser
 
-**기본 관리자**: `admin` / `admin123` (첫 로그인 후 변경 필수!)
+**Default admin**: `admin` / `admin123` (change after first login!)
 
-## 파일 구조
+## File Structure
 
 ```
 styx/
-├── server/index.js       # 시그널링 서버
-├── shared/client/        # 공유 클라이언트 코드
-├── client/config.js      # 웹 버전 설정
-├── styx-desktop/         # Tauri 데스크톱 앱
-├── docs/                 # 문서
-└── .env.example          # 환경변수 예시
+├── server/index.js       # Signaling server
+├── shared/client/        # Shared client code
+├── client/config.js      # Web version config
+├── styx-desktop/         # Tauri desktop app
+├── docs/                 # Documentation
+└── .env.example          # Environment variables
 ```
 
-## 아키텍처
+## Architecture
 
 ```
 ┌─────────┐                           ┌─────────┐
-│ User A  │◄──── WebRTC P2P 오디오 ───►│ User B  │
+│ User A  │◄──── WebRTC P2P Audio ───►│ User B  │
 └────┬────┘                           └────┬────┘
      │                                      │
      │    ┌─────────────────────────┐      │
-     └───►│   Styx 서버 (서울)       │◄─────┘
-          │  • Socket.IO 시그널링    │
-          │  • 방/채팅/메트로놈       │
-          │  • TURN 자격증명 발급    │
+     └───►│      Styx Server        │◄─────┘
+          │  • Socket.IO signaling  │
+          │  • Room/Chat/Metronome  │
+          │  • TURN credentials     │
           └───────────┬─────────────┘
                       │
           ┌───────────▼─────────────┐
-          │   Coturn TURN 서버      │
-          │  • NAT 통과 릴레이       │
+          │   Coturn TURN Server    │
+          │  • NAT traversal relay  │
           │  • UDP/TCP 3478         │
           └─────────────────────────┘
 ```
 
-## 환경 변수
+## Environment Variables
 
 ```bash
 # .env
@@ -83,25 +85,25 @@ TURN_SERVER=your-server-ip
 TURN_SECRET=your-coturn-secret
 ```
 
-## 배포
+## Deployment
 
-자세한 배포 가이드는 [docs/AWS_LIGHTSAIL_DEPLOY.md](docs/AWS_LIGHTSAIL_DEPLOY.md) 참조
+See [docs/AWS_LIGHTSAIL_DEPLOY.md](docs/AWS_LIGHTSAIL_DEPLOY.md) for deployment guide.
 
-## 기술 스택
+## Tech Stack
 
-| 구성요소 | 기술 |
-|---------|------|
-| 서버 | Node.js + Express + Socket.IO |
-| 클라이언트 | Vanilla JS + WebRTC + Web Audio |
+| Component | Technology |
+|-----------|------------|
+| Server | Node.js + Express + Socket.IO |
+| Client | Vanilla JS + WebRTC + Web Audio |
 | TURN | Coturn (time-limited credentials) |
-| 데스크톱 | Tauri + Rust |
+| Desktop | Tauri + Rust |
 
-## 문서
+## Documentation
 
-- [사용 설명서](docs/USER_MANUAL.md)
-- [배포 가이드](docs/AWS_LIGHTSAIL_DEPLOY.md)
-- [테스트 가이드](docs/TESTING_GUIDE.md)
+- [User Manual (Korean)](docs/USER_MANUAL.md)
+- [Deployment Guide](docs/AWS_LIGHTSAIL_DEPLOY.md)
+- [Testing Guide](docs/TESTING_GUIDE.md)
 
-## 라이선스
+## License
 
-HADES 전용 - 비공개 사용
+MIT License - see [LICENSE](LICENSE) for details.
