@@ -15,13 +15,13 @@
 ### Windows PowerShell / CMD
 ```powershell
 cd C:\Users\HSJEON\styx
-git archive --format=tar HEAD | ssh -i "C:\Users\HSJEON\styx\key\LightsailDefaultKey-ap-northeast-2.pem" bitnami@3.39.223.2 "cd ~/styx && tar -xf - && pm2 restart styx"
+git archive --format=tar HEAD | ssh -i "C:\Users\HSJEON\styx\key\LightsailDefaultKey-ap-northeast-2.pem" bitnami@3.39.223.2 "cd ~/styx && tar -xf - && npm install && pm2 restart styx"
 ```
 
 ### WSL (Windows SSH 사용)
 ```bash
 cd /mnt/c/Users/HSJEON/styx
-git archive --format=tar HEAD | /mnt/c/Windows/System32/OpenSSH/ssh.exe -i "C:\Users\HSJEON\styx\key\LightsailDefaultKey-ap-northeast-2.pem" bitnami@3.39.223.2 "cd ~/styx && tar -xf - && pm2 restart styx"
+git archive --format=tar HEAD | /mnt/c/Windows/System32/OpenSSH/ssh.exe -i "C:\Users\HSJEON\styx\key\LightsailDefaultKey-ap-northeast-2.pem" bitnami@3.39.223.2 "cd ~/styx && tar -xf - && npm install && pm2 restart styx"
 ```
 
 ## 서버 직접 접속
