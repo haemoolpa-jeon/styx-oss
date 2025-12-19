@@ -401,23 +401,25 @@ function initPttTouch() {
 // ===== (즐겨찾기 제거됨) =====
 
 // ===== 녹음 =====
+let recordingAudioCtx = null; // Store reference for cleanup
+
 function startRecording() {
   if (isRecording) return;
   
   // 모든 오디오 스트림 믹싱
-  const audioCtx = new AudioContext();
-  const dest = audioCtx.createMediaStreamDestination();
+  recordingAudioCtx = new AudioContext();
+  const dest = recordingAudioCtx.createMediaStreamDestination();
   
   // 로컬 오디오 추가
   if (localStream) {
-    const localSource = audioCtx.createMediaStreamSource(localStream);
+    const localSource = recordingAudioCtx.createMediaStreamSource(localStream);
     localSource.connect(dest);
   }
   
   // 원격 오디오 추가
   peers.forEach(peer => {
     if (peer.audioEl.srcObject) {
-      const remoteSource = audioCtx.createMediaStreamSource(peer.audioEl.srcObject);
+      const remoteSource = recordingAudioCtx.createMediaStreamSource(peer.audioEl.srcObject);
       remoteSource.connect(dest);
     }
   });
@@ -430,7 +432,10 @@ function startRecording() {
   };
   
   mediaRecorder.onstop = () => {
-    audioCtx.close().catch(() => {}); // AudioContext 정리
+    if (recordingAudioCtx) {
+      recordingAudioCtx.close().catch(() => {});
+      recordingAudioCtx = null;
+    }
     const blob = new Blob(recordedChunks, { type: 'audio/webm' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -455,6 +460,19 @@ function stopRecording() {
   isRecording = false;
   $('recordBtn').textContent = '⏺️ 녹음';
   $('recordBtn').classList.remove('recording');
+  // Note: AudioContext is closed in mediaRecorder.onstop
+}
+
+// Cleanup recording if still active (called from leaveRoom)
+function cleanupRecording() {
+  if (isRecording && mediaRecorder) {
+    mediaRecorder.stop();
+  }
+  if (recordingAudioCtx) {
+    recordingAudioCtx.close().catch(() => {});
+    recordingAudioCtx = null;
+  }
+  isRecording = false;
 }
 
 function toggleRecording() {
@@ -685,10 +703,8 @@ $('loginBtn').onclick = () => {
     $('loginBtn').disabled = false;
     if (res.error) {
       const errorMsg = {
-        'User not found': '사용자를 찾을 수 없습니다',
-        'Wrong password': '비밀번호가 틀렸습니다',
-        'Account pending approval': '승인 대기 중입니다',
-        'Invalid username': '잘못된 사용자명입니다'
+        'Invalid credentials': '사용자명 또는 비밀번호가 틀렸습니다',
+        'Account pending approval': '승인 대기 중입니다'
       }[res.error] || res.error;
       return showAuthMsg(errorMsg, true);
     }
@@ -1171,18 +1187,30 @@ function renderRoomList(rooms) {
     list.innerHTML = '<p class="no-rooms">활성화된 방이 없습니다</p>';
     return;
   }
-  list.innerHTML = rooms.map(r => {
+  list.innerHTML = rooms.map((r, i) => {
     const canClose = currentUser?.isAdmin || r.creatorUsername === currentUser?.username;
     return `
     <div class="room-item">
-      <div class="room-info" onclick="joinRoom('${r.name.replace(/'/g, "\\'")}', ${r.hasPassword})">
+      <div class="room-info" data-room-index="${i}">
         <span class="room-name">${r.hasPassword ? '🔒 ' : ''}${escapeHtml(r.name)}</span>
         <span class="room-users">${r.userCount}/8 👤</span>
       </div>
-      ${canClose ? `<button class="room-close-btn" onclick="event.stopPropagation(); closeRoomFromLobby('${r.name.replace(/'/g, "\\'")}')">✕</button>` : ''}
+      ${canClose ? `<button class="room-close-btn" data-close-index="${i}">✕</button>` : ''}
     </div>
   `;
   }).join('');
+  
+  // Attach event handlers safely (prevents XSS via room names)
+  list.querySelectorAll('.room-info[data-room-index]').forEach(el => {
+    const idx = parseInt(el.dataset.roomIndex);
+    const r = rooms[idx];
+    el.onclick = () => joinRoom(r.name, r.hasPassword);
+  });
+  list.querySelectorAll('.room-close-btn[data-close-index]').forEach(el => {
+    const idx = parseInt(el.dataset.closeIndex);
+    const r = rooms[idx];
+    el.onclick = (e) => { e.stopPropagation(); closeRoomFromLobby(r.name); };
+  });
 }
 
 function closeRoomFromLobby(roomName) {
@@ -2267,7 +2295,7 @@ function leaveRoom() {
   vadIntervals.clear();
   
   stopMetronome();
-  stopRecording();
+  cleanupRecording(); // Use cleanup function to handle AudioContext properly
   
   if (audioContext) { 
     try { audioContext.close(); } catch {} 

@@ -1,4 +1,4 @@
-// Styx 서버 - HADES 실시간 오디오 협업
+// Styx 서버 - 실시간 오디오 협업
 // Socket.IO 시그널링 서버 + 사용자 인증 + 채팅 + 메트로놈
 
 const express = require('express');
@@ -9,6 +9,25 @@ const fs = require('fs').promises;
 const fsSync = require('fs');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const helmet = require('helmet');
+const { Mutex } = require('async-mutex');
+const { z } = require('zod');
+
+// Input validation schemas
+const schemas = {
+  username: z.string().min(2).max(20).regex(/^[a-zA-Z0-9_가-힣]+$/),
+  password: z.string().min(4).max(50),
+  roomName: z.string().min(1).max(30),
+  bpm: z.number().int().min(30).max(300),
+  roomSettings: z.object({
+    maxUsers: z.number().int().min(2).max(8).optional(),
+    audioMode: z.enum(['voice', 'music']).optional(),
+    bitrate: z.number().int().optional(),
+    sampleRate: z.number().int().optional(),
+    bpm: z.number().int().min(30).max(300).optional(),
+    isPrivate: z.boolean().optional()
+  }).optional()
+};
 
 // TURN 서버 설정
 const TURN_SERVER = process.env.TURN_SERVER || '3.39.223.2';
@@ -42,6 +61,17 @@ validateEnv();
 const app = express();
 const server = createServer(app);
 
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // Disabled for Socket.IO compatibility
+  crossOriginEmbedderPolicy: false
+}));
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', uptime: Math.floor(process.uptime()) });
+});
+
 // HTTPS 리다이렉트 (프로덕션)
 if (process.env.FORCE_HTTPS === 'true') {
   app.use((req, res, next) => {
@@ -69,13 +99,22 @@ const SESSIONS_FILE = path.join(__dirname, 'data', 'sessions.json');
 const AVATARS_DIR = path.join(__dirname, '..', 'avatars');
 const SALT_ROUNDS = 10;
 
-// Rate Limiting
+// Rate Limiting with inline cleanup
 const rateLimits = new Map();
 const RATE_LIMIT_WINDOW = 60000;
 const RATE_LIMIT_MAX = 100;
 
 function checkRateLimit(ip) {
   const now = Date.now();
+  // Inline cleanup: remove expired entries (max 10 per call to avoid blocking)
+  let cleaned = 0;
+  for (const [key, record] of rateLimits) {
+    if (now - record.start > RATE_LIMIT_WINDOW) {
+      rateLimits.delete(key);
+      if (++cleaned >= 10) break;
+    }
+  }
+  
   const record = rateLimits.get(ip);
   if (!record || now - record.start > RATE_LIMIT_WINDOW) {
     rateLimits.set(ip, { start: now, count: 1 });
@@ -89,13 +128,9 @@ function checkRateLimit(ip) {
 if (!fsSync.existsSync(AVATARS_DIR)) fsSync.mkdirSync(AVATARS_DIR, { recursive: true });
 if (!fsSync.existsSync(path.dirname(USERS_FILE))) fsSync.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
 
-// 파일 잠금 뮤텍스
-let fileLock = false;
-const withLock = async (fn) => {
-  while (fileLock) await new Promise(r => setTimeout(r, 10));
-  fileLock = true;
-  try { return await fn(); } finally { fileLock = false; }
-};
+// 파일 잠금 뮤텍스 (async-mutex로 race condition 방지)
+const fileMutex = new Mutex();
+const withLock = (fn) => fileMutex.runExclusive(fn);
 
 // 비동기 파일 작업
 const loadUsers = async () => {
@@ -142,11 +177,18 @@ const saveSessions = async (sessions) => {
 let sessions = new Map();
 let sessionsReady = loadSessions().then(s => { sessions = s; });
 
-const generateToken = () => require('crypto').randomBytes(32).toString('hex');
+const generateToken = () => crypto.randomBytes(32).toString('hex');
 
-// 입력 검증
-const validateUsername = (u) => typeof u === 'string' && u.length >= 2 && u.length <= 20 && /^[a-zA-Z0-9_가-힣]+$/.test(u);
-const validatePassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 50;
+// Timing-safe token comparison
+function safeTokenCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+// 입력 검증 (legacy - kept for compatibility, use zod schemas for new code)
+const validateUsername = (u) => schemas.username.safeParse(u).success;
+const validatePassword = (p) => schemas.password.safeParse(p).success;
 const sanitize = (s) => String(s).replace(/[<>"'&]/g, '');
 
 // 세션 정리 (1시간마다)
@@ -225,12 +267,13 @@ io.on('connection', (socket) => {
   socket.on('login', async ({ username, password }, cb) => {
     try {
       await sessionsReady;
-      if (!validateUsername(username)) return cb({ error: 'Invalid username' });
+      if (!validateUsername(username)) return cb({ error: 'Invalid credentials' });
       const data = await loadUsers();
       const user = data.users[username];
-      if (!user) return cb({ error: 'User not found' });
+      // Use generic error to prevent username enumeration
+      if (!user) return cb({ error: 'Invalid credentials' });
       const valid = await bcrypt.compare(password, user.password);
-      if (!valid) return cb({ error: 'Wrong password' });
+      if (!valid) return cb({ error: 'Invalid credentials' });
       if (!user.approved) return cb({ error: 'Account pending approval' });
       
       socket.username = username;
@@ -249,7 +292,8 @@ io.on('connection', (socket) => {
     try {
       await sessionsReady;
       const session = sessions.get(username);
-      if (!session || session.token !== token || session.expires < Date.now()) {
+      // Use timing-safe comparison to prevent timing attacks
+      if (!session || !safeTokenCompare(session.token, token) || session.expires < Date.now()) {
         sessions.delete(username);
         await saveSessions(sessions);
         return cb({ error: 'Invalid session' });
@@ -510,16 +554,21 @@ io.on('connection', (socket) => {
 
   socket.on('join', async ({ room, username, password: roomPassword, settings }, cb) => {
     try {
+      // Validate inputs with zod
+      const roomResult = schemas.roomName.safeParse(room);
+      if (!roomResult.success) return cb({ error: 'Invalid room name' });
+      room = sanitize(roomResult.data);
+      
+      const settingsResult = schemas.roomSettings.safeParse(settings);
+      const validSettings = settingsResult.success ? settingsResult.data : {};
+      
       const data = await loadUsers();
       const user = data.users[username];
       if (!user || !user.approved) return cb({ error: 'Not authorized' });
 
-      room = sanitize(room);
-      if (!room || room.length > 30) return cb({ error: 'Invalid room name' });
-
       if (!rooms.has(room)) {
         const passwordHash = roomPassword ? await bcrypt.hash(roomPassword, 8) : null;
-        const s = settings || {};
+        const s = validSettings;
         rooms.set(room, { 
           users: new Map(), messages: [], passwordHash,
           creatorId: socket.id, creatorUsername: username,
@@ -679,3 +728,28 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => console.log(`Styx 서버 실행 중: 포트 ${PORT}`));
+
+// Graceful shutdown
+const shutdown = async (signal) => {
+  console.log(`\n${signal} 수신, 서버 종료 중...`);
+  
+  // Notify all connected clients
+  io.emit('server-shutdown');
+  
+  // Close all socket connections
+  io.close();
+  
+  // Save sessions before exit
+  await saveSessions(sessions);
+  
+  server.close(() => {
+    console.log('서버 종료 완료');
+    process.exit(0);
+  });
+  
+  // Force exit after 5 seconds
+  setTimeout(() => process.exit(1), 5000);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
