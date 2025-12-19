@@ -30,3 +30,4 @@ opus = "0.3"
 
 # UDP 네트워킹
 tokio = { version = "1", features = ["net", "rt-multi-thread", "sync", "macros", "time"] }
+socket2 = "0.5"

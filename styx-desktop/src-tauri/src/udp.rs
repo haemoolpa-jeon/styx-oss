@@ -53,17 +53,61 @@ pub struct UdpConnectionInfo {
     pub is_connected: bool,
 }
 
-// UDP 소켓 바인딩
+// UDP 소켓 바인딩 with QoS (DSCP EF for real-time audio)
 pub async fn bind_udp_socket(port: u16) -> Result<(UdpSocket, u16), String> {
-    let addr = format!("0.0.0.0:{}", port);
-    let socket = UdpSocket::bind(&addr)
-        .await
+    use socket2::{Socket, Domain, Type, Protocol};
+    use std::net::SocketAddr as StdSocketAddr;
+    
+    // Create socket with socket2 for QoS options
+    let socket2 = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
+        .map_err(|e| format!("소켓 생성 실패: {}", e))?;
+    
+    // Set DSCP EF (Expedited Forwarding) = 46 << 2 = 184 for real-time audio
+    // This tells routers to prioritize this traffic
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+        let tos: i32 = 184; // DSCP EF (46) << 2
+        unsafe {
+            let raw = socket2.as_raw_socket();
+            let _ = libc_setsockopt(raw as usize, 0, 3, &tos); // IPPROTO_IP=0, IP_TOS=3
+        }
+    }
+    
+    #[cfg(not(windows))]
+    {
+        let _ = socket2.set_tos(184); // DSCP EF
+    }
+    
+    // Bind to address
+    let addr: StdSocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+    socket2.bind(&addr.into())
         .map_err(|e| format!("UDP 바인딩 실패: {}", e))?;
+    socket2.set_nonblocking(true)
+        .map_err(|e| format!("논블로킹 설정 실패: {}", e))?;
     
-    let local_addr = socket.local_addr()
+    let local_addr = socket2.local_addr()
         .map_err(|e| format!("로컬 주소 가져오기 실패: {}", e))?;
+    let local_port = local_addr.as_socket().map(|a| a.port()).unwrap_or(0);
     
-    Ok((socket, local_addr.port()))
+    // Convert to tokio socket
+    let std_socket: std::net::UdpSocket = socket2.into();
+    let socket = UdpSocket::from_std(std_socket)
+        .map_err(|e| format!("Tokio 소켓 변환 실패: {}", e))?;
+    
+    Ok((socket, local_port))
+}
+
+// Windows-specific setsockopt (minimal, no libc dependency)
+#[cfg(windows)]
+fn libc_setsockopt(socket: usize, level: i32, optname: i32, optval: &i32) -> i32 {
+    #[link(name = "ws2_32")]
+    extern "system" {
+        fn setsockopt(s: usize, level: i32, optname: i32, optval: *const i8, optlen: i32) -> i32;
+    }
+    unsafe {
+        setsockopt(socket, level, optname, optval as *const i32 as *const i8, 4)
+    }
 }
 
 // 패킷 전송
