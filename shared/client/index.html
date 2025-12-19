@@ -88,9 +88,9 @@
             </div>
             <div class="audio-col">
               <div class="form-field">
-                <label>📊 버퍼 크기 <span id="jitter-value">100ms</span></label>
-                <input type="range" id="jitter-slider" min="50" max="200" value="100" step="10">
-                <span class="hint">높을수록 안정적, 지연 증가</span>
+                <label>📊 버퍼 크기 <span id="jitter-value">50ms</span></label>
+                <input type="range" id="jitter-slider" min="30" max="150" value="50" step="10">
+                <label class="auto-jitter-label"><input type="checkbox" id="auto-jitter" checked> 자동 조절</label>
               </div>
               <button id="test-audio-btn" class="btn-test">🎤 마이크 테스트</button>
               <div class="mic-meter">
@@ -297,8 +297,9 @@
         </div>
         <div class="toolbar-section">
           <span class="toolbar-label">버퍼:</span>
-          <input type="range" id="room-jitter-slider" min="50" max="200" value="100" step="10" class="toolbar-slider">
-          <span id="room-jitter-value" class="toolbar-value">100ms</span>
+          <input type="range" id="room-jitter-slider" min="30" max="150" value="50" step="10" class="toolbar-slider">
+          <span id="room-jitter-value" class="toolbar-value">50ms</span>
+          <label class="toolbar-check"><input type="checkbox" id="room-auto-jitter" checked> 자동</label>
         </div>
         <div class="toolbar-section metronome-section">
           <button id="metronome-toggle" class="btn-metro">▶️</button>

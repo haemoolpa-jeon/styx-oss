@@ -477,3 +477,7 @@ input[type="range"]::-webkit-slider-thumb {
 .effect-row span:first-child { width: 40px; font-size: 12px; }
 .effect-row input[type="range"] { flex: 1; }
 .effect-val { width: 40px; font-size: 11px; text-align: right; color: var(--text-secondary); }
+
+/* Auto jitter */
+.auto-jitter-label { font-size: 12px; margin-top: 4px; display: flex; align-items: center; gap: 4px; }
+.test-item.warn { color: var(--warning); }

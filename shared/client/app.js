@@ -137,6 +137,7 @@ let duckingEnabled = localStorage.getItem('styx-ducking') === 'true';
 let vadEnabled = localStorage.getItem('styx-vad') !== 'false';
 let vadIntervals = new Map(); // 피어별 VAD 인터벌
 let delayCompensation = false;
+let autoJitter = localStorage.getItem('styx-auto-jitter') !== 'false'; // 자동 지터 버퍼
 let currentRoomSettings = {}; // 현재 방 설정
 let isRoomCreator = false; // 방장 여부
 let roomCreatorUsername = ''; // 방장 이름
@@ -193,9 +194,11 @@ function getQualityGrade(latency, packetLoss, jitter) {
   return { grade: 'good', label: '좋음', color: '#2ed573' };
 }
 
-// ===== 연결 테스트 =====
+// ===== 연결 테스트 + 네트워크 품질 측정 =====
+let networkQuality = { latency: 0, jitter: 0, isWifi: false };
+
 async function runConnectionTest() {
-  const results = { mic: false, speaker: false, network: false, turn: false };
+  const results = { mic: false, speaker: false, network: false, turn: false, quality: null };
   const statusEl = $('test-status');
   const updateStatus = (msg) => { if (statusEl) statusEl.textContent = msg; };
   
@@ -225,7 +228,31 @@ async function runConnectionTest() {
     ctx.close();
   } catch { results.speaker = false; }
   
-  // 3. STUN 연결 테스트
+  // 3. 네트워크 품질 측정 (ping 테스트)
+  updateStatus('📡 네트워크 품질 측정 중...');
+  const pings = [];
+  for (let i = 0; i < 5; i++) {
+    const start = performance.now();
+    try {
+      await fetch(serverUrl + '/health', { method: 'HEAD', cache: 'no-store' });
+      pings.push(performance.now() - start);
+    } catch { pings.push(999); }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  const avgPing = pings.reduce((a, b) => a + b, 0) / pings.length;
+  const jitterCalc = pings.length > 1 ? Math.sqrt(pings.map(p => Math.pow(p - avgPing, 2)).reduce((a, b) => a + b, 0) / pings.length) : 0;
+  
+  networkQuality.latency = Math.round(avgPing);
+  networkQuality.jitter = Math.round(jitterCalc);
+  
+  // Wi-Fi 감지 (NetworkInformation API)
+  if (navigator.connection) {
+    networkQuality.isWifi = navigator.connection.type === 'wifi';
+  }
+  
+  results.quality = { latency: networkQuality.latency, jitter: networkQuality.jitter, isWifi: networkQuality.isWifi };
+  
+  // 4. STUN 연결 테스트
   updateStatus('🌐 네트워크 테스트 중...');
   let testPc = null;
   try {
@@ -246,7 +273,7 @@ async function runConnectionTest() {
     testPc.close();
   } catch { if (testPc) testPc.close(); results.network = false; }
   
-  // 4. TURN 연결 테스트
+  // 5. TURN 연결 테스트
   updateStatus('🔄 TURN 서버 테스트 중...');
   testPc = null;
   try {
@@ -278,13 +305,28 @@ async function runConnectionTest() {
 function showTestResults(results) {
   const el = $('test-results');
   if (!el) return;
+  
+  const q = results.quality;
+  const qualityGrade = q ? (q.latency > 100 || q.jitter > 30 ? 'poor' : q.latency > 50 || q.jitter > 15 ? 'fair' : 'good') : 'unknown';
+  const qualityLabel = { good: '좋음 ✓', fair: '보통 ⚠', poor: '불안정 ✗', unknown: '측정 실패' }[qualityGrade];
+  const qualityColor = { good: '#2ed573', fair: '#ffa502', poor: '#ff4757', unknown: '#999' }[qualityGrade];
+  
   el.innerHTML = `
     <div class="test-item ${results.mic ? 'pass' : 'fail'}">🎤 마이크: ${results.mic ? '✓' : '✗'}</div>
     <div class="test-item ${results.speaker ? 'pass' : 'fail'}">🔊 스피커: ${results.speaker ? '✓' : '✗'}</div>
     <div class="test-item ${results.network ? 'pass' : 'fail'}">🌐 P2P 연결: ${results.network ? '✓' : '✗'}</div>
     <div class="test-item ${results.turn ? 'pass' : 'fail'}">🔄 TURN 릴레이: ${results.turn ? '✓' : '✗'}</div>
+    ${q ? `<div class="test-item" style="color:${qualityColor}">📡 네트워크: ${qualityLabel} (${q.latency}ms, 지터 ${q.jitter}ms)</div>` : ''}
+    ${q?.isWifi ? '<div class="test-item warn">⚠️ Wi-Fi 감지 - 유선 연결 권장</div>' : ''}
   `;
   el.classList.remove('hidden');
+  
+  // 자동 지터 버퍼 추천
+  if (q && autoJitter) {
+    const recommended = Math.min(150, Math.max(30, q.latency + q.jitter * 2));
+    setJitterBuffer(recommended);
+    toast(`네트워크 상태에 맞게 버퍼 ${recommended}ms로 조정됨`, 'info');
+  }
 }
 
 // 토스트 메시지
@@ -2339,6 +2381,9 @@ function startLatencyPing() {
     // 지연 보상 적용
     if (delayCompensation) applyDelayCompensation();
     
+    // 자동 지터 버퍼 조절
+    autoAdjustJitter();
+    
     // 핑 그래프용 히스토리 저장
     if (count > 0) {
       latencyHistory.push(Math.round(avgLatency / count));
@@ -2376,6 +2421,46 @@ function applyJitterBuffer() {
       });
     }
   });
+}
+
+// 지터 버퍼 설정 (UI 동기화 포함)
+function setJitterBuffer(value) {
+  jitterBuffer = Math.min(200, Math.max(30, value));
+  localStorage.setItem('styx-jitter-buffer', jitterBuffer);
+  
+  // UI 동기화
+  if ($('jitter-slider')) {
+    $('jitter-slider').value = jitterBuffer;
+    $('jitter-value').textContent = jitterBuffer + 'ms';
+  }
+  if ($('room-jitter-slider')) {
+    $('room-jitter-slider').value = jitterBuffer;
+    $('room-jitter-value').textContent = jitterBuffer + 'ms';
+  }
+  
+  applyJitterBuffer();
+}
+
+// 실시간 자동 지터 버퍼 조절 (세션 중)
+function autoAdjustJitter() {
+  if (!autoJitter || peers.size === 0) return;
+  
+  let maxJitter = 0, maxLoss = 0;
+  peers.forEach(peer => {
+    if (peer.jitter > maxJitter) maxJitter = peer.jitter;
+    if (peer.packetLoss > maxLoss) maxLoss = peer.packetLoss;
+  });
+  
+  // 패킷 손실이나 지터가 높으면 버퍼 증가
+  let target = 50; // 기본값
+  if (maxLoss > 3 || maxJitter > 30) target = 100;
+  else if (maxLoss > 1 || maxJitter > 15) target = 70;
+  
+  // 급격한 변화 방지 (점진적 조절)
+  if (Math.abs(jitterBuffer - target) > 20) {
+    const newValue = jitterBuffer + (target > jitterBuffer ? 10 : -10);
+    setJitterBuffer(newValue);
+  }
 }
 
 // VAD (음성 활동 감지)
@@ -2994,6 +3079,30 @@ if ($('room-jitter-slider')) {
     // 기존 피어에 지터 버퍼 적용
     applyJitterBuffer();
   };
+}
+
+// 자동 지터 버퍼 토글 (로비)
+if ($('auto-jitter')) {
+  $('auto-jitter').checked = autoJitter;
+  $('auto-jitter').onchange = () => {
+    autoJitter = $('auto-jitter').checked;
+    localStorage.setItem('styx-auto-jitter', autoJitter);
+    if ($('room-auto-jitter')) $('room-auto-jitter').checked = autoJitter;
+    $('jitter-slider').disabled = autoJitter;
+  };
+  $('jitter-slider').disabled = autoJitter;
+}
+
+// 자동 지터 버퍼 토글 (방)
+if ($('room-auto-jitter')) {
+  $('room-auto-jitter').checked = autoJitter;
+  $('room-auto-jitter').onchange = () => {
+    autoJitter = $('room-auto-jitter').checked;
+    localStorage.setItem('styx-auto-jitter', autoJitter);
+    if ($('auto-jitter')) $('auto-jitter').checked = autoJitter;
+    $('room-jitter-slider').disabled = autoJitter;
+  };
+  $('room-jitter-slider').disabled = autoJitter;
 }
 
 // 방 내 VAD
