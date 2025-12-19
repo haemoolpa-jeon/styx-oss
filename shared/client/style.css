@@ -173,10 +173,15 @@ button { cursor: pointer; border: none; font-family: inherit; }
 }
 .checkbox-group input { width: 22px; height: 22px; accent-color: var(--accent); }
 .btn-test {
-  padding: 18px 28px; background: var(--accent); color: #fff;
-  border-radius: 10px; font-size: 18px; font-weight: 500;
+  padding: 12px 16px; background: var(--accent); color: #fff;
+  border-radius: 8px; font-size: 14px; font-weight: 500;
 }
 .btn-test:hover { background: var(--accent-hover); }
+.test-buttons { display: flex; gap: 8px; margin-bottom: 10px; }
+.test-results { margin-top: 10px; padding: 10px; background: var(--bg-input); border-radius: 8px; font-size: 13px; }
+.test-item { padding: 4px 0; }
+.test-item.pass { color: var(--success); }
+.test-item.fail { color: var(--error); }
 .mic-meter {
   height: 12px; background: var(--bg-input); border-radius: 6px; overflow: hidden;
   border: 1px solid var(--border);

@@ -88,15 +88,18 @@
             </div>
             <div class="audio-col">
               <div class="form-field">
-                <label>📊 버퍼 크기 <span id="jitter-value">50ms</span></label>
+                <label>📊 버퍼 <span id="jitter-value">50ms</span> <label class="auto-jitter-label"><input type="checkbox" id="auto-jitter" checked> 자동</label></label>
                 <input type="range" id="jitter-slider" min="30" max="150" value="50" step="10">
-                <label class="auto-jitter-label"><input type="checkbox" id="auto-jitter" checked> 자동 조절</label>
               </div>
-              <button id="test-audio-btn" class="btn-test">🎤 마이크 테스트</button>
+              <div class="test-buttons">
+                <button id="test-audio-btn" class="btn-test">🎤 마이크</button>
+                <button id="test-network-btn" class="btn-test">📡 네트워크</button>
+              </div>
               <div class="mic-meter">
                 <div id="mic-level"></div>
               </div>
-              <span id="test-status-text" class="test-status"></span>
+              <div id="test-results" class="test-results hidden"></div>
+              <span id="test-status" class="test-status"></span>
             </div>
           </div>
           <!-- Tauri 앱 전용 설정 -->

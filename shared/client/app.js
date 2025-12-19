@@ -2871,7 +2871,7 @@ $('test-audio-btn').onclick = async () => {
     testStream = null;
     if (testAnimationId) cancelAnimationFrame(testAnimationId);
     $('mic-level').style.width = '0%';
-    btn.textContent = '🔍 마이크 테스트';
+    btn.textContent = '🎤 마이크';
     return;
   }
   
@@ -2890,7 +2890,7 @@ $('test-audio-btn').onclick = async () => {
     testAnalyser.fftSize = 256;
     source.connect(testAnalyser);
     
-    btn.textContent = '⏹️ 테스트 중지';
+    btn.textContent = '⏹️ 중지';
     
     const dataArray = new Uint8Array(testAnalyser.frequencyBinCount);
     function updateLevel() {
@@ -2906,6 +2906,19 @@ $('test-audio-btn').onclick = async () => {
     toast('마이크 접근이 거부되었습니다', 'error');
   }
 };
+
+// 네트워크 테스트 버튼
+$('test-network-btn')?.addEventListener('click', async () => {
+  const btn = $('test-network-btn');
+  btn.disabled = true;
+  btn.textContent = '테스트 중...';
+  
+  const results = await runConnectionTest();
+  showTestResults(results);
+  
+  btn.disabled = false;
+  btn.textContent = '📡 네트워크';
+});
 
 // ===== 방 생성 모달 =====
 window.openCreateRoomModal = () => {
