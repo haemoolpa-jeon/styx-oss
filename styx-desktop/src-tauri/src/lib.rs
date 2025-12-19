@@ -147,6 +147,7 @@ fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
         stream_state.jitter_buffers.clone(),
         stream_state.playback_buffer.clone(),
         stream_state.packets_received.clone(),
+        stream_state.peer_stats.clone(),
         output_device,
     )?;
     
@@ -203,6 +204,34 @@ fn get_udp_stats(state: State<'_, AppState>) -> UdpStats {
     }
 }
 
+#[derive(serde::Serialize)]
+struct PeerStatsResponse {
+    addr: String,
+    packets_received: u32,
+    packets_lost: u32,
+    loss_rate: f32,
+    audio_level: f32,
+}
+
+#[tauri::command]
+fn get_peer_stats(state: State<'_, AppState>) -> Vec<PeerStatsResponse> {
+    let stream_state = state.udp_stream.lock().unwrap();
+    stream_state.peer_stats.lock()
+        .map(|stats| {
+            stats.iter().map(|(addr, s)| {
+                let total = s.packets_received + s.packets_lost;
+                PeerStatsResponse {
+                    addr: addr.to_string(),
+                    packets_received: s.packets_received,
+                    packets_lost: s.packets_lost,
+                    loss_rate: if total > 0 { s.packets_lost as f32 / total as f32 * 100.0 } else { 0.0 },
+                    audio_level: s.audio_level,
+                }
+            }).collect()
+        })
+        .unwrap_or_default()
+}
+
 // ===== 앱 실행 =====
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -234,6 +263,7 @@ pub fn run() {
             udp_start_stream,
             udp_stop_stream,
             get_udp_stats,
+            get_peer_stats,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

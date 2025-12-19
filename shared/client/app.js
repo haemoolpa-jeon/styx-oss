@@ -1345,6 +1345,10 @@ function startUdpStatsMonitor() {
     try {
       const stats = await tauriInvoke('get_udp_stats');
       updateUdpStatsUI(stats);
+      
+      // Per-peer stats
+      const peerStats = await tauriInvoke('get_peer_stats');
+      updatePeerStatsUI(peerStats);
     } catch (e) {
       console.error('UDP 통계 조회 실패:', e);
     }
@@ -1379,6 +1383,28 @@ function updateUdpStatsUI(stats) {
   
   badge.textContent = `UDP: ${stats.peer_count}명 | 손실 ${lossRate}% | 버퍼 ${bufferMs}/${targetMs}ms`;
   badge.className = `stats-badge ${quality}`;
+}
+
+function updatePeerStatsUI(peerStats) {
+  if (!peerStats || !peerStats.length) return;
+  
+  // Update each peer's card with UDP stats
+  for (const ps of peerStats) {
+    // Find peer card by matching address (peers Map uses peerId, not addr)
+    // For now, update all peer cards with combined info
+    document.querySelectorAll('.user-card .latency').forEach(el => {
+      const card = el.closest('.user-card');
+      if (!card) return;
+      
+      // Show UDP stats if in UDP mode
+      if (connectionMode === 'udp') {
+        const loss = ps.loss_rate.toFixed(1);
+        const level = Math.round(ps.audio_level * 100);
+        el.textContent = `손실 ${loss}% | 레벨 ${level}%`;
+        el.style.color = ps.loss_rate > 5 ? '#f44' : ps.loss_rate > 1 ? '#fa0' : '#4f4';
+      }
+    });
+  }
 }
 
 // 오디오 모드 설정

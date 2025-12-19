@@ -308,6 +308,7 @@ pub fn start_recv_loop(
     jitter_buffers: Arc<Mutex<BTreeMap<SocketAddr, JitterBuffer>>>,
     playback_buffer: Arc<Mutex<VecDeque<f32>>>,
     packets_received: Arc<AtomicU32>,
+    peer_stats: Arc<Mutex<BTreeMap<SocketAddr, PeerStats>>>,
     output_device_name: Option<String>,
 ) -> Result<(), String> {
     let host = cpal::default_host();
@@ -370,12 +371,14 @@ pub fn start_recv_loop(
                     
                     packets_received.fetch_add(1, Ordering::Relaxed);
                     
-                    // 패킷 손실 감지
+                    // 패킷 손실 감지 및 per-peer 통계 업데이트
+                    let mut lost_count = 0u32;
                     if let Some(&prev_seq) = last_seq.get(&addr) {
                         let expected = prev_seq.wrapping_add(1);
                         if header.sequence != expected && header.sequence > expected {
                             // 손실된 패킷 수 (FEC로 복구 시도)
                             let lost = header.sequence.wrapping_sub(expected);
+                            lost_count = lost;
                             if lost < 10 { // 합리적인 범위 내에서만
                                 let decoder = decoders.entry(addr).or_insert_with(|| create_decoder().unwrap());
                                 for _ in 0..lost {
@@ -394,6 +397,15 @@ pub fn start_recv_loop(
                     
                     let decoder = decoders.entry(addr).or_insert_with(|| create_decoder().unwrap());
                     if let Ok(samples) = decode_frame(decoder, payload) {
+                        // Update per-peer stats
+                        if let Ok(mut stats) = peer_stats.lock() {
+                            let s = stats.entry(addr).or_default();
+                            s.packets_received += 1;
+                            s.packets_lost += lost_count;
+                            s.last_seq = header.sequence;
+                            s.audio_level = calculate_audio_level(&samples);
+                        }
+                        
                         if let Ok(mut jb) = jitter_buffers.lock() {
                             jb.entry(addr)
                                 .or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER))
