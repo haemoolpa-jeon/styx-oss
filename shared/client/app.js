@@ -45,15 +45,15 @@ function getPeerAudioContext() {
   return peerAudioContext;
 }
 
-// 입력 오디오에 리미터/컴프레서 + 이펙트 적용
-let inputEffects = { reverb: 0, eqLow: 0, eqMid: 0, eqHigh: 0, delay: 0 };
+// 입력 오디오에 리미터/컴프레서 + EQ 적용 (저지연)
+let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0 };
 let effectNodes = {};
 
 function createProcessedInputStream(rawStream) {
   inputLimiterContext = new AudioContext({ sampleRate: 48000 });
   const source = inputLimiterContext.createMediaStreamSource(rawStream);
   
-  // EQ (3밴드)
+  // EQ (3밴드) - 지연 거의 없음 (~0.1ms each)
   const eqLow = inputLimiterContext.createBiquadFilter();
   eqLow.type = 'lowshelf'; eqLow.frequency.value = 320; eqLow.gain.value = inputEffects.eqLow;
   
@@ -63,22 +63,10 @@ function createProcessedInputStream(rawStream) {
   const eqHigh = inputLimiterContext.createBiquadFilter();
   eqHigh.type = 'highshelf'; eqHigh.frequency.value = 3200; eqHigh.gain.value = inputEffects.eqHigh;
   
-  // 컴프레서 (리미터 역할)
+  // 컴프레서 (리미터 역할) - 클리핑 방지
   const compressor = inputLimiterContext.createDynamicsCompressor();
   compressor.threshold.value = -12; compressor.knee.value = 6;
   compressor.ratio.value = 12; compressor.attack.value = 0.003; compressor.release.value = 0.1;
-  
-  // 딜레이
-  const delayNode = inputLimiterContext.createDelay(1);
-  delayNode.delayTime.value = inputEffects.delay / 1000;
-  const delayGain = inputLimiterContext.createGain();
-  delayGain.gain.value = inputEffects.delay > 0 ? 0.3 : 0;
-  
-  // 리버브 (ConvolverNode - 간단한 임펄스 생성)
-  const reverbGain = inputLimiterContext.createGain();
-  reverbGain.gain.value = inputEffects.reverb / 100;
-  const dryGain = inputLimiterContext.createGain();
-  dryGain.gain.value = 1 - (inputEffects.reverb / 200);
   
   // 메이크업 게인
   const makeupGain = inputLimiterContext.createGain();
@@ -86,19 +74,15 @@ function createProcessedInputStream(rawStream) {
   
   const dest = inputLimiterContext.createMediaStreamDestination();
   
-  // 체인: source -> EQ -> compressor -> dry/wet -> dest
+  // 체인: source -> EQ -> compressor -> gain -> dest
   source.connect(eqLow);
   eqLow.connect(eqMid);
   eqMid.connect(eqHigh);
   eqHigh.connect(compressor);
-  compressor.connect(dryGain);
-  compressor.connect(delayNode);
-  delayNode.connect(delayGain);
-  delayGain.connect(makeupGain);
-  dryGain.connect(makeupGain);
+  compressor.connect(makeupGain);
   makeupGain.connect(dest);
   
-  effectNodes = { eqLow, eqMid, eqHigh, compressor, delayNode, delayGain, reverbGain, dryGain, makeupGain };
+  effectNodes = { eqLow, eqMid, eqHigh, compressor, makeupGain };
   processedStream = dest.stream;
   return processedStream;
 }
@@ -113,14 +97,6 @@ function updateInputEffect(effect, value) {
     case 'eqLow': effectNodes.eqLow.gain.value = value; break;
     case 'eqMid': effectNodes.eqMid.gain.value = value; break;
     case 'eqHigh': effectNodes.eqHigh.gain.value = value; break;
-    case 'delay':
-      effectNodes.delayNode.delayTime.value = value / 1000;
-      effectNodes.delayGain.gain.value = value > 0 ? 0.3 : 0;
-      break;
-    case 'reverb':
-      effectNodes.reverbGain.gain.value = value / 100;
-      effectNodes.dryGain.gain.value = 1 - (value / 200);
-      break;
   }
 }
 
@@ -136,7 +112,7 @@ let connectionMode = localStorage.getItem('styx-connection-mode') || 'webrtc';
 
 // 안정성 설정
 let audioMode = localStorage.getItem('styx-audio-mode') || 'voice'; // voice | music
-let jitterBuffer = parseInt(localStorage.getItem('styx-jitter-buffer')) || 100; // ms
+let jitterBuffer = parseInt(localStorage.getItem('styx-jitter-buffer')) || 50; // ms (낮을수록 저지연, 높을수록 안정)
 let autoAdapt = localStorage.getItem('styx-auto-adapt') !== 'false';
 
 // 오디오 처리 설정
@@ -3055,6 +3031,9 @@ if ($('delay-compensation')) {
   $('delay-compensation').onchange = () => {
     delayCompensation = $('delay-compensation').checked;
     socket.emit('delay-compensation', delayCompensation);
+    if (delayCompensation) {
+      toast('⚠️ 지연 보상: 모든 참가자의 지연이 증가합니다', 'warning', 5000);
+    }
   };
 }
 
@@ -3068,22 +3047,22 @@ if ($('multitrack-mode')) {
   };
 }
 
-// 오디오 이펙트 패널
+// 오디오 이펙트 패널 (EQ만)
 $('effects-toggle')?.addEventListener('click', () => {
   $('effects-panel')?.classList.toggle('hidden');
 });
 
-// 이펙트 슬라이더 초기화
-['eq-low', 'eq-mid', 'eq-high', 'fx-delay'].forEach(id => {
+// EQ 슬라이더 초기화
+['eq-low', 'eq-mid', 'eq-high'].forEach(id => {
   const el = $(id);
   if (!el) return;
-  const effectMap = { 'eq-low': 'eqLow', 'eq-mid': 'eqMid', 'eq-high': 'eqHigh', 'fx-delay': 'delay' };
+  const effectMap = { 'eq-low': 'eqLow', 'eq-mid': 'eqMid', 'eq-high': 'eqHigh' };
   const effect = effectMap[id];
   el.value = inputEffects[effect] || 0;
-  el.nextElementSibling.textContent = id.startsWith('eq') ? `${el.value}dB` : `${el.value}ms`;
+  el.nextElementSibling.textContent = `${el.value}dB`;
   el.oninput = () => {
     const val = parseInt(el.value);
-    el.nextElementSibling.textContent = id.startsWith('eq') ? `${val}dB` : `${val}ms`;
+    el.nextElementSibling.textContent = `${val}dB`;
     updateInputEffect(effect, val);
   };
 });
