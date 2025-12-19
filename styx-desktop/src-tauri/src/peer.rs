@@ -160,10 +160,10 @@ impl Default for UdpStreamState {
 pub fn create_encoder() -> Result<Encoder, String> {
     let mut encoder = Encoder::new(48000, Channels::Mono, Application::LowDelay)
         .map_err(|e| format!("Opus 인코더 생성 실패: {:?}", e))?;
-    // 안정성 설정
     encoder.set_bitrate(opus::Bitrate::Bits(96000)).ok(); // 96kbps for music
     encoder.set_inband_fec(true).ok(); // Forward Error Correction
-    encoder.set_packet_loss_perc(10).ok(); // 10% 손실 대비
+    encoder.set_packet_loss_perc(5).ok(); // 5% 손실 대비 (낮출수록 저지연)
+    encoder.set_vbr(false).ok(); // CBR for consistent latency
     Ok(encoder)
 }
 

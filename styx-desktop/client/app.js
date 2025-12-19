@@ -1203,8 +1203,16 @@ async function initTauriFeatures() {
     // ASIO 사용 가능 여부 확인
     const asioAvailable = await tauriInvoke('check_asio');
     if (asioAvailable) {
-      toast('ASIO 드라이버 감지됨', 'success');
+      toast('ASIO 드라이버 감지됨 - UDP 모드 권장', 'success');
       $('tauri-audio-hint').textContent = 'ASIO 사용 가능 - 저지연 모드 권장';
+      
+      // ASIO + 저지연 모드면 자동으로 UDP 선택
+      if (lowLatencyMode && connectionMode !== 'udp') {
+        connectionMode = 'udp';
+        localStorage.setItem('styx-connection-mode', 'udp');
+        updateConnectionModeButtons();
+        toast('⚡ ASIO 감지 → UDP 모드 자동 선택', 'info');
+      }
     }
     
     // 오디오 정보 가져오기
