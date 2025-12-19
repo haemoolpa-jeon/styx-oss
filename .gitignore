@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+# Note: package-lock.json is intentionally tracked for reproducible builds
+
+# User data
+avatars/
+server/data/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# SSH keys
+key/
+*.pem
+*.key
+
+# Logs
+*.log
+server.log
+
+# Build outputs
+styx-desktop/src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
