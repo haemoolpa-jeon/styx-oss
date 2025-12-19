@@ -29,8 +29,8 @@ const schemas = {
   }).optional()
 };
 
-// TURN 서버 설정
-const TURN_SERVER = process.env.TURN_SERVER || '3.39.223.2';
+// TURN 서버 설정 (환경변수로 설정, 없으면 TURN 비활성화)
+const TURN_SERVER = process.env.TURN_SERVER || '';
 const TURN_SECRET = process.env.TURN_SECRET || '';
 const TURN_TTL = 24 * 60 * 60; // 24시간
 
