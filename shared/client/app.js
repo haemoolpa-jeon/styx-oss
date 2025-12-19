@@ -592,13 +592,19 @@ async function autoRejoin() {
         latency: { ideal: 0.01 }
       }
     };
-    localStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+    const rawStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+    // 입력 리미터 적용
+    localStream = createProcessedInputStream(rawStream);
+    localStream._rawStream = rawStream;
+    
     if (pttMode) localStream.getAudioTracks().forEach(t => t.enabled = false);
     
     socket.emit('join', { room: lastRoom, username: currentUser.username, password: lastRoomPassword }, res => {
       if (res.error) {
         toast('재입장 실패: ' + res.error, 'error');
+        localStream?._rawStream?.getTracks().forEach(t => t.stop());
         localStream?.getTracks().forEach(t => t.stop());
+        if (inputLimiterContext) { inputLimiterContext.close(); inputLimiterContext = null; }
         lastRoom = null;
       } else {
         toast('방에 재입장했습니다', 'success');
@@ -692,10 +698,18 @@ socket.on('disconnect', () => {
   socket.room = null;
 });
 
+// 서버 종료 알림
+socket.on('server-shutdown', () => {
+  toast('서버가 종료됩니다. 잠시 후 재연결됩니다.', 'warning', 5000);
+});
+
 // 재연결 시 방 자동 재입장
 socket.io.on('reconnect', () => {
   log('서버 재연결됨');
   toast('서버 재연결됨', 'success');
+  
+  // TURN 자격증명 갱신
+  updateTurnCredentials();
   
   // 세션 복구 후 방 재입장
   const savedUser = localStorage.getItem('styx-user');

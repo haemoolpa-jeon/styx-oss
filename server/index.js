@@ -739,7 +739,6 @@ io.on('connection', (socket) => {
       broadcastRoomList();
       console.log(`[LEAVE] ${socket.username} left ${socket.room}`);
     }
-    }
   });
 });
 
