@@ -102,6 +102,8 @@ function updateTurnCredentials() {
         { urls: turnServer.urls, username: turnServer.username, credential: turnServer.credential }
       ];
       log('TURN 자격증명 업데이트됨');
+      // 만료 전 갱신 스케줄
+      scheduleTurnRefresh();
     } else {
       // 폴백: 무료 TURN 서버
       rtcConfig.iceServers = [
@@ -1625,6 +1627,71 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// 연결 타입 확인 (relay/srflx/host)
+async function checkConnectionType(pc, peerId) {
+  try {
+    const stats = await pc.getStats();
+    let candidateType = 'unknown';
+    
+    stats.forEach(report => {
+      if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+        const localId = report.localCandidateId;
+        stats.forEach(r => {
+          if (r.id === localId) {
+            candidateType = r.candidateType; // host, srflx, relay
+          }
+        });
+      }
+    });
+    
+    const peer = peers.get(peerId);
+    if (peer) {
+      peer.connectionType = candidateType;
+      const typeLabels = { host: '직접', srflx: 'STUN', relay: 'TURN' };
+      log(`연결 타입: ${peer.username} -> ${typeLabels[candidateType] || candidateType}`);
+    }
+  } catch (e) {
+    log('연결 타입 확인 실패:', e);
+  }
+}
+
+// 피어 연결 재생성 (ICE 완전 실패 시)
+function recreatePeerConnection(peerId, username, avatar) {
+  const oldPeer = peers.get(peerId);
+  if (!oldPeer) return;
+  
+  log(`피어 연결 재생성: ${username}`);
+  
+  // 기존 연결 정리
+  try {
+    oldPeer.pc.close();
+    if (oldPeer.audioNodes) {
+      oldPeer.audioNodes.source.disconnect();
+    }
+  } catch {}
+  
+  // VAD 인터벌 정리
+  const vadInt = vadIntervals.get(peerId);
+  if (vadInt) { clearInterval(vadInt); vadIntervals.delete(peerId); }
+  
+  // 새 연결 생성 (initiator=true로 새 offer 전송)
+  peers.delete(peerId);
+  createPeerConnection(peerId, username, avatar, true);
+  toast(`${username} 재연결 중...`, 'info');
+}
+
+// TURN 자격증명 갱신 (만료 전 갱신)
+let turnRefreshTimer = null;
+function scheduleTurnRefresh() {
+  if (turnRefreshTimer) clearTimeout(turnRefreshTimer);
+  // 23시간 후 갱신 (24시간 TTL 전에)
+  turnRefreshTimer = setTimeout(() => {
+    log('TURN 자격증명 갱신');
+    updateTurnCredentials();
+    scheduleTurnRefresh();
+  }, 23 * 60 * 60 * 1000);
+}
+
 // WebRTC
 function createPeerConnection(peerId, username, avatar, initiator) {
   const pc = new RTCPeerConnection(rtcConfig);
@@ -1727,16 +1794,38 @@ function createPeerConnection(peerId, username, avatar, initiator) {
     if (e.candidate) socket.emit('ice-candidate', { to: peerId, candidate: e.candidate });
   };
 
+  // ICE gathering 상태 모니터링
+  pc.onicegatheringstatechange = () => {
+    log(`ICE gathering 상태: ${username} -> ${pc.iceGatheringState}`);
+  };
+
   pc.oniceconnectionstatechange = () => {
     const peerData = peers.get(peerId);
+    log(`ICE 연결 상태: ${username} -> ${pc.iceConnectionState}`);
+    
     if (pc.iceConnectionState === 'disconnected') {
-      // ICE 연결 끊김 - 자동 복구 시도
+      // ICE 연결 끊김 - 점진적 재시도 (exponential backoff)
+      const retryDelay = Math.min(1000 * Math.pow(2, peerData?.iceRetryCount || 0), 10000);
+      peerData.iceRetryCount = (peerData?.iceRetryCount || 0) + 1;
+      
       setTimeout(() => {
-        if (pc.iceConnectionState === 'disconnected') {
+        if (pc.iceConnectionState === 'disconnected' && peerData?.iceRetryCount <= 5) {
+          log(`ICE 재시작 시도: ${username} (${peerData.iceRetryCount}/5)`);
           pc.restartIce();
         }
-      }, 2000);
+      }, retryDelay);
     }
+    
+    if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+      if (peerData) peerData.iceRetryCount = 0;
+    }
+    
+    if (pc.iceConnectionState === 'failed') {
+      // ICE 완전 실패 - 연결 재생성 시도
+      log(`ICE 실패, 연결 재생성: ${username}`);
+      recreatePeerConnection(peerId, username, peerData?.avatar);
+    }
+    
     if (peerData) peerData.iceState = pc.iceConnectionState;
   };
 
@@ -1746,7 +1835,11 @@ function createPeerConnection(peerId, username, avatar, initiator) {
     
     if (pc.connectionState === 'connected') {
       applyAudioSettings(pc);
-      if (peerData) peerData.retryCount = 0;
+      if (peerData) {
+        peerData.retryCount = 0;
+        // 연결 타입 확인 (relay/srflx/host)
+        checkConnectionType(pc, peerId);
+      }
       log(`연결 성공: ${username}`);
     }
     if (pc.connectionState === 'failed') {
@@ -1758,7 +1851,9 @@ function createPeerConnection(peerId, username, avatar, initiator) {
         pc.restartIce();
         toast(`${username} 재연결 시도 (${retries}/3)`, 'warning');
       } else {
-        toast(`${username} 연결 실패`, 'error');
+        toast(`${username} 연결 실패 - 클릭하여 재시도`, 'error', 10000);
+        // 수동 재연결 옵션 제공
+        if (peerData) peerData.needsManualReconnect = true;
       }
     }
     if (pc.connectionState === 'disconnected') {
@@ -1795,6 +1890,7 @@ function renderUsers() {
     const connected = state === 'connected';
     const q = peer.quality;
     const speaking = peer.isSpeaking ? 'speaking' : '';
+    const connType = peer.connectionType ? { host: '직접', srflx: 'STUN', relay: 'TURN' }[peer.connectionType] || '' : '';
     
     const card = document.createElement('div');
     card.className = `user-card ${connected ? 'connected' : 'connecting'} ${speaking}`;
@@ -1803,7 +1899,7 @@ function renderUsers() {
       <div class="card-info">
         <span class="card-name">${peer.isSpeaking ? '🎤 ' : ''}${escapeHtml(peer.username)}</span>
         <div class="card-stats">
-          <span class="quality-badge" style="background:${q.color}">${q.label}</span>
+          <span class="quality-badge" style="background:${q.color}">${q.label}${connType ? ` (${connType})` : ''}</span>
           <span class="stat">${peer.latency ? peer.latency + 'ms' : '--'}</span>
           <span class="stat">${peer.packetLoss.toFixed(1)}% 손실</span>
         </div>
@@ -1816,9 +1912,20 @@ function renderUsers() {
       <div class="card-controls">
         <input type="range" min="0" max="100" value="${peer.volume}" class="volume-slider">
         <span class="volume-label">${peer.volume}%</span>
+        ${peer.needsManualReconnect ? `<button class="reconnect-btn" data-id="${id}">🔄</button>` : ''}
         ${currentUser?.isAdmin ? `<button class="kick-btn" data-id="${id}">강퇴</button>` : ''}
       </div>
     `;
+    
+    // 수동 재연결 버튼
+    const reconnectBtn = card.querySelector('.reconnect-btn');
+    if (reconnectBtn) {
+      reconnectBtn.onclick = () => {
+        peer.needsManualReconnect = false;
+        peer.retryCount = 0;
+        recreatePeerConnection(id, peer.username, peer.avatar);
+      };
+    }
     
     // 볼륨 슬라이더
     const slider = card.querySelector('.volume-slider');
