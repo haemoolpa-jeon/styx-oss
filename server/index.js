@@ -254,36 +254,50 @@ const broadcastRoomList = () => {
 
 io.on('connection', (socket) => {
   const clientIp = socket.handshake.address;
+  const userAgent = socket.handshake.headers['user-agent'] || 'unknown';
   
   if (!checkRateLimit(clientIp)) {
-    console.log(`Rate limit 초과: ${clientIp}`);
+    console.log(`[RATE_LIMIT] ${clientIp}`);
     socket.emit('error', { message: 'Too many requests' });
     socket.disconnect(true);
     return;
   }
   
-  console.log(`연결됨: ${socket.id}`);
+  console.log(`[CONNECT] ${socket.id} from ${clientIp}`);
   
   socket.on('login', async ({ username, password }, cb) => {
     try {
       await sessionsReady;
-      if (!validateUsername(username)) return cb({ error: 'Invalid credentials' });
+      if (!validateUsername(username)) {
+        console.log(`[LOGIN_FAIL] invalid username format from ${clientIp}`);
+        return cb({ error: 'Invalid credentials' });
+      }
       const data = await loadUsers();
       const user = data.users[username];
       // Use generic error to prevent username enumeration
-      if (!user) return cb({ error: 'Invalid credentials' });
+      if (!user) {
+        console.log(`[LOGIN_FAIL] ${username} not found from ${clientIp}`);
+        return cb({ error: 'Invalid credentials' });
+      }
       const valid = await bcrypt.compare(password, user.password);
-      if (!valid) return cb({ error: 'Invalid credentials' });
-      if (!user.approved) return cb({ error: 'Account pending approval' });
+      if (!valid) {
+        console.log(`[LOGIN_FAIL] ${username} wrong password from ${clientIp}`);
+        return cb({ error: 'Invalid credentials' });
+      }
+      if (!user.approved) {
+        console.log(`[LOGIN_FAIL] ${username} not approved from ${clientIp}`);
+        return cb({ error: 'Account pending approval' });
+      }
       
       socket.username = username;
       socket.isAdmin = user.isAdmin;
       const token = generateToken();
       sessions.set(username, { token, expires: Date.now() + 7 * 24 * 60 * 60 * 1000 });
       await saveSessions(sessions);
+      console.log(`[LOGIN] ${username} from ${clientIp}`);
       cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar }, token });
     } catch (e) {
-      console.error('로그인 오류:', e.message);
+      console.error('[LOGIN_ERROR]', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -715,14 +729,16 @@ io.on('connection', (socket) => {
     socket.emit('udp-peers', peers);
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', (reason) => {
+    console.log(`[DISCONNECT] ${socket.id} ${socket.username || 'anonymous'} (${reason})`);
     if (socket.room && rooms.has(socket.room)) {
       const roomData = rooms.get(socket.room);
       roomData.users.delete(socket.id);
       socket.to(socket.room).emit('user-left', { id: socket.id });
       if (roomData.users.size === 0) scheduleRoomDeletion(socket.room);
       broadcastRoomList();
-      console.log(`${socket.username} 퇴장: ${socket.room}`);
+      console.log(`[LEAVE] ${socket.username} left ${socket.room}`);
+    }
     }
   });
 });

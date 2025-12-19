@@ -30,6 +30,8 @@ let sessionRestored = false;
 let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
+let inputLimiterContext = null; // 입력 리미터용 AudioContext
+let processedStream = null; // 리미터 적용된 스트림
 
 // 피어 오디오용 공유 AudioContext 가져오기
 function getPeerAudioContext() {
@@ -40,6 +42,32 @@ function getPeerAudioContext() {
     peerAudioContext.resume();
   }
   return peerAudioContext;
+}
+
+// 입력 오디오에 리미터/컴프레서 적용
+function createProcessedInputStream(rawStream) {
+  inputLimiterContext = new AudioContext({ sampleRate: 48000 });
+  const source = inputLimiterContext.createMediaStreamSource(rawStream);
+  
+  // 컴프레서 (리미터 역할)
+  const compressor = inputLimiterContext.createDynamicsCompressor();
+  compressor.threshold.value = -12; // 리미팅 시작점 (dB)
+  compressor.knee.value = 6;        // 부드러운 전환
+  compressor.ratio.value = 12;      // 높은 비율 = 리미터처럼 동작
+  compressor.attack.value = 0.003;  // 빠른 어택
+  compressor.release.value = 0.1;   // 적당한 릴리즈
+  
+  // 게인 (컴프레서 후 볼륨 보상)
+  const makeupGain = inputLimiterContext.createGain();
+  makeupGain.gain.value = 1.2; // 약간의 메이크업 게인
+  
+  const dest = inputLimiterContext.createMediaStreamDestination();
+  source.connect(compressor);
+  compressor.connect(makeupGain);
+  makeupGain.connect(dest);
+  
+  processedStream = dest.stream;
+  return processedStream;
 }
 
 // Tauri 감지
@@ -354,12 +382,43 @@ document.addEventListener('keydown', (e) => {
   // 방 화면에서만 작동
   if (roomView?.classList.contains('hidden')) return;
   
+  // M: 음소거 토글
   if (e.key === 'm' || e.key === 'M' || e.key === 'ㅡ') {
     e.preventDefault();
     if (!pttMode) $('muteBtn')?.click();
-  } else if (e.key === ' ' && e.code !== pttKey) {
+  } 
+  // Space: 메트로놈 토글
+  else if (e.key === ' ' && e.code !== pttKey) {
     e.preventDefault();
     $('metronome-toggle')?.click();
+  }
+  // R: 녹음 토글
+  else if (e.key === 'r' || e.key === 'R' || e.key === 'ㄱ') {
+    e.preventDefault();
+    $('recordBtn')?.click();
+  }
+  // I: 초대 링크 복사
+  else if (e.key === 'i' || e.key === 'I' || e.key === 'ㅑ') {
+    e.preventDefault();
+    $('inviteBtn')?.click();
+  }
+  // Escape: 방 나가기 (확인 필요)
+  else if (e.key === 'Escape') {
+    e.preventDefault();
+    $('leaveBtn')?.click();
+  }
+  // 숫자 1-8: 피어 음소거 토글
+  else if (e.key >= '1' && e.key <= '8') {
+    const idx = parseInt(e.key) - 1;
+    const peerIds = [...peers.keys()];
+    if (peerIds[idx]) {
+      const peer = peers.get(peerIds[idx]);
+      if (peer) {
+        peer.muted = !peer.muted;
+        applyMixerState();
+        renderUsers();
+      }
+    }
   }
 });
 
@@ -629,6 +688,31 @@ socket.on('disconnect', () => {
   log('서버 연결 끊김');
   $('connection-status')?.classList.add('offline');
   toast('서버 연결 끊김, 재연결 시도 중...', 'warning');
+  // 소켓 룸 상태 초기화 (재연결 시 rejoin 트리거)
+  socket.room = null;
+});
+
+// 재연결 시 방 자동 재입장
+socket.io.on('reconnect', () => {
+  log('서버 재연결됨');
+  toast('서버 재연결됨', 'success');
+  
+  // 세션 복구 후 방 재입장
+  const savedUser = localStorage.getItem('styx-user');
+  const savedToken = localStorage.getItem('styx-token');
+  
+  if (savedUser && savedToken && lastRoom) {
+    socket.emit('restore-session', { username: savedUser, token: savedToken }, res => {
+      if (res.success) {
+        currentUser = res.user;
+        // 방에 있었다면 자동 재입장
+        if (lastRoom && roomView && !roomView.classList.contains('hidden')) {
+          toast('방에 재입장 중...', 'info');
+          autoRejoin();
+        }
+      }
+    });
+  }
 });
 
 // 초대 링크 확인
@@ -1334,6 +1418,16 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     if (!roomPassword) return;
   }
 
+  // 빠른 연결 상태 확인
+  if (!navigator.onLine) {
+    return toast('인터넷 연결을 확인하세요', 'error');
+  }
+  
+  // RTCPeerConnection 지원 확인
+  if (!window.RTCPeerConnection) {
+    return toast('이 브라우저는 WebRTC를 지원하지 않습니다', 'error');
+  }
+
   const audioConstraints = {
     audio: {
       deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
@@ -1347,7 +1441,12 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
   };
 
   try {
-    localStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+    const rawStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+    // 입력 리미터 적용 (클리핑 방지)
+    localStream = createProcessedInputStream(rawStream);
+    // 원본 스트림 참조 저장 (정리용)
+    localStream._rawStream = rawStream;
+    
     // PTT 모드면 시작 시 음소거
     if (pttMode) {
       localStream.getAudioTracks().forEach(t => t.enabled = false);
@@ -1359,7 +1458,9 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
 
   socket.emit('join', { room, username: currentUser.username, password: roomPassword, settings: roomSettings }, res => {
     if (res.error) {
+      localStream._rawStream?.getTracks().forEach(t => t.stop());
       localStream.getTracks().forEach(t => t.stop());
+      if (inputLimiterContext) { inputLimiterContext.close(); inputLimiterContext = null; }
       const errorMsg = {
         'Room full': '방이 가득 찼습니다',
         'Username already in room': '이미 방에 접속 중입니다',
@@ -2418,6 +2519,11 @@ function leaveRoom() {
     try { peerAudioContext.close(); } catch {}
     peerAudioContext = null;
   }
+  // 입력 리미터 AudioContext 정리
+  if (inputLimiterContext) {
+    try { inputLimiterContext.close(); } catch {}
+    inputLimiterContext = null;
+  }
   
   peers.forEach(peer => {
     peer.pc.close();
@@ -2433,6 +2539,8 @@ function leaveRoom() {
   volumeStates.clear();
   latencyHistory = [];
   
+  // 원본 스트림도 정리
+  localStream?._rawStream?.getTracks().forEach(t => t.stop());
   localStream?.getTracks().forEach(t => t.stop());
   localStream = null;
   
