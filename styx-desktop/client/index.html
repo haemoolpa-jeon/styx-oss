@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Styx - HADES 오디오</title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+</head>
+<body data-theme="dark">
+  <div id="connection-status" title="서버 연결 상태"></div>
+  <div id="toast-container"></div>
+
+  <div id="app">
+    <!-- 로그인 -->
+    <div id="auth" class="panel auth-panel">
+      <img src="logo.png" alt="Styx" class="auth-logo">
+      <p class="auth-subtitle">HADES 실시간 오디오 협업</p>
+      
+      <div class="auth-tabs">
+        <button class="tab active" data-tab="login">로그인</button>
+        <button class="tab" data-tab="signup">회원가입</button>
+      </div>
+
+      <div id="login-form" class="auth-form">
+        <input type="text" id="login-user" placeholder="사용자명" autocomplete="username">
+        <input type="password" id="login-pass" placeholder="비밀번호" autocomplete="current-password">
+        <button id="loginBtn" class="btn-primary">로그인</button>
+      </div>
+
+      <div id="signup-form" class="auth-form hidden">
+        <input type="text" id="signup-user" placeholder="사용자명 (2-20자)">
+        <input type="password" id="signup-pass" placeholder="비밀번호 (4자 이상)">
+        <button id="signupBtn" class="btn-primary">가입 요청</button>
+      </div>
+
+      <div id="auth-msg"></div>
+    </div>
+
+    <!-- 로비 -->
+    <div id="lobby" class="hidden">
+      <div class="main-logo">
+        <img src="logo.png" alt="Styx">
+      </div>
+      <header class="lobby-header">
+        <div class="header-user">
+          <div id="my-avatar" class="avatar"></div>
+          <span id="my-username"></span>
+        </div>
+        <div class="header-actions">
+          <button id="themeBtn" title="테마 변경">☀️</button>
+          <label class="avatar-upload" title="아바타 변경">📷<input type="file" id="avatar-input" accept="image/*"></label>
+          <button id="settingsBtn" title="설정">⚙️</button>
+          <button id="adminBtn" class="hidden" title="관리자">👑</button>
+          <button id="logoutBtn" class="btn-logout">로그아웃</button>
+        </div>
+      </header>
+
+      <main class="lobby-main">
+        <!-- 오디오 설정 -->
+        <section class="lobby-card">
+          <h3>🎧 오디오 설정</h3>
+          <div class="audio-grid">
+            <div class="audio-col">
+              <div class="form-field">
+                <label>🎤 입력 장치</label>
+                <select id="audio-device"></select>
+              </div>
+              <div class="form-field">
+                <label>🔊 출력 장치</label>
+                <select id="audio-output"></select>
+              </div>
+            </div>
+            <div class="audio-col">
+              <div class="checkbox-group">
+                <label><input type="checkbox" id="echo-cancel" checked> 에코 제거</label>
+                <label><input type="checkbox" id="noise-suppress" checked> 잡음 제거</label>
+                <label><input type="checkbox" id="auto-gain" checked> 자동 음량</label>
+                <label><input type="checkbox" id="ptt-mode"> 눌러서 말하기 (Space)</label>
+                <label><input type="checkbox" id="vad-mode" checked> 말할 때 표시</label>
+                <label><input type="checkbox" id="ducking-mode"> 자동 볼륨 낮춤</label>
+                <label><input type="checkbox" id="auto-adapt" checked> 자동 품질 조절</label>
+              </div>
+            </div>
+            <div class="audio-col">
+              <div class="form-field">
+                <label>📊 버퍼 <span id="jitter-value">50ms</span> <label class="auto-jitter-label"><input type="checkbox" id="auto-jitter" checked> 자동</label></label>
+                <input type="range" id="jitter-slider" min="30" max="150" value="50" step="10">
+              </div>
+              <div class="test-buttons">
+                <button id="test-audio-btn" class="btn-test">🎤 마이크</button>
+                <button id="test-network-btn" class="btn-test">📡 네트워크</button>
+              </div>
+              <div class="mic-meter">
+                <div id="mic-level"></div>
+              </div>
+              <div id="test-results" class="test-results hidden"></div>
+              <span id="test-status" class="test-status"></span>
+            </div>
+          </div>
+          <!-- Tauri 앱 전용 설정 -->
+          <div id="tauri-settings" style="display:none; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);">
+            <div id="connection-mode-row" class="form-field" style="display:none;">
+              <label>🔌 연결 모드</label>
+              <div class="mode-toggle">
+                <button id="webrtcModeBtn" class="mode-btn active">🌐 WebRTC</button>
+                <button id="udpModeBtn" class="mode-btn">⚡ UDP (저지연)</button>
+              </div>
+            </div>
+            <div id="tauri-audio-row" class="form-field" style="display:none;">
+              <label>🎛️ 오디오 드라이버</label>
+              <select id="tauri-audio-host"></select>
+              <span id="tauri-audio-hint" class="hint"></span>
+            </div>
+            <div id="udp-stats-badge" class="stats-badge hidden"></div>
+          </div>
+        </section>
+
+        <!-- 방 목록 -->
+        <section class="lobby-card">
+          <div class="card-header">
+            <h3>📡 활성 방 목록</h3>
+            <button id="createRoomBtn" class="btn-create">➕ 방 만들기</button>
+          </div>
+          <div id="room-list" class="room-grid"></div>
+        </section>
+      </main>
+    </div>
+
+    <!-- 방 생성 모달 -->
+    <div id="create-room-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-box modal-wide">
+        <div class="modal-header">
+          <h2>🎵 새 방 만들기</h2>
+          <button class="modal-close">✕</button>
+        </div>
+        <div class="modal-body">
+          <!-- 기본 설정 -->
+          <div class="form-section">
+            <h4>기본 설정</h4>
+            <div class="form-field">
+              <label>방 이름 *</label>
+              <input type="text" id="new-room-name" placeholder="방 이름 입력..." maxlength="30">
+            </div>
+            <div class="form-row">
+              <div class="form-field">
+                <label>비밀번호 (선택)</label>
+                <input type="password" id="new-room-password" placeholder="비공개 방은 비밀번호 설정">
+              </div>
+              <div class="form-field">
+                <label>최대 인원</label>
+                <select id="new-room-max-users">
+                  <option value="2">2명</option>
+                  <option value="3">3명</option>
+                  <option value="4">4명</option>
+                  <option value="5">5명</option>
+                  <option value="6">6명</option>
+                  <option value="7">7명</option>
+                  <option value="8" selected>8명</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- 오디오 설정 -->
+          <div class="form-section">
+            <h4>오디오 설정</h4>
+            <div class="form-row">
+              <div class="form-field">
+                <label>오디오 모드</label>
+                <select id="new-room-audio-mode">
+                  <option value="voice">🎤 음성 (저지연)</option>
+                  <option value="music">🎸 악기 (고품질)</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label>샘플레이트</label>
+                <select id="new-room-sample-rate">
+                  <option value="48000" selected>48 kHz (권장)</option>
+                  <option value="44100">44.1 kHz</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-field">
+                <label>비트레이트</label>
+                <select id="new-room-bitrate">
+                  <option value="64">64 kbps (저대역폭)</option>
+                  <option value="96" selected>96 kbps (권장)</option>
+                  <option value="128">128 kbps (고품질)</option>
+                  <option value="192">192 kbps (최고품질)</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label>기본 BPM</label>
+                <input type="number" id="new-room-bpm" value="120" min="30" max="300" placeholder="120">
+              </div>
+            </div>
+          </div>
+
+          <!-- 옵션 -->
+          <div class="form-section">
+            <label class="checkbox-inline">
+              <input type="checkbox" id="new-room-private">
+              🔒 비공개 방 (목록에 표시 안 함)
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary">취소</button>
+          <button class="btn-primary">방 만들기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 설정 패널 -->
+    <div id="settings-panel" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2>⚙️ 설정</h2>
+          <button class="modal-close" id="closeSettingsBtn">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-field">
+            <label>비밀번호 변경</label>
+            <input type="password" id="old-password" placeholder="현재 비밀번호">
+            <input type="password" id="new-password" placeholder="새 비밀번호" style="margin-top:8px;">
+            <button id="changePasswordBtn" class="btn-primary" style="margin-top:12px;">변경</button>
+          </div>
+          <div class="shortcuts-info">
+            <h4>키보드 단축키</h4>
+            <p><kbd>M</kbd> 마이크 켜기/끄기</p>
+            <p><kbd>Space</kbd> 메트로놈 / 눌러서 말하기</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 관리자 패널 -->
+    <div id="admin-panel" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-box modal-wide">
+        <div class="modal-header">
+          <h2>👑 관리자</h2>
+          <button class="modal-close" id="closeAdminBtn">✕</button>
+        </div>
+        <div class="modal-body">
+          <h4>가입 승인 대기</h4>
+          <div id="pending-list" class="admin-list"></div>
+          <h4>사용자 관리</h4>
+          <div id="users-list" class="admin-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 방 화면 -->
+    <div id="room-view" class="hidden">
+      <header class="room-header">
+        <div class="room-title">
+          <h2>🎸 <span id="roomName"></span><span id="my-role-badge" class="role-badge"></span></h2>
+          <div id="room-settings-display" class="room-settings-display"></div>
+        </div>
+        <div class="room-controls">
+          <select id="room-audio-device" title="입력 장치"></select>
+          <select id="room-audio-output" title="출력 장치"></select>
+          <button id="muteBtn" class="btn-icon" title="음소거 (M)">🎤</button>
+          <button id="inviteBtn" class="btn-icon" title="초대 링크">🔗</button>
+          <button id="recordBtn" class="btn-icon" title="녹음">⏺️</button>
+          <button id="screenShareBtn" class="btn-icon" title="화면 공유">🖥️</button>
+          <button id="closeRoomBtn" class="btn-icon hidden" title="방 닫기">🚪</button>
+          <button id="leaveBtn" class="btn-leave">나가기</button>
+        </div>
+      </header>
+
+      <!-- 화면 공유 영역 -->
+      <div id="screen-share-container" class="screen-share-container hidden">
+        <div class="screen-share-header">
+          <span id="screen-share-user">화면 공유 중</span>
+          <button id="screen-share-close" class="btn-icon">✕</button>
+        </div>
+        <video id="screen-share-video" autoplay playsinline></video>
+      </div>
+
+      <div class="room-toolbar">
+        <div class="toolbar-section">
+          <label class="toolbar-check"><input type="checkbox" id="room-echo-cancel" checked> 에코 제거</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-noise-suppress" checked> 잡음 제거</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-ptt-mode"> 눌러서 말하기</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-vad-mode" checked> 말할 때 표시</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-auto-adapt" checked> 자동 품질</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-ducking"> 자동 볼륨</label>
+          <label class="toolbar-check"><input type="checkbox" id="delay-compensation"> 지연 맞추기</label>
+          <label class="toolbar-check"><input type="checkbox" id="multitrack-mode"> 멀티트랙</label>
+        </div>
+        <div class="toolbar-section">
+          <span class="toolbar-label">버퍼:</span>
+          <input type="range" id="room-jitter-slider" min="30" max="150" value="50" step="10" class="toolbar-slider">
+          <span id="room-jitter-value" class="toolbar-value">50ms</span>
+          <label class="toolbar-check"><input type="checkbox" id="room-auto-jitter" checked> 자동</label>
+        </div>
+        <div class="toolbar-section metronome-section">
+          <button id="metronome-toggle" class="btn-metro">▶️</button>
+          <input type="number" id="bpm-input" value="120" min="30" max="300" class="bpm-input">
+          <span>BPM</span>
+          <label class="count-in-label"><input type="checkbox" id="count-in"> 카운트인</label>
+          <div class="beat-indicators">
+            <span class="beat-indicator">1</span>
+            <span class="beat-indicator">2</span>
+            <span class="beat-indicator">3</span>
+            <span class="beat-indicator">4</span>
+          </div>
+          <div id="metronome-tick" class="metro-tick"></div>
+        </div>
+        <div class="toolbar-section">
+          <span class="toolbar-label">입력:</span>
+          <div class="input-meter"><div id="audio-meter"></div></div>
+        </div>
+        <div class="toolbar-section effects-section">
+          <button id="effects-toggle" class="btn-icon" title="EQ">🎛️</button>
+          <div id="effects-panel" class="effects-panel hidden">
+            <div class="effect-row"><span>저음</span><input type="range" id="eq-low" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span>중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span>고음</span><input type="range" id="eq-high" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+          </div>
+        </div>
+      </div>
+
+      <main class="room-main">
+        <section class="users-section">
+          <div id="users-grid" class="users-grid"></div>
+          <div id="my-card" class="user-card self">
+            <div class="card-avatar"></div>
+            <div class="card-info">
+              <span class="card-name">나</span>
+              <span class="card-latency">로컬</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="chat-section">
+          <div id="chat-messages" class="chat-messages"></div>
+          <div class="chat-input">
+            <input type="text" id="chat-text" placeholder="메시지 입력..." maxlength="500">
+            <button id="sendBtn" class="btn-send">전송</button>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

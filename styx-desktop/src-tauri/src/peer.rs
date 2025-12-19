@@ -160,7 +160,6 @@ pub fn create_encoder() -> Result<Encoder, String> {
     encoder.set_bitrate(opus::Bitrate::Bits(96000)).ok(); // 96kbps for music
     encoder.set_inband_fec(true).ok(); // Forward Error Correction
     encoder.set_packet_loss_perc(10).ok(); // 10% 손실 대비
-    encoder.set_complexity(5).ok(); // 중간 복잡도 (CPU vs 품질)
     Ok(encoder)
 }
 
@@ -223,7 +222,9 @@ pub fn start_send_loop(
     let config = device.default_input_config().map_err(|e| e.to_string())?;
     
     let (tx, mut rx) = mpsc::channel::<Vec<f32>>(32);
-    let is_running_clone = is_running.clone();
+    let is_running_capture = is_running.clone();
+    let is_running_stream = is_running.clone();
+    let is_running_keepalive = is_running.clone();
     let is_muted_clone = is_muted.clone();
     
     // 오디오 캡처 스레드
@@ -231,7 +232,7 @@ pub fn start_send_loop(
         let stream = device.build_input_stream(
             &config.into(),
             move |data: &[f32], _| {
-                if !is_muted_clone.load(Ordering::Relaxed) && is_running_clone.load(Ordering::Relaxed) {
+                if !is_muted_clone.load(Ordering::Relaxed) && is_running_capture.load(Ordering::Relaxed) {
                     let _ = tx.blocking_send(data.to_vec());
                 }
             },
@@ -240,7 +241,7 @@ pub fn start_send_loop(
         );
         if let Ok(s) = stream {
             let _ = s.play();
-            while is_running.load(Ordering::Relaxed) {
+            while is_running_stream.load(Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
@@ -250,7 +251,6 @@ pub fn start_send_loop(
     let rt = tokio::runtime::Handle::current();
     let socket_clone = socket.clone();
     let peers_clone = peers.clone();
-    let is_running_keepalive = is_running.clone();
     
     // Keepalive 태스크 (NAT 매핑 유지)
     rt.spawn(async move {
