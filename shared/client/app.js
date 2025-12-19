@@ -1084,11 +1084,12 @@ function updateUdpStatsUI(stats) {
   
   const lossRate = stats.loss_rate.toFixed(1);
   const bufferMs = stats.jitter_buffer_size * 10; // 10ms per frame
+  const targetMs = (stats.jitter_buffer_target || stats.jitter_buffer_size) * 10;
   let quality = 'good';
   if (stats.loss_rate > 5) quality = 'bad';
   else if (stats.loss_rate > 1) quality = 'warning';
   
-  badge.textContent = `UDP: ${stats.peer_count}명 | 손실 ${lossRate}% | 버퍼 ${bufferMs}ms`;
+  badge.textContent = `UDP: ${stats.peer_count}명 | 손실 ${lossRate}% | 버퍼 ${bufferMs}/${targetMs}ms`;
   badge.className = `stats-badge ${quality}`;
 }
 

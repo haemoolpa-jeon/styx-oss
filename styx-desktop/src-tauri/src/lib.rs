@@ -168,6 +168,7 @@ struct UdpStats {
     peer_count: usize,
     is_running: bool,
     jitter_buffer_size: usize,
+    jitter_buffer_target: usize,
 }
 
 #[tauri::command]
@@ -182,9 +183,13 @@ fn get_udp_stats(state: State<'_, AppState>) -> UdpStats {
         0.0
     };
     
-    let jitter_size = stream_state.jitter_buffers.lock()
-        .map(|jb| jb.values().map(|b| b.len()).sum())
-        .unwrap_or(0);
+    let (jitter_size, jitter_target) = stream_state.jitter_buffers.lock()
+        .map(|jb| {
+            let size: usize = jb.values().map(|b| b.len()).sum();
+            let target: usize = jb.values().map(|b| b.target_size()).sum();
+            (size, target)
+        })
+        .unwrap_or((0, 0));
     
     UdpStats {
         packets_sent: sent,
@@ -194,6 +199,7 @@ fn get_udp_stats(state: State<'_, AppState>) -> UdpStats {
         peer_count: stream_state.peers.len(),
         is_running: stream_state.is_running.load(Ordering::Relaxed),
         jitter_buffer_size: jitter_size,
+        jitter_buffer_target: jitter_target,
     }
 }
 
