@@ -273,12 +273,20 @@ async function runConnectionTest() {
     testPc.close();
   } catch { if (testPc) testPc.close(); results.network = false; }
   
-  // 5. TURN 연결 테스트
+  // 5. TURN 연결 테스트 (실제 서버 TURN 사용)
   updateStatus('🔄 TURN 서버 테스트 중...');
   testPc = null;
   try {
+    // 서버에서 TURN 자격증명 요청
+    const turnCreds = await new Promise((resolve) => {
+      socket.emit('get-turn-credentials', null, resolve);
+      setTimeout(() => resolve(null), 3000);
+    });
+    
+    const turnServer = turnCreds || { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' };
+    
     testPc = new RTCPeerConnection({ 
-      iceServers: [{ urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }],
+      iceServers: [turnServer],
       iceTransportPolicy: 'relay'
     });
     testPc.createDataChannel('test');
