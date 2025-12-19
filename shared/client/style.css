@@ -431,3 +431,49 @@ input[type="range"]::-webkit-slider-thumb {
 .stats-badge.warning { background: rgba(255, 165, 2, 0.2); color: var(--warning); }
 .stats-badge.bad { background: rgba(255, 71, 87, 0.2); color: var(--error); }
 .stats-badge.idle { opacity: 0.5; }
+
+/* Screen Share */
+.screen-share-container {
+  position: relative; margin: 10px 20px; padding: 10px;
+  background: var(--bg-card); border-radius: 12px; border: 2px solid var(--accent);
+}
+.screen-share-container.hidden { display: none; }
+.screen-share-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; margin-bottom: 8px;
+}
+.screen-share-header span { font-weight: 600; color: var(--accent); }
+#screen-share-video {
+  width: 100%; max-height: 400px; border-radius: 8px;
+  background: #000; object-fit: contain;
+}
+#screenShareBtn.sharing { background: var(--accent); }
+
+/* Role badges */
+.role-badge {
+  font-size: 10px; padding: 2px 6px; border-radius: 4px;
+  background: var(--bg-card); color: var(--text-secondary);
+}
+.role-host { background: rgba(255, 165, 2, 0.3); color: var(--warning); }
+.role-performer { background: rgba(46, 213, 115, 0.2); color: var(--success); }
+.role-listener { background: rgba(108, 92, 231, 0.2); color: var(--accent); }
+.role-select {
+  font-size: 11px; padding: 2px 4px; border-radius: 4px;
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-primary);
+}
+#my-role-badge { margin-left: 8px; font-size: 12px; }
+
+/* Effects panel */
+.effects-section { position: relative; }
+.effects-panel {
+  position: absolute; top: 100%; right: 0; z-index: 100;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; min-width: 200px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.effects-panel.hidden { display: none; }
+.effect-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.effect-row span:first-child { width: 40px; font-size: 12px; }
+.effect-row input[type="range"] { flex: 1; }
+.effect-val { width: 40px; font-size: 11px; text-align: right; color: var(--text-secondary); }

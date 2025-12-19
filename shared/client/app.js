@@ -16,6 +16,7 @@ const volumeStates = new Map();
 let localStream = null;
 let isMuted = false;
 let currentUser = null;
+let myRole = 'performer'; // 'host' | 'performer' | 'listener'
 let selectedDeviceId = null;
 let selectedOutputId = null;
 let latencyInterval = null;
@@ -44,31 +45,87 @@ function getPeerAudioContext() {
   return peerAudioContext;
 }
 
-// 입력 오디오에 리미터/컴프레서 적용
+// 입력 오디오에 리미터/컴프레서 + 이펙트 적용
+let inputEffects = { reverb: 0, eqLow: 0, eqMid: 0, eqHigh: 0, delay: 0 };
+let effectNodes = {};
+
 function createProcessedInputStream(rawStream) {
   inputLimiterContext = new AudioContext({ sampleRate: 48000 });
   const source = inputLimiterContext.createMediaStreamSource(rawStream);
   
+  // EQ (3밴드)
+  const eqLow = inputLimiterContext.createBiquadFilter();
+  eqLow.type = 'lowshelf'; eqLow.frequency.value = 320; eqLow.gain.value = inputEffects.eqLow;
+  
+  const eqMid = inputLimiterContext.createBiquadFilter();
+  eqMid.type = 'peaking'; eqMid.frequency.value = 1000; eqMid.Q.value = 1; eqMid.gain.value = inputEffects.eqMid;
+  
+  const eqHigh = inputLimiterContext.createBiquadFilter();
+  eqHigh.type = 'highshelf'; eqHigh.frequency.value = 3200; eqHigh.gain.value = inputEffects.eqHigh;
+  
   // 컴프레서 (리미터 역할)
   const compressor = inputLimiterContext.createDynamicsCompressor();
-  compressor.threshold.value = -12; // 리미팅 시작점 (dB)
-  compressor.knee.value = 6;        // 부드러운 전환
-  compressor.ratio.value = 12;      // 높은 비율 = 리미터처럼 동작
-  compressor.attack.value = 0.003;  // 빠른 어택
-  compressor.release.value = 0.1;   // 적당한 릴리즈
+  compressor.threshold.value = -12; compressor.knee.value = 6;
+  compressor.ratio.value = 12; compressor.attack.value = 0.003; compressor.release.value = 0.1;
   
-  // 게인 (컴프레서 후 볼륨 보상)
+  // 딜레이
+  const delayNode = inputLimiterContext.createDelay(1);
+  delayNode.delayTime.value = inputEffects.delay / 1000;
+  const delayGain = inputLimiterContext.createGain();
+  delayGain.gain.value = inputEffects.delay > 0 ? 0.3 : 0;
+  
+  // 리버브 (ConvolverNode - 간단한 임펄스 생성)
+  const reverbGain = inputLimiterContext.createGain();
+  reverbGain.gain.value = inputEffects.reverb / 100;
+  const dryGain = inputLimiterContext.createGain();
+  dryGain.gain.value = 1 - (inputEffects.reverb / 200);
+  
+  // 메이크업 게인
   const makeupGain = inputLimiterContext.createGain();
-  makeupGain.gain.value = 1.2; // 약간의 메이크업 게인
+  makeupGain.gain.value = 1.2;
   
   const dest = inputLimiterContext.createMediaStreamDestination();
-  source.connect(compressor);
-  compressor.connect(makeupGain);
+  
+  // 체인: source -> EQ -> compressor -> dry/wet -> dest
+  source.connect(eqLow);
+  eqLow.connect(eqMid);
+  eqMid.connect(eqHigh);
+  eqHigh.connect(compressor);
+  compressor.connect(dryGain);
+  compressor.connect(delayNode);
+  delayNode.connect(delayGain);
+  delayGain.connect(makeupGain);
+  dryGain.connect(makeupGain);
   makeupGain.connect(dest);
   
+  effectNodes = { eqLow, eqMid, eqHigh, compressor, delayNode, delayGain, reverbGain, dryGain, makeupGain };
   processedStream = dest.stream;
   return processedStream;
 }
+
+function updateInputEffect(effect, value) {
+  inputEffects[effect] = value;
+  localStorage.setItem('styx-effects', JSON.stringify(inputEffects));
+  
+  if (!effectNodes.eqLow) return;
+  
+  switch(effect) {
+    case 'eqLow': effectNodes.eqLow.gain.value = value; break;
+    case 'eqMid': effectNodes.eqMid.gain.value = value; break;
+    case 'eqHigh': effectNodes.eqHigh.gain.value = value; break;
+    case 'delay':
+      effectNodes.delayNode.delayTime.value = value / 1000;
+      effectNodes.delayGain.gain.value = value > 0 ? 0.3 : 0;
+      break;
+    case 'reverb':
+      effectNodes.reverbGain.gain.value = value / 100;
+      effectNodes.dryGain.gain.value = 1 - (value / 200);
+      break;
+  }
+}
+
+// 저장된 이펙트 설정 로드
+try { inputEffects = JSON.parse(localStorage.getItem('styx-effects')) || inputEffects; } catch {}
 
 // Tauri 감지
 const _isTauriApp = typeof window.__TAURI__ !== 'undefined';
@@ -462,87 +519,193 @@ function initPttTouch() {
 // ===== (즐겨찾기 제거됨) =====
 
 // ===== 녹음 =====
-let recordingAudioCtx = null; // Store reference for cleanup
+let recordingAudioCtx = null;
+let multitrackRecorders = new Map(); // 멀티트랙: peerId -> { recorder, chunks, username }
+let multitrackMode = localStorage.getItem('styx-multitrack') === 'true';
 
 function startRecording() {
   if (isRecording) return;
   
-  // 모든 오디오 스트림 믹싱
-  recordingAudioCtx = new AudioContext();
-  const dest = recordingAudioCtx.createMediaStreamDestination();
+  const timestamp = new Date().toISOString().slice(0,19).replace(/:/g,'-');
   
-  // 로컬 오디오 추가
-  if (localStream) {
-    const localSource = recordingAudioCtx.createMediaStreamSource(localStream);
-    localSource.connect(dest);
+  if (multitrackMode) {
+    // 멀티트랙: 각 피어별 개별 녹음
+    multitrackRecorders.clear();
+    
+    // 로컬 오디오
+    if (localStream) {
+      const rec = new MediaRecorder(localStream, { mimeType: 'audio/webm' });
+      const chunks = [];
+      rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+      rec.onstop = () => downloadTrack(chunks, `${timestamp}_${currentUser.username}_local`);
+      rec.start();
+      multitrackRecorders.set('local', { recorder: rec, chunks, username: currentUser.username });
+    }
+    
+    // 원격 피어들
+    peers.forEach((peer, id) => {
+      if (peer.audioEl?.srcObject) {
+        const rec = new MediaRecorder(peer.audioEl.srcObject, { mimeType: 'audio/webm' });
+        const chunks = [];
+        rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        rec.onstop = () => downloadTrack(chunks, `${timestamp}_${peer.username}`);
+        rec.start();
+        multitrackRecorders.set(id, { recorder: rec, chunks, username: peer.username });
+      }
+    });
+    
+    toast(`멀티트랙 녹음 시작 (${multitrackRecorders.size}개 트랙)`, 'info');
+  } else {
+    // 기존: 믹스다운 녹음
+    recordingAudioCtx = new AudioContext();
+    const dest = recordingAudioCtx.createMediaStreamDestination();
+    
+    if (localStream) {
+      recordingAudioCtx.createMediaStreamSource(localStream).connect(dest);
+    }
+    peers.forEach(peer => {
+      if (peer.audioEl?.srcObject) {
+        recordingAudioCtx.createMediaStreamSource(peer.audioEl.srcObject).connect(dest);
+      }
+    });
+    
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      if (recordingAudioCtx) { recordingAudioCtx.close().catch(() => {}); recordingAudioCtx = null; }
+      downloadTrack(recordedChunks, `${timestamp}_mix`);
+    };
+    mediaRecorder.start();
+    toast('녹음 시작', 'info');
   }
   
-  // 원격 오디오 추가
-  peers.forEach(peer => {
-    if (peer.audioEl.srcObject) {
-      const remoteSource = recordingAudioCtx.createMediaStreamSource(peer.audioEl.srcObject);
-      remoteSource.connect(dest);
-    }
-  });
-  
-  recordedChunks = [];
-  mediaRecorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
-  
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0) recordedChunks.push(e.data);
-  };
-  
-  mediaRecorder.onstop = () => {
-    if (recordingAudioCtx) {
-      recordingAudioCtx.close().catch(() => {});
-      recordingAudioCtx = null;
-    }
-    const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `styx-recording-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.webm`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast('녹음 파일이 다운로드되었습니다', 'success');
-  };
-  
-  mediaRecorder.start();
   isRecording = true;
   $('recordBtn').textContent = '⏹️ 녹음 중';
   $('recordBtn').classList.add('recording');
-  toast('녹음 시작', 'info');
+}
+
+function downloadTrack(chunks, name) {
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `styx-${name}.webm`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function stopRecording() {
-  if (!isRecording || !mediaRecorder) return;
+  if (!isRecording) return;
   
-  mediaRecorder.stop();
+  if (multitrackMode && multitrackRecorders.size > 0) {
+    multitrackRecorders.forEach(({ recorder }) => recorder.stop());
+    multitrackRecorders.clear();
+    toast('멀티트랙 녹음 완료 - 파일 다운로드 중', 'success');
+  } else if (mediaRecorder) {
+    mediaRecorder.stop();
+    toast('녹음 파일이 다운로드되었습니다', 'success');
+  }
+  
   isRecording = false;
   $('recordBtn').textContent = '⏺️ 녹음';
   $('recordBtn').classList.remove('recording');
-  // Note: AudioContext is closed in mediaRecorder.onstop
 }
 
-// Cleanup recording if still active (called from leaveRoom)
 function cleanupRecording() {
-  if (isRecording && mediaRecorder) {
-    mediaRecorder.stop();
+  if (isRecording) {
+    if (multitrackMode) {
+      multitrackRecorders.forEach(({ recorder }) => { try { recorder.stop(); } catch {} });
+      multitrackRecorders.clear();
+    } else if (mediaRecorder) {
+      mediaRecorder.stop();
+    }
   }
-  if (recordingAudioCtx) {
-    recordingAudioCtx.close().catch(() => {});
-    recordingAudioCtx = null;
-  }
+  if (recordingAudioCtx) { recordingAudioCtx.close().catch(() => {}); recordingAudioCtx = null; }
   isRecording = false;
 }
 
 function toggleRecording() {
-  if (isRecording) {
-    stopRecording();
-  } else {
-    startRecording();
+  isRecording ? stopRecording() : startRecording();
+}
+
+// ===== 화면 공유 =====
+let screenStream = null;
+let isScreenSharing = false;
+
+async function startScreenShare() {
+  try {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    isScreenSharing = true;
+    $('screenShareBtn').classList.add('sharing');
+    $('screenShareBtn').textContent = '🖥️ 공유 중';
+    
+    // 로컬 미리보기
+    $('screen-share-video').srcObject = screenStream;
+    $('screen-share-user').textContent = '내 화면 공유 중';
+    $('screen-share-container').classList.remove('hidden');
+    
+    // 다른 피어들에게 화면 공유 시작 알림
+    socket.emit('screen-share-start');
+    
+    // 각 피어에게 비디오 트랙 추가
+    const videoTrack = screenStream.getVideoTracks()[0];
+    peers.forEach((peer, id) => {
+      peer.pc.addTrack(videoTrack, screenStream);
+      // 재협상 필요
+      peer.pc.createOffer().then(offer => {
+        peer.pc.setLocalDescription(offer);
+        socket.emit('offer', { to: id, offer });
+      });
+    });
+    
+    // 공유 중지 감지
+    videoTrack.onended = () => stopScreenShare();
+    toast('화면 공유 시작', 'info');
+  } catch (e) {
+    if (e.name !== 'NotAllowedError') toast('화면 공유 실패: ' + e.message, 'error');
   }
 }
+
+function stopScreenShare() {
+  if (!isScreenSharing) return;
+  
+  if (screenStream) {
+    screenStream.getTracks().forEach(t => t.stop());
+    screenStream = null;
+  }
+  
+  isScreenSharing = false;
+  $('screenShareBtn').classList.remove('sharing');
+  $('screenShareBtn').textContent = '🖥️';
+  $('screen-share-container').classList.add('hidden');
+  $('screen-share-video').srcObject = null;
+  
+  socket.emit('screen-share-stop');
+  toast('화면 공유 종료', 'info');
+}
+
+// 다른 사용자의 화면 공유 수신
+socket.on('screen-share-start', ({ userId, username }) => {
+  $('screen-share-user').textContent = `${username}님의 화면`;
+  $('screen-share-container').classList.remove('hidden');
+});
+
+socket.on('screen-share-stop', () => {
+  if (!isScreenSharing) {
+    $('screen-share-container').classList.add('hidden');
+    $('screen-share-video').srcObject = null;
+  }
+});
+
+$('screenShareBtn')?.addEventListener('click', () => {
+  isScreenSharing ? stopScreenShare() : startScreenShare();
+});
+
+$('screen-share-close')?.addEventListener('click', () => {
+  if (isScreenSharing) stopScreenShare();
+  else $('screen-share-container').classList.add('hidden');
+});
+
 const authPanel = $('auth');
 const lobby = $('lobby');
 const adminPanel = $('admin-panel');
@@ -1531,8 +1694,19 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     delayCompensation = res.delayCompensation || false;
     if ($('delay-compensation')) $('delay-compensation').checked = delayCompensation;
 
+    // 역할 설정
+    myRole = res.myRole || 'performer';
+    updateRoleUI();
+    
+    // listener는 오디오 전송 안함
+    if (myRole === 'listener' && localStream) {
+      localStream.getAudioTracks().forEach(t => t.enabled = false);
+      isMuted = true;
+      updateMuteUI();
+    }
+
     // 기존 사용자들에 대한 피어 연결 생성 (initiator=false: 기존 사용자가 offer를 보냄)
-    res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, false));
+    res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, false, u.role));
     startLatencyPing();
     startAudioMeter();
     initPttTouch();
@@ -1809,7 +1983,7 @@ function scheduleTurnRefresh() {
 }
 
 // WebRTC
-function createPeerConnection(peerId, username, avatar, initiator) {
+function createPeerConnection(peerId, username, avatar, initiator, role = 'performer') {
   const pc = new RTCPeerConnection(rtcConfig);
   const audioEl = document.createElement('audio');
   audioEl.autoplay = true;
@@ -1824,7 +1998,7 @@ function createPeerConnection(peerId, username, avatar, initiator) {
   audioEl.volume = savedVolume / 100;
 
   peers.set(peerId, { 
-    pc, username, avatar, audioEl, 
+    pc, username, avatar, audioEl, role,
     latency: null, volume: savedVolume,
     packetLoss: 0, jitter: 0, bitrate: 0,
     quality: { grade: 'good', label: '연결중', color: '#ffa502' },
@@ -2028,10 +2202,22 @@ function renderUsers() {
       <div class="card-controls">
         <input type="range" min="0" max="100" value="${peer.volume}" class="volume-slider">
         <span class="volume-label">${peer.volume}%</span>
+        <span class="role-badge role-${peer.role || 'performer'}">${{host:'호스트',performer:'연주자',listener:'청취자'}[peer.role]||'연주자'}</span>
+        ${myRole === 'host' && peer.role !== 'host' ? `<select class="role-select" data-id="${id}"><option value="performer" ${peer.role==='performer'?'selected':''}>연주자</option><option value="listener" ${peer.role==='listener'?'selected':''}>청취자</option></select>` : ''}
         ${peer.needsManualReconnect ? `<button class="reconnect-btn" data-id="${id}">🔄</button>` : ''}
         ${currentUser?.isAdmin ? `<button class="kick-btn" data-id="${id}">강퇴</button>` : ''}
       </div>
     `;
+    
+    // 역할 변경 (호스트만)
+    const roleSelect = card.querySelector('.role-select');
+    if (roleSelect) {
+      roleSelect.onchange = () => {
+        socket.emit('change-role', { userId: id, role: roleSelect.value }, res => {
+          if (res?.error) toast(res.error, 'error');
+        });
+      };
+    }
     
     // 수동 재연결 버튼
     const reconnectBtn = card.querySelector('.reconnect-btn');
@@ -2305,9 +2491,9 @@ function renderPingGraph() {
 }
 
 // 소켓 이벤트
-socket.on('user-joined', ({ id, username, avatar }) => {
-  log(`새 사용자 입장: ${username} (${id}), initiator=true`);
-  createPeerConnection(id, username, avatar, true);
+socket.on('user-joined', ({ id, username, avatar, role }) => {
+  log(`새 사용자 입장: ${username} (${id}), initiator=true, role=${role}`);
+  createPeerConnection(id, username, avatar, true, role);
   playSound('join');
   toast(`${username} 입장`, 'info', 2000);
 });
@@ -2447,6 +2633,40 @@ socket.on('user-updated', ({ id, avatar }) => {
     renderUsers();
   }
 });
+
+// 역할 변경 수신
+socket.on('role-changed', ({ userId, role }) => {
+  if (userId === socket.id) {
+    myRole = role;
+    updateRoleUI();
+    if (role === 'listener' && localStream) {
+      localStream.getAudioTracks().forEach(t => t.enabled = false);
+      isMuted = true;
+      updateMuteUI();
+      toast('청취자로 변경됨 - 오디오 전송 비활성화', 'info');
+    } else if (role === 'performer') {
+      toast('연주자로 변경됨', 'info');
+    }
+  } else {
+    const peer = peers.get(userId);
+    if (peer) {
+      peer.role = role;
+      renderUsers();
+    }
+  }
+});
+
+function updateRoleUI() {
+  const roleLabels = { host: '🎯 호스트', performer: '🎸 연주자', listener: '👂 청취자' };
+  const badge = $('my-role-badge');
+  if (badge) badge.textContent = roleLabels[myRole] || '';
+  
+  // listener는 음소거 버튼 비활성화
+  if ($('muteBtn')) {
+    $('muteBtn').disabled = myRole === 'listener';
+    $('muteBtn').title = myRole === 'listener' ? '청취자는 오디오 전송 불가' : '음소거 (M)';
+  }
+}
 
 // 음소거
 // 음소거 UI 업데이트
@@ -2837,6 +3057,36 @@ if ($('delay-compensation')) {
     socket.emit('delay-compensation', delayCompensation);
   };
 }
+
+// 멀티트랙 녹음 모드
+if ($('multitrack-mode')) {
+  $('multitrack-mode').checked = multitrackMode;
+  $('multitrack-mode').onchange = () => {
+    multitrackMode = $('multitrack-mode').checked;
+    localStorage.setItem('styx-multitrack', multitrackMode);
+    toast(multitrackMode ? '멀티트랙: 각 참가자별 개별 파일 저장' : '믹스다운: 전체 믹스 저장', 'info');
+  };
+}
+
+// 오디오 이펙트 패널
+$('effects-toggle')?.addEventListener('click', () => {
+  $('effects-panel')?.classList.toggle('hidden');
+});
+
+// 이펙트 슬라이더 초기화
+['eq-low', 'eq-mid', 'eq-high', 'fx-delay'].forEach(id => {
+  const el = $(id);
+  if (!el) return;
+  const effectMap = { 'eq-low': 'eqLow', 'eq-mid': 'eqMid', 'eq-high': 'eqHigh', 'fx-delay': 'delay' };
+  const effect = effectMap[id];
+  el.value = inputEffects[effect] || 0;
+  el.nextElementSibling.textContent = id.startsWith('eq') ? `${el.value}dB` : `${el.value}ms`;
+  el.oninput = () => {
+    const val = parseInt(el.value);
+    el.nextElementSibling.textContent = id.startsWith('eq') ? `${val}dB` : `${val}ms`;
+    updateInputEffect(effect, val);
+  };
+});
 
 
 // ===== Inline 이벤트 핸들러 대체 =====

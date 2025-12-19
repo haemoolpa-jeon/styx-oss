@@ -260,7 +260,7 @@
     <div id="room-view" class="hidden">
       <header class="room-header">
         <div class="room-title">
-          <h2>🎸 <span id="roomName"></span></h2>
+          <h2>🎸 <span id="roomName"></span><span id="my-role-badge" class="role-badge"></span></h2>
           <div id="room-settings-display" class="room-settings-display"></div>
         </div>
         <div class="room-controls">
@@ -269,10 +269,20 @@
           <button id="muteBtn" class="btn-icon" title="음소거 (M)">🎤</button>
           <button id="inviteBtn" class="btn-icon" title="초대 링크">🔗</button>
           <button id="recordBtn" class="btn-icon" title="녹음">⏺️</button>
+          <button id="screenShareBtn" class="btn-icon" title="화면 공유">🖥️</button>
           <button id="closeRoomBtn" class="btn-icon hidden" title="방 닫기">🚪</button>
           <button id="leaveBtn" class="btn-leave">나가기</button>
         </div>
       </header>
+
+      <!-- 화면 공유 영역 -->
+      <div id="screen-share-container" class="screen-share-container hidden">
+        <div class="screen-share-header">
+          <span id="screen-share-user">화면 공유 중</span>
+          <button id="screen-share-close" class="btn-icon">✕</button>
+        </div>
+        <video id="screen-share-video" autoplay playsinline></video>
+      </div>
 
       <div class="room-toolbar">
         <div class="toolbar-section">
@@ -283,6 +293,7 @@
           <label class="toolbar-check"><input type="checkbox" id="room-auto-adapt" checked> 자동 품질</label>
           <label class="toolbar-check"><input type="checkbox" id="room-ducking"> 자동 볼륨</label>
           <label class="toolbar-check"><input type="checkbox" id="delay-compensation"> 지연 맞추기</label>
+          <label class="toolbar-check"><input type="checkbox" id="multitrack-mode"> 멀티트랙</label>
         </div>
         <div class="toolbar-section">
           <span class="toolbar-label">버퍼:</span>
@@ -305,6 +316,15 @@
         <div class="toolbar-section">
           <span class="toolbar-label">입력:</span>
           <div class="input-meter"><div id="audio-meter"></div></div>
+        </div>
+        <div class="toolbar-section effects-section">
+          <button id="effects-toggle" class="btn-icon" title="이펙트">🎛️</button>
+          <div id="effects-panel" class="effects-panel hidden">
+            <div class="effect-row"><span>저음</span><input type="range" id="eq-low" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span>중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span>고음</span><input type="range" id="eq-high" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span>딜레이</span><input type="range" id="fx-delay" min="0" max="500" value="0"><span class="effect-val">0ms</span></div>
+          </div>
         </div>
       </div>
 

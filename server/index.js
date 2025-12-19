@@ -590,7 +590,8 @@ io.on('connection', (socket) => {
           delayCompensation: false,
           maxUsers: Math.min(Math.max(s.maxUsers || 8, 2), 8),
           audioMode: s.audioMode || 'music', bitrate: s.bitrate || 96,
-          sampleRate: s.sampleRate || 48000, isPrivate: s.isPrivate || false
+          sampleRate: s.sampleRate || 48000, isPrivate: s.isPrivate || false,
+          roles: new Map() // userId -> 'host' | 'performer' | 'listener'
         });
       }
       const roomData = rooms.get(room);
@@ -608,21 +609,24 @@ io.on('connection', (socket) => {
 
       socket.join(room);
       roomData.users.set(socket.id, { username, avatar: user.avatar });
+      // 역할 설정: 방 생성자는 host, 나머지는 performer
+      const role = roomData.creatorId === socket.id ? 'host' : 'performer';
+      roomData.roles.set(socket.id, role);
       socket.username = username;
       socket.room = room;
       socket.isAdmin = user.isAdmin;
 
       const existingUsers = [];
       for (const [id, u] of roomData.users) {
-        if (id !== socket.id) existingUsers.push({ id, username: u.username, avatar: u.avatar });
+        if (id !== socket.id) existingUsers.push({ id, username: u.username, avatar: u.avatar, role: roomData.roles.get(id) });
       }
 
-      socket.to(room).emit('user-joined', { id: socket.id, username, avatar: user.avatar });
+      socket.to(room).emit('user-joined', { id: socket.id, username, avatar: user.avatar, role });
       cb({ 
         success: true, users: existingUsers, isAdmin: user.isAdmin,
         isCreator: roomData.creatorId === socket.id, creatorUsername: roomData.creatorUsername,
         messages: roomData.messages.slice(-50), metronome: roomData.metronome,
-        delayCompensation: roomData.delayCompensation,
+        delayCompensation: roomData.delayCompensation, myRole: role,
         roomSettings: {
           maxUsers: roomData.maxUsers, audioMode: roomData.audioMode,
           bitrate: roomData.bitrate, sampleRate: roomData.sampleRate, isPrivate: roomData.isPrivate
@@ -650,6 +654,33 @@ io.on('connection', (socket) => {
     if (!roomData) return;
     roomData.delayCompensation = !!enabled;
     io.to(socket.room).emit('delay-compensation-sync', enabled);
+  });
+
+  // 화면 공유
+  socket.on('screen-share-start', () => {
+    if (!socket.room) return;
+    socket.to(socket.room).emit('screen-share-start', { userId: socket.id, username: socket.username });
+  });
+
+  socket.on('screen-share-stop', () => {
+    if (!socket.room) return;
+    socket.to(socket.room).emit('screen-share-stop', { userId: socket.id });
+  });
+
+  // 역할 변경 (호스트만 가능)
+  socket.on('change-role', ({ userId, role }, cb) => {
+    if (!socket.room) return cb?.({ error: 'Not in room' });
+    const roomData = rooms.get(socket.room);
+    if (!roomData) return cb?.({ error: 'Room not found' });
+    
+    const myRole = roomData.roles.get(socket.id);
+    if (myRole !== 'host' && !socket.isAdmin) return cb?.({ error: 'Not authorized' });
+    if (!['performer', 'listener'].includes(role)) return cb?.({ error: 'Invalid role' });
+    if (!roomData.users.has(userId)) return cb?.({ error: 'User not found' });
+    
+    roomData.roles.set(userId, role);
+    io.to(socket.room).emit('role-changed', { userId, role });
+    cb?.({ success: true });
   });
 
   socket.on('update-room-settings', ({ setting, value }, cb) => {
