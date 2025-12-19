@@ -68,10 +68,8 @@ pub async fn bind_udp_socket(port: u16) -> Result<(UdpSocket, u16), String> {
     {
         use std::os::windows::io::AsRawSocket;
         let tos: i32 = 184; // DSCP EF (46) << 2
-        unsafe {
-            let raw = socket2.as_raw_socket();
-            let _ = libc_setsockopt(raw as usize, 0, 3, &tos); // IPPROTO_IP=0, IP_TOS=3
-        }
+        let raw = socket2.as_raw_socket();
+        let _ = libc_setsockopt(raw as usize, 0, 3, &tos); // IPPROTO_IP=0, IP_TOS=3
     }
     
     #[cfg(not(windows))]
