@@ -80,20 +80,40 @@ let currentRoomSettings = {}; // 현재 방 설정
 let isRoomCreator = false; // 방장 여부
 let roomCreatorUsername = ''; // 방장 이름
 
-const rtcConfig = {
+// 기본 ICE 서버 설정 (TURN은 서버에서 동적으로 받음)
+let rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    // 무료 TURN 서버 (OpenRelay)
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+    { urls: 'stun:stun1.l.google.com:19302' }
   ],
   iceCandidatePoolSize: 10,
-  bundlePolicy: 'max-bundle',        // 단일 연결로 미디어 번들링
-  rtcpMuxPolicy: 'require'           // RTCP 멀티플렉싱 필수
+  bundlePolicy: 'max-bundle',
+  rtcpMuxPolicy: 'require'
 };
+
+// TURN 자격증명 요청 및 rtcConfig 업데이트
+function updateTurnCredentials() {
+  socket.emit('get-turn-credentials', null, (turnServer) => {
+    if (turnServer) {
+      // 서버에서 받은 TURN 설정 추가
+      rtcConfig.iceServers = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: turnServer.urls, username: turnServer.username, credential: turnServer.credential }
+      ];
+      log('TURN 자격증명 업데이트됨');
+    } else {
+      // 폴백: 무료 TURN 서버
+      rtcConfig.iceServers = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+      ];
+      log('TURN 폴백 사용');
+    }
+  });
+}
 
 // 오디오 모드별 설정
 const audioModes = {
@@ -522,6 +542,9 @@ socket.on('connect', () => {
   
   // 서버 시간 동기화 (메트로놈용)
   syncServerTime();
+  
+  // TURN 자격증명 업데이트
+  updateTurnCredentials();
   
   // UDP 핸들러 설정 (Tauri 앱일 때만)
   if (_isTauriApp) setupUdpHandlers();

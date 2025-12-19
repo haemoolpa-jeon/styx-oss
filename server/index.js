@@ -8,6 +8,23 @@ const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+
+// TURN 서버 설정
+const TURN_SERVER = process.env.TURN_SERVER || '3.39.223.2';
+const TURN_SECRET = process.env.TURN_SECRET || '';
+const TURN_TTL = 24 * 60 * 60; // 24시간
+
+// TURN 자격증명 생성 (time-limited credentials)
+function generateTurnCredentials(username) {
+  if (!TURN_SECRET) return null;
+  const timestamp = Math.floor(Date.now() / 1000) + TURN_TTL;
+  const turnUsername = `${timestamp}:${username}`;
+  const hmac = crypto.createHmac('sha1', TURN_SECRET);
+  hmac.update(turnUsername);
+  const credential = hmac.digest('base64');
+  return { username: turnUsername, credential };
+}
 
 // 환경 변수 검증
 function validateEnv() {
@@ -609,6 +626,23 @@ io.on('connection', (socket) => {
   // 시간 동기화 (메트로놈용)
   socket.on('time-sync', (clientTime, cb) => {
     cb(Date.now());
+  });
+
+  // TURN 자격증명 요청
+  socket.on('get-turn-credentials', (_, cb) => {
+    const creds = generateTurnCredentials(socket.username || 'anonymous');
+    if (creds) {
+      cb({
+        urls: [
+          `turn:${TURN_SERVER}:3478`,
+          `turn:${TURN_SERVER}:3478?transport=tcp`
+        ],
+        username: creds.username,
+        credential: creds.credential
+      });
+    } else {
+      cb(null); // TURN not configured, client will use fallback
+    }
   });
 
   socket.on('udp-info', ({ port, publicIp }) => {
