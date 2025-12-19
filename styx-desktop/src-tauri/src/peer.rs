@@ -12,7 +12,7 @@ use crate::udp::AudioPacketHeader;
 
 const FRAME_SIZE: usize = 480; // 10ms @ 48kHz
 const MAX_PACKET_SIZE: usize = 1500;
-const MIN_JITTER_BUFFER: usize = 3;  // 30ms minimum
+const MIN_JITTER_BUFFER: usize = 2;  // 20ms minimum (aggressive, for good networks)
 const MAX_JITTER_BUFFER: usize = 10; // 100ms maximum
 const KEEPALIVE_INTERVAL_MS: u64 = 5000; // 5초마다 keepalive
 
@@ -43,6 +43,10 @@ impl JitterBuffer {
     
     pub fn target_size(&self) -> usize {
         self.target_size
+    }
+    
+    pub fn set_target(&mut self, size: usize) {
+        self.target_size = size.max(MIN_JITTER_BUFFER).min(MAX_JITTER_BUFFER);
     }
     
     pub fn push(&mut self, seq: u32, samples: Vec<f32>) {

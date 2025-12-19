@@ -138,6 +138,7 @@ let vadEnabled = localStorage.getItem('styx-vad') !== 'false';
 let vadIntervals = new Map(); // 피어별 VAD 인터벌
 let delayCompensation = false;
 let autoJitter = localStorage.getItem('styx-auto-jitter') !== 'false'; // 자동 지터 버퍼
+let lowLatencyMode = localStorage.getItem('styx-low-latency') === 'true'; // 저지연 모드
 let currentRoomSettings = {}; // 현재 방 설정
 let isRoomCreator = false; // 방장 여부
 let roomCreatorUsername = ''; // 방장 이름
@@ -2460,7 +2461,8 @@ function applyJitterBuffer() {
 
 // 지터 버퍼 설정 (UI 동기화 포함)
 function setJitterBuffer(value) {
-  jitterBuffer = Math.min(200, Math.max(30, value));
+  const minBuffer = lowLatencyMode ? 20 : 30;
+  jitterBuffer = Math.min(200, Math.max(minBuffer, value));
   localStorage.setItem('styx-jitter-buffer', jitterBuffer);
   
   // UI 동기화
@@ -2474,6 +2476,11 @@ function setJitterBuffer(value) {
   }
   
   applyJitterBuffer();
+  
+  // Tauri UDP 지터 버퍼도 설정
+  if (tauriInvoke) {
+    tauriInvoke('set_jitter_buffer', { size: Math.round(jitterBuffer / 10) }).catch(() => {});
+  }
 }
 
 // 실시간 자동 지터 버퍼 조절 (세션 중)
@@ -3127,6 +3134,50 @@ if ($('room-jitter-slider')) {
     // 기존 피어에 지터 버퍼 적용
     applyJitterBuffer();
   };
+}
+
+// 저지연 모드 토글
+if ($('low-latency-mode')) {
+  $('low-latency-mode').checked = lowLatencyMode;
+  $('low-latency-mode').onchange = () => {
+    lowLatencyMode = $('low-latency-mode').checked;
+    localStorage.setItem('styx-low-latency', lowLatencyMode);
+    applyLowLatencyMode();
+    toast(lowLatencyMode ? '⚡ 저지연 모드 활성화 (20ms 버퍼)' : '📊 일반 모드 (50ms 버퍼)', 'info');
+  };
+  applyLowLatencyMode();
+}
+
+function applyLowLatencyMode() {
+  if (lowLatencyMode) {
+    // Aggressive settings for good networks
+    jitterBuffer = 20;
+    autoJitter = false;
+    if ($('jitter-slider')) { $('jitter-slider').value = 20; $('jitter-slider').disabled = true; }
+    if ($('jitter-value')) $('jitter-value').textContent = '20ms';
+    if ($('auto-jitter')) { $('auto-jitter').checked = false; $('auto-jitter').disabled = true; }
+    if ($('room-jitter-slider')) { $('room-jitter-slider').value = 20; $('room-jitter-slider').disabled = true; }
+    if ($('room-jitter-value')) $('room-jitter-value').textContent = '20ms';
+    if ($('room-auto-jitter')) { $('room-auto-jitter').checked = false; $('room-auto-jitter').disabled = true; }
+  } else {
+    // Restore normal settings
+    jitterBuffer = parseInt(localStorage.getItem('styx-jitter-buffer')) || 50;
+    autoJitter = localStorage.getItem('styx-auto-jitter') !== 'false';
+    if ($('jitter-slider')) { $('jitter-slider').value = jitterBuffer; $('jitter-slider').disabled = autoJitter; }
+    if ($('jitter-value')) $('jitter-value').textContent = jitterBuffer + 'ms';
+    if ($('auto-jitter')) { $('auto-jitter').checked = autoJitter; $('auto-jitter').disabled = false; }
+    if ($('room-jitter-slider')) { $('room-jitter-slider').value = jitterBuffer; $('room-jitter-slider').disabled = autoJitter; }
+    if ($('room-jitter-value')) $('room-jitter-value').textContent = jitterBuffer + 'ms';
+    if ($('room-auto-jitter')) { $('room-auto-jitter').checked = autoJitter; $('room-auto-jitter').disabled = false; }
+  }
+  localStorage.setItem('styx-jitter-buffer', jitterBuffer);
+  localStorage.setItem('styx-auto-jitter', autoJitter);
+  applyJitterBuffer();
+  
+  // Apply to Tauri UDP if available
+  if (tauriInvoke) {
+    tauriInvoke('set_jitter_buffer', { size: lowLatencyMode ? 2 : Math.round(jitterBuffer / 10) }).catch(() => {});
+  }
 }
 
 // 자동 지터 버퍼 토글 (로비)

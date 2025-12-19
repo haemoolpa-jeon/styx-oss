@@ -89,7 +89,10 @@
             <div class="audio-col">
               <div class="form-field">
                 <label>📊 버퍼 <span id="jitter-value">50ms</span> <label class="auto-jitter-label"><input type="checkbox" id="auto-jitter" checked> 자동</label></label>
-                <input type="range" id="jitter-slider" min="30" max="150" value="50" step="10">
+                <input type="range" id="jitter-slider" min="20" max="150" value="50" step="10">
+              </div>
+              <div class="form-field">
+                <label class="low-latency-label"><input type="checkbox" id="low-latency-mode"> ⚡ 저지연 모드 <small>(ASIO + 유선랜 권장)</small></label>
               </div>
               <div class="test-buttons">
                 <button id="test-audio-btn" class="btn-test">🎤 마이크</button>

@@ -111,6 +111,16 @@ fn udp_clear_peers(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
+fn set_jitter_buffer(state: State<'_, AppState>, size: usize) {
+    let stream_state = state.udp_stream.lock().unwrap();
+    if let Ok(mut jb) = stream_state.jitter_buffers.lock() {
+        for buffer in jb.values_mut() {
+            buffer.set_target(size.max(2).min(15)); // 20ms - 150ms
+        }
+    }
+}
+
+#[tauri::command]
 fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
     let stream_state = state.udp_stream.lock().unwrap();
     
@@ -259,6 +269,7 @@ pub fn run() {
             udp_set_muted,
             udp_is_running,
             udp_clear_peers,
+            set_jitter_buffer,
             set_audio_devices,
             udp_start_stream,
             udp_stop_stream,
