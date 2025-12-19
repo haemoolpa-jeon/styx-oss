@@ -21,6 +21,7 @@ let selectedOutputId = null;
 let latencyInterval = null;
 let statsInterval = null;
 let audioContext = null;
+let peerAudioContext = null; // 피어 오디오 처리용 공유 AudioContext
 let analyser = null;
 let meterInterval = null;
 let metronomeInterval = null;
@@ -29,6 +30,17 @@ let sessionRestored = false;
 let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
+
+// 피어 오디오용 공유 AudioContext 가져오기
+function getPeerAudioContext() {
+  if (!peerAudioContext || peerAudioContext.state === 'closed') {
+    peerAudioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
+  }
+  if (peerAudioContext.state === 'suspended') {
+    peerAudioContext.resume();
+  }
+  return peerAudioContext;
+}
 
 // Tauri 감지
 const _isTauriApp = typeof window.__TAURI__ !== 'undefined';
@@ -1596,10 +1608,8 @@ function createPeerConnection(peerId, username, avatar, initiator) {
     }
     
     try {
-      // 저지연 AudioContext 생성
-      const ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
-      // AudioContext가 suspended 상태면 resume
-      if (ctx.state === 'suspended') ctx.resume();
+      // 공유 AudioContext 사용 (브라우저 AudioContext 제한 회피)
+      const ctx = getPeerAudioContext();
       
       const source = ctx.createMediaStreamSource(e.streams[0]);
       
@@ -1624,12 +1634,12 @@ function createPeerConnection(peerId, username, avatar, initiator) {
       delayNode.delayTime.value = 0;
       
       // VAD용 분석기
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
+      const peerAnalyser = ctx.createAnalyser();
+      peerAnalyser.fftSize = 256;
       
       const dest = ctx.createMediaStreamDestination();
-      source.connect(analyser);
-      analyser.connect(compressor);
+      source.connect(peerAnalyser);
+      peerAnalyser.connect(compressor);
       compressor.connect(panNode);
       panNode.connect(delayNode);
       delayNode.connect(gainNode);
@@ -1637,18 +1647,20 @@ function createPeerConnection(peerId, username, avatar, initiator) {
       
       audioEl.srcObject = dest.stream;
       if (peerData) {
-        peerData.audioContext = ctx;
+        peerData.audioContext = ctx; // 공유 컨텍스트 참조
         peerData.panNode = panNode;
         peerData.gainNode = gainNode;
         peerData.delayNode = delayNode;
-        peerData.analyser = analyser;
+        peerData.analyser = peerAnalyser;
         peerData.isSpeaking = false;
+        peerData.audioNodes = { source, compressor, panNode, gainNode, delayNode, peerAnalyser, dest }; // 정리용
       }
       
       // VAD 시작
-      if (vadEnabled) startVAD(peerId, analyser);
+      if (vadEnabled) startVAD(peerId, peerAnalyser);
       
-    } catch {
+    } catch (e) {
+      console.error('오디오 처리 설정 실패:', e);
       audioEl.srcObject = e.streams[0];
     }
     
@@ -2058,6 +2070,9 @@ socket.on('offer', async ({ from, offer }) => {
       await pc.setRemoteDescription(offer);
     }
     
+    // 큐에 저장된 ICE 후보 처리
+    await flushIceCandidateQueue(from);
+    
     let answer = await pc.createAnswer();
     // Opus SDP 최적화 적용
     answer = new RTCSessionDescription({
@@ -2079,6 +2094,8 @@ socket.on('answer', async ({ from, answer }) => {
     try { 
       await peer.pc.setRemoteDescription(answer); 
       log(`Answer 적용 완료: ${from}`);
+      // 큐에 저장된 ICE 후보 처리
+      await flushIceCandidateQueue(from);
     } catch (e) {
       console.error('Answer 적용 실패:', e);
     }
@@ -2087,10 +2104,36 @@ socket.on('answer', async ({ from, answer }) => {
   }
 });
 
+// 큐에 저장된 ICE 후보 처리
+async function flushIceCandidateQueue(peerId) {
+  const peer = peers.get(peerId);
+  if (!peer?.iceCandidateQueue?.length) return;
+  
+  log(`ICE 후보 큐 처리: ${peerId} (${peer.iceCandidateQueue.length}개)`);
+  for (const candidate of peer.iceCandidateQueue) {
+    try {
+      await peer.pc.addIceCandidate(candidate);
+    } catch (e) {
+      console.error('큐된 ICE 후보 추가 실패:', e);
+    }
+  }
+  peer.iceCandidateQueue = [];
+}
+
 socket.on('ice-candidate', async ({ from, candidate }) => {
   try {
     const peer = peers.get(from);
-    if (peer && candidate) await peer.pc.addIceCandidate(candidate);
+    if (!peer || !candidate) return;
+    
+    // remoteDescription이 설정되지 않았으면 큐에 저장
+    if (!peer.pc.remoteDescription) {
+      if (!peer.iceCandidateQueue) peer.iceCandidateQueue = [];
+      peer.iceCandidateQueue.push(candidate);
+      log(`ICE 후보 큐잉: ${from} (remoteDescription 대기)`);
+      return;
+    }
+    
+    await peer.pc.addIceCandidate(candidate);
   } catch (e) {
     console.error('ICE 후보 추가 실패:', e);
   }
@@ -2102,7 +2145,17 @@ socket.on('user-left', ({ id }) => {
     const username = peer.username;
     peer.pc.close();
     peer.audioEl.remove();
-    if (peer.audioContext) try { peer.audioContext.close(); } catch {}
+    // 오디오 노드 연결 해제 (공유 AudioContext는 닫지 않음)
+    if (peer.audioNodes) {
+      try {
+        peer.audioNodes.source.disconnect();
+        peer.audioNodes.compressor.disconnect();
+        peer.audioNodes.panNode.disconnect();
+        peer.audioNodes.gainNode.disconnect();
+        peer.audioNodes.delayNode.disconnect();
+        peer.audioNodes.peerAnalyser.disconnect();
+      } catch {}
+    }
     // VAD 인터벌 정리
     const vadInt = vadIntervals.get(id);
     if (vadInt) { clearInterval(vadInt); vadIntervals.delete(id); }
@@ -2201,11 +2254,21 @@ function leaveRoom() {
     try { metronomeAudio.close(); } catch {} 
     metronomeAudio = null; 
   }
+  // 피어 오디오용 공유 AudioContext 정리
+  if (peerAudioContext) {
+    try { peerAudioContext.close(); } catch {}
+    peerAudioContext = null;
+  }
   
   peers.forEach(peer => {
     peer.pc.close();
     peer.audioEl.remove();
-    if (peer.audioContext) try { peer.audioContext.close(); } catch {}
+    // 오디오 노드 연결 해제
+    if (peer.audioNodes) {
+      try {
+        peer.audioNodes.source.disconnect();
+      } catch {}
+    }
   });
   peers.clear();
   volumeStates.clear();
