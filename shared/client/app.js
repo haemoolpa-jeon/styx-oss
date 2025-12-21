@@ -4,6 +4,7 @@
 // 디버그 모드 (프로덕션에서는 false)
 const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const log = (...args) => DEBUG && console.log(...args);
+const logError = (...args) => DEBUG ? console.error(...args) : null; // Silent in production
 
 const serverUrl = window.STYX_SERVER_URL || '';
 const socket = io(serverUrl, { reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 10 });
@@ -450,7 +451,41 @@ function playSound(type) {
 }
 
 // ===== 키보드 단축키 =====
-document.addEventListener('keydown', (e) => {
+// Global event listeners (cleaned up on page unload)
+const globalEventListeners = [];
+
+function addGlobalListener(target, event, handler) {
+  target.addEventListener(event, handler);
+  globalEventListeners.push({ target, event, handler });
+}
+
+// Cleanup function
+function cleanupGlobalListeners() {
+  globalEventListeners.forEach(({ target, event, handler }) => {
+    target.removeEventListener(event, handler);
+  });
+  globalEventListeners.length = 0;
+}
+
+// Add cleanup on page unload
+window.addEventListener('beforeunload', cleanupGlobalListeners);
+
+// Global error handler for unhandled WebRTC errors
+addGlobalListener(window, 'error', (e) => {
+  if (e.error?.name === 'OverconstrainedError' || e.message?.includes('getUserMedia')) {
+    toast('마이크 접근 오류 - 다른 앱이 사용 중일 수 있습니다', 'error');
+  }
+});
+
+addGlobalListener(window, 'unhandledrejection', (e) => {
+  if (e.reason?.name === 'NotAllowedError') {
+    toast('마이크 권한이 거부되었습니다', 'error');
+    e.preventDefault();
+  }
+});
+
+// Use addGlobalListener instead of direct addEventListener
+addGlobalListener(document, 'keydown', (e) => {
   // PTT 모드
   if (pttMode && !isPttActive && e.code === pttKey && localStream) {
     isPttActive = true;
