@@ -61,6 +61,25 @@ validateEnv();
 const app = express();
 const server = createServer(app);
 
+// CORS 설정 for HTTP requests
+const ALLOWED_ORIGINS = process.env.CORS_ORIGINS 
+  ? process.env.CORS_ORIGINS.split(',') 
+  : ['http://tauri.localhost', 'https://tauri.localhost', 'http://localhost:3000', 'https://3-39-223-2.nip.io'];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin) || ALLOWED_ORIGINS === true) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // Security headers
 app.use(helmet({
   contentSecurityPolicy: false, // Disabled for Socket.IO compatibility
@@ -82,11 +101,6 @@ if (process.env.FORCE_HTTPS === 'true') {
   });
   console.log('✓ HTTPS redirect enabled');
 }
-
-// CORS 설정
-const ALLOWED_ORIGINS = process.env.CORS_ORIGINS 
-  ? process.env.CORS_ORIGINS.split(',') 
-  : true;
 
 const io = new Server(server, { 
   cors: { origin: ALLOWED_ORIGINS, credentials: true }, 
