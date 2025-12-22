@@ -1619,9 +1619,17 @@ async function startUdpMode() {
       await tauriInvoke('set_audio_devices', { input: null, output: null });
       console.log('Starting relay stream...');
       await tauriInvoke('udp_start_relay_stream');
+      console.log('✅ UDP relay stream started successfully');
       udpSuccess = true;
       toast('UDP 오디오 연결됨', 'success');
-      startUdpStatsMonitor();
+      console.log('Starting UDP stats monitor...');
+      try {
+        startUdpStatsMonitor();
+        console.log('✅ UDP setup complete');
+      } catch (statsError) {
+        console.error('Stats monitor failed to start:', statsError);
+        // Continue without stats monitor
+      }
     } catch (e) {
       console.error('UDP 실패, TCP 폴백:', e);
       toast(`UDP 연결 실패: ${e.message || e}`, 'warning');
@@ -1713,46 +1721,42 @@ let udpHealthFailCount = 0;
 function startUdpStatsMonitor() {
   if (!tauriInvoke || udpStatsInterval) return;
   
+  console.log('Starting UDP stats monitor...');
+  
   udpStatsInterval = setInterval(async () => {
     try {
       const stats = await tauriInvoke('get_udp_stats');
-      updateUdpStatsUI(stats);
-      
-      // Update input level meter
-      try {
-        const inputLevel = await tauriInvoke('get_input_level');
-        updateInputLevelUI(inputLevel);
-      } catch (levelError) {
-        console.warn('Input level update failed:', levelError);
-      }
-      
-      // Health check: if no packets received for 5 seconds, switch to TCP
-      if (stats.is_running && stats.packets_received === 0) {
-        udpHealthFailCount++;
-        if (udpHealthFailCount >= 5 && !useTcpFallback) {
-          console.warn('UDP 연결 끊김, TCP로 전환');
-          toast('UDP 연결 끊김, TCP로 전환 중...', 'warning');
-          await tauriInvoke('udp_stop_stream');
-          useTcpFallback = true;
-          socket.emit('tcp-bind-room', { roomId: socket.room });
-          startTcpAudioStream();
+      if (stats) {
+        updateUdpStatsUI(stats);
+        
+        // Health check: if no packets received for 5 seconds, switch to TCP
+        if (stats.is_running && stats.packets_received === 0) {
+          udpHealthFailCount++;
+          if (udpHealthFailCount >= 5 && !useTcpFallback) {
+            console.warn('UDP 연결 끊김, TCP로 전환');
+            toast('UDP 연결 끊김, TCP로 전환 중...', 'warning');
+            await tauriInvoke('udp_stop_stream');
+            useTcpFallback = true;
+            socket.emit('tcp-bind-room', { roomId: socket.room });
+            startTcpAudioStream();
+          }
+        } else {
+          udpHealthFailCount = 0;
         }
-      } else {
-        udpHealthFailCount = 0;
       }
       
       // Per-peer stats
       try {
         const peerStats = await tauriInvoke('get_peer_stats');
-        updatePeerStatsUI(peerStats);
+        if (peerStats) updatePeerStatsUI(peerStats);
       } catch (peerError) {
-        console.warn('Peer stats update failed:', peerError);
+        // Silently ignore peer stats errors
       }
     } catch (e) {
       console.error('UDP 통계 조회 실패:', e);
       // Don't crash the interval, just log the error
     }
-  }, 100); // 100ms for smoother meter
+  }, 500); // Reduced frequency to 500ms to reduce load
 }
 
 function updateInputLevelUI(level) {
@@ -1771,7 +1775,7 @@ function stopUdpStatsMonitor() {
 
 function updateUdpStatsUI(stats) {
   const badge = $('udp-stats-badge');
-  if (!badge) return;
+  if (!badge || !stats) return;
   
   badge.classList.remove('hidden');
   
@@ -1781,9 +1785,9 @@ function updateUdpStatsUI(stats) {
     return;
   }
   
-  const lossRate = stats.loss_rate.toFixed(1);
-  const bufferMs = stats.jitter_buffer_size * 10; // 10ms per frame
-  const targetMs = (stats.jitter_buffer_target || stats.jitter_buffer_size) * 10;
+  const lossRate = (stats.loss_rate || 0).toFixed(1);
+  const bufferMs = (stats.jitter_buffer_size || 0) * 10; // 10ms per frame
+  const targetMs = ((stats.jitter_buffer_target || stats.jitter_buffer_size) || 0) * 10;
   let quality = 'good';
   if (stats.loss_rate > 5) quality = 'bad';
   else if (stats.loss_rate > 1) quality = 'warning';
