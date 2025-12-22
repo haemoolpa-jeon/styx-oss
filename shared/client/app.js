@@ -173,20 +173,34 @@ function updateInputEffect(effect, value) {
 // 저장된 이펙트 설정 로드
 try { inputEffects = JSON.parse(localStorage.getItem('styx-effects')) || inputEffects; } catch {}
 
-// Tauri 감지
-const _isTauriApp = typeof window.__TAURI__ !== 'undefined';
-const tauriInvoke = _isTauriApp ? window.__TAURI__.core.invoke : null;
+// Tauri 감지 - 더 안정적인 방법
+const isTauriApp = () => {
+  // 1. User-Agent 확인
+  if (navigator.userAgent.includes('Tauri')) return true;
+  
+  // 2. window.__TAURI__ 확인
+  if (typeof window.__TAURI__ !== 'undefined') return true;
+  
+  // 3. Tauri 특유의 전역 객체 확인
+  if (typeof window.__TAURI_INTERNALS__ !== 'undefined') return true;
+  
+  // 4. 브라우저 특성 확인 (Tauri는 file:// 프로토콜 사용)
+  if (location.protocol === 'tauri:') return true;
+  
+  return false;
+};
+
+const actuallyTauri = isTauriApp();
+const tauriInvoke = actuallyTauri && window.__TAURI__?.core?.invoke;
 
 // Debug: Tauri 감지 상태 확인
 console.log('Tauri detection:', {
   __TAURI__: typeof window.__TAURI__,
-  _isTauriApp,
-  userAgent: navigator.userAgent.includes('Tauri')
+  __TAURI_INTERNALS__: typeof window.__TAURI_INTERNALS__,
+  userAgent: navigator.userAgent,
+  protocol: location.protocol,
+  actuallyTauri
 });
-
-// 추가 감지 방법 (fallback)
-const isTauriByUA = navigator.userAgent.includes('Tauri');
-const actuallyTauri = _isTauriApp || isTauriByUA;
 
 // 안정성 설정
 let audioMode = localStorage.getItem('styx-audio-mode') || 'voice'; // voice | music
