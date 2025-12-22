@@ -99,8 +99,9 @@ document.addEventListener('click', function resumeAudio() {
 // 입력 오디오에 리미터/컴프레서 + EQ 적용 (저지연)
 let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0 };
 let effectNodes = {};
+let noiseGateWorklet = null;
 
-function createProcessedInputStream(rawStream) {
+async function createProcessedInputStream(rawStream) {
   inputLimiterContext = new AudioContext({ sampleRate: 48000 });
   
   // Resume if suspended
@@ -120,6 +121,18 @@ function createProcessedInputStream(rawStream) {
   const eqHigh = inputLimiterContext.createBiquadFilter();
   eqHigh.type = 'highshelf'; eqHigh.frequency.value = 3200; eqHigh.gain.value = inputEffects.eqHigh;
   
+  // AI 노이즈 제거 (AudioWorklet noise gate)
+  let lastNode = eqHigh;
+  if (aiNoiseCancellation) {
+    try {
+      await inputLimiterContext.audioWorklet.addModule('noise-gate-processor.js');
+      noiseGateWorklet = new AudioWorkletNode(inputLimiterContext, 'noise-gate-processor');
+      noiseGateWorklet.parameters.get('threshold').value = -45;
+      eqHigh.connect(noiseGateWorklet);
+      lastNode = noiseGateWorklet;
+    } catch (e) { log('Noise gate worklet failed:', e); }
+  }
+  
   // 컴프레서 (리미터 역할) - 클리핑 방지
   const compressor = inputLimiterContext.createDynamicsCompressor();
   compressor.threshold.value = -12; compressor.knee.value = 6;
@@ -131,15 +144,15 @@ function createProcessedInputStream(rawStream) {
   
   const dest = inputLimiterContext.createMediaStreamDestination();
   
-  // 체인: source -> EQ -> compressor -> gain -> dest
+  // 체인: source -> EQ -> [noiseGate] -> compressor -> gain -> dest
   source.connect(eqLow);
   eqLow.connect(eqMid);
   eqMid.connect(eqHigh);
-  eqHigh.connect(compressor);
+  lastNode.connect(compressor);
   compressor.connect(makeupGain);
   makeupGain.connect(dest);
   
-  effectNodes = { eqLow, eqMid, eqHigh, compressor, makeupGain };
+  effectNodes = { eqLow, eqMid, eqHigh, compressor, makeupGain, noiseGate: noiseGateWorklet };
   processedStream = dest.stream;
   return processedStream;
 }
@@ -172,6 +185,8 @@ let autoAdapt = localStorage.getItem('styx-auto-adapt') !== 'false';
 // 오디오 처리 설정
 let echoCancellation = localStorage.getItem('styx-echo') !== 'false';
 let noiseSuppression = localStorage.getItem('styx-noise') !== 'false';
+let aiNoiseCancellation = localStorage.getItem('styx-ai-noise') === 'true'; // Off by default (adds latency)
+let noiseGateNode = null;
 let pttMode = localStorage.getItem('styx-ptt') === 'true';
 let pttKey = localStorage.getItem('styx-ptt-key') || 'Space';
 let isPttActive = false;
@@ -1386,6 +1401,17 @@ function initStabilitySettings() {
     };
   }
   
+  // AI 노이즈 제거
+  const aiNoiseCheck = $('ai-noise');
+  if (aiNoiseCheck) {
+    aiNoiseCheck.checked = aiNoiseCancellation;
+    aiNoiseCheck.onchange = () => {
+      aiNoiseCancellation = aiNoiseCheck.checked;
+      localStorage.setItem('styx-ai-noise', aiNoiseCancellation);
+      scheduleSettingsSave();
+    };
+  }
+  
   // PTT 모드
   const pttCheck = $('ptt-mode');
   if (pttCheck) {
@@ -2003,7 +2029,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
   try {
     const rawStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
     // 입력 리미터 적용 (클리핑 방지)
-    localStream = createProcessedInputStream(rawStream);
+    localStream = await createProcessedInputStream(rawStream);
     // 원본 스트림 참조 저장 (정리용)
     localStream._rawStream = rawStream;
     
@@ -3429,6 +3455,7 @@ function syncRoomAudioSettings() {
   };
   syncCheckbox('echo-cancel', 'room-echo-cancel');
   syncCheckbox('noise-suppress', 'room-noise-suppress');
+  syncCheckbox('ai-noise', 'room-ai-noise');
   syncCheckbox('ptt-mode', 'room-ptt-mode');
   syncCheckbox('vad-mode', 'room-vad-mode');
   syncCheckbox('auto-adapt', 'room-auto-adapt');
@@ -3466,6 +3493,14 @@ if ($('room-echo-cancel')) {
 
 if ($('room-noise-suppress')) {
   $('room-noise-suppress').onchange = async () => { if (localStream) await restartAudioStream(); };
+}
+
+if ($('room-ai-noise')) {
+  $('room-ai-noise').onchange = async () => {
+    aiNoiseCancellation = $('room-ai-noise').checked;
+    localStorage.setItem('styx-ai-noise', aiNoiseCancellation);
+    if (localStream) await restartAudioStream();
+  };
 }
 
 if ($('room-ptt-mode')) {
@@ -3656,7 +3691,7 @@ $('closeRoomBtn')?.addEventListener('click', closeRoom);
 // 설정 동기화
 function collectSettings() {
   return {
-    audioMode, jitterBuffer, autoAdapt, echoCancellation, noiseSuppression,
+    audioMode, jitterBuffer, autoAdapt, echoCancellation, noiseSuppression, aiNoiseCancellation,
     pttMode, pttKey, duckingEnabled, vadEnabled,
     theme: document.documentElement.getAttribute('data-theme') || 'dark'
   };
@@ -3669,6 +3704,7 @@ function applySettings(s) {
   autoAdapt = s.autoAdapt ?? autoAdapt;
   echoCancellation = s.echoCancellation ?? echoCancellation;
   noiseSuppression = s.noiseSuppression ?? noiseSuppression;
+  aiNoiseCancellation = s.aiNoiseCancellation ?? aiNoiseCancellation;
   pttMode = s.pttMode ?? pttMode;
   pttKey = s.pttKey ?? pttKey;
   duckingEnabled = s.duckingEnabled ?? duckingEnabled;
@@ -3680,6 +3716,7 @@ function applySettings(s) {
   localStorage.setItem('styx-auto-adapt', autoAdapt);
   localStorage.setItem('styx-echo', echoCancellation);
   localStorage.setItem('styx-noise', noiseSuppression);
+  localStorage.setItem('styx-ai-noise', aiNoiseCancellation);
   localStorage.setItem('styx-ptt', pttMode);
   localStorage.setItem('styx-ptt-key', pttKey);
   localStorage.setItem('styx-ducking', duckingEnabled);
