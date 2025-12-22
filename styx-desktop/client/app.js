@@ -1335,9 +1335,6 @@ function initStabilitySettings() {
     initTauriFeatures();
   }
   
-  // 오디오 모드
-  updateModeButtons();
-  
   // 지터 버퍼 슬라이더
   const slider = $('jitter-slider');
   const valueLabel = $('jitter-value');
@@ -1688,16 +1685,10 @@ function updatePeerStatsUI(peerStats) {
 window.setAudioMode = (mode) => {
   audioMode = mode;
   localStorage.setItem('styx-audio-mode', mode);
-  updateModeButtons();
   applyAudioSettingsToAll();
   scheduleSettingsSave();
   toast(`${audioModes[mode].name} 모드로 변경됨`, 'info');
 };
-
-function updateModeButtons() {
-  $('voiceModeBtn')?.classList.toggle('active', audioMode === 'voice');
-  $('musicModeBtn')?.classList.toggle('active', audioMode === 'music');
-}
 
 $('logoutBtn').onclick = () => {
   localStorage.removeItem('styx-user');
@@ -1979,7 +1970,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
       echoCancellation: $('echo-cancel')?.checked ?? true,
       noiseSuppression: $('noise-suppress')?.checked ?? true,
-      autoGainControl: true,
+      autoGainControl: $('auto-gain')?.checked ?? true,
       sampleRate: 48000,
       channelCount: 1,
       latency: { ideal: 0.01 }
@@ -3069,7 +3060,7 @@ async function restartAudioStream() {
         deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
         echoCancellation: $('room-echo-cancel')?.checked ?? $('echo-cancel')?.checked ?? true,
         noiseSuppression: $('room-noise-suppress')?.checked ?? $('noise-suppress')?.checked ?? true,
-        autoGainControl: true
+        autoGainControl: $('auto-gain')?.checked ?? true
       }
     });
     
