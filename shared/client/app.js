@@ -32,10 +32,12 @@ function showReconnectProgress(attempt = 1) {
   if (!overlay) return;
   
   overlay.classList.remove('hidden');
-  $('reconnect-count').textContent = attempt;
+  const countEl = $('reconnect-count');
+  if (countEl) countEl.textContent = attempt;
   
   const progress = (attempt / 10) * 100;
-  overlay.querySelector('.progress-bar').style.width = progress + '%';
+  const progressBar = overlay.querySelector('.progress-bar');
+  if (progressBar) progressBar.style.width = progress + '%';
 }
 
 function updateReconnectProgress() {
@@ -43,7 +45,8 @@ function updateReconnectProgress() {
   if (!overlay || overlay.classList.contains('hidden')) return;
   
   const progress = (reconnectAttempt / 10) * 100;
-  overlay.querySelector('.progress-bar').style.width = progress + '%';
+  const progressBar = overlay.querySelector('.progress-bar');
+  if (progressBar) progressBar.style.width = progress + '%';
 }
 
 function hideReconnectProgress() {
@@ -733,7 +736,8 @@ addGlobalListener(document, 'keydown', (e) => {
     localStream.getAudioTracks().forEach(t => t.enabled = true);
     $('muteBtn')?.classList.remove('muted');
     $('muteBtn')?.classList.add('ptt-active');
-    $('muteBtn').textContent = '🎤';
+    const muteBtn = $('muteBtn');
+    if (muteBtn) muteBtn.textContent = '🎤';
     return;
   }
   
@@ -795,7 +799,8 @@ document.addEventListener('keyup', (e) => {
     localStream.getAudioTracks().forEach(t => t.enabled = false);
     $('muteBtn')?.classList.add('muted');
     $('muteBtn')?.classList.remove('ptt-active');
-    $('muteBtn').textContent = '🔇';
+    const muteBtn = $('muteBtn');
+    if (muteBtn) muteBtn.textContent = '🔇';
   }
 });
 
@@ -920,8 +925,11 @@ function startRecording() {
   }
   
   isRecording = true;
-  $('recordBtn').textContent = '⏹️ 녹음 중';
-  $('recordBtn').classList.add('recording');
+  const recordBtn = $('recordBtn');
+  if (recordBtn) {
+    recordBtn.textContent = '⏹️ 녹음 중';
+    recordBtn.classList.add('recording');
+  }
 }
 
 function downloadTrack(chunks, name) {
@@ -953,8 +961,11 @@ function stopRecording() {
   }
   
   isRecording = false;
-  $('recordBtn').textContent = '⏺️ 녹음';
-  $('recordBtn').classList.remove('recording');
+  const recordBtn = $('recordBtn');
+  if (recordBtn) {
+    recordBtn.textContent = '⏺️ 녹음';
+    recordBtn.classList.remove('recording');
+  }
 }
 
 function cleanupRecording() {
@@ -982,13 +993,19 @@ async function startScreenShare() {
   try {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     isScreenSharing = true;
-    $('screenShareBtn').classList.add('sharing');
-    $('screenShareBtn').textContent = '🖥️ 공유 중';
+    
+    const screenShareBtn = $('screenShareBtn');
+    if (screenShareBtn) {
+      screenShareBtn.classList.add('sharing');
+      screenShareBtn.textContent = '🖥️ 공유 중';
+    }
     
     // 로컬 미리보기
-    $('screen-share-video').srcObject = screenStream;
-    $('screen-share-user').textContent = '내 화면 공유 중';
-    $('screen-share-container').classList.remove('hidden');
+    const screenVideo = $('screen-share-video');
+    if (screenVideo) screenVideo.srcObject = screenStream;
+    const screenUser = $('screen-share-user');
+    if (screenUser) screenUser.textContent = '내 화면 공유 중';
+    $('screen-share-container')?.classList.remove('hidden');
     
     // 다른 피어들에게 화면 공유 시작 알림
     socket.emit('screen-share-start');
@@ -1021,9 +1038,12 @@ function stopScreenShare() {
   }
   
   isScreenSharing = false;
-  $('screenShareBtn').classList.remove('sharing');
-  $('screenShareBtn').textContent = '🖥️';
-  $('screen-share-container').classList.add('hidden');
+  const screenShareBtn = $('screenShareBtn');
+  if (screenShareBtn) {
+    screenShareBtn.classList.remove('sharing');
+    screenShareBtn.textContent = '🖥️';
+  }
+  $('screen-share-container')?.classList.add('hidden');
   $('screen-share-video').srcObject = null;
   
   socket.emit('screen-share-stop');
@@ -1032,8 +1052,9 @@ function stopScreenShare() {
 
 // 다른 사용자의 화면 공유 수신
 socket.on('screen-share-start', ({ userId, username }) => {
-  $('screen-share-user').textContent = `${username}님의 화면`;
-  $('screen-share-container').classList.remove('hidden');
+  const screenUser = $('screen-share-user');
+  if (screenUser) screenUser.textContent = `${username}님의 화면`;
+  $('screen-share-container')?.classList.remove('hidden');
 });
 
 socket.on('screen-share-stop', () => {
@@ -1354,8 +1375,11 @@ function showAuthMsg(msg, isError) {
 async function showLobby() {
   authPanel.classList.add('hidden');
   lobby.classList.remove('hidden');
-  $('my-username').textContent = currentUser.username;
-  $('my-avatar').style.backgroundImage = currentUser.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
+  const usernameEl = $('my-username');
+  if (usernameEl) usernameEl.textContent = currentUser.username;
+  
+  const avatarEl = $('my-avatar');
+  if (avatarEl) avatarEl.style.backgroundImage = currentUser.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
   if (currentUser.isAdmin) $('adminBtn').classList.remove('hidden');
   
   // 서버에서 설정 로드
@@ -1528,7 +1552,8 @@ async function initTauriFeatures() {
     const asioAvailable = await tauriInvoke('check_asio');
     if (asioAvailable) {
       toast('ASIO 드라이버 감지됨 - 저지연 모드 활성화', 'success');
-      $('tauri-audio-hint').textContent = 'ASIO 사용 가능 - 저지연 모드';
+      const hintEl = $('tauri-audio-hint');
+      if (hintEl) hintEl.textContent = 'ASIO 사용 가능 - 저지연 모드';
     }
     
     // 오디오 정보 가져오기
