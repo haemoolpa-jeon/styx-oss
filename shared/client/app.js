@@ -9,6 +9,49 @@ const logError = (...args) => DEBUG ? console.error(...args) : null; // Silent i
 const serverUrl = window.STYX_SERVER_URL || '';
 const socket = io(serverUrl, { reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 10 });
 
+// Reconnection progress tracking
+let reconnectAttempt = 0;
+let reconnectOverlay = null;
+
+socket.io.on('reconnect_attempt', (attempt) => {
+  reconnectAttempt = attempt;
+  showReconnectProgress(attempt);
+});
+
+socket.io.on('reconnect_error', () => {
+  updateReconnectProgress();
+});
+
+socket.io.on('reconnect_failed', () => {
+  hideReconnectProgress();
+  toast('서버 연결 실패 - 페이지를 새로고침해주세요', 'error', 10000);
+});
+
+function showReconnectProgress(attempt = 1) {
+  const overlay = $('reconnect-overlay');
+  if (!overlay) return;
+  
+  overlay.classList.remove('hidden');
+  $('reconnect-count').textContent = attempt;
+  
+  const progress = (attempt / 10) * 100;
+  overlay.querySelector('.progress-bar').style.width = progress + '%';
+}
+
+function updateReconnectProgress() {
+  const overlay = $('reconnect-overlay');
+  if (!overlay || overlay.classList.contains('hidden')) return;
+  
+  const progress = (reconnectAttempt / 10) * 100;
+  overlay.querySelector('.progress-bar').style.width = progress + '%';
+}
+
+function hideReconnectProgress() {
+  const overlay = $('reconnect-overlay');
+  if (overlay) overlay.classList.add('hidden');
+  reconnectAttempt = 0;
+}
+
 // 아바타 URL을 절대 경로로 변환
 const avatarUrl = (path) => path ? (path.startsWith('/') ? serverUrl + path : path) : '';
 
@@ -181,11 +224,21 @@ function updateTurnCredentials() {
   });
 }
 
-// 오디오 모드별 설정
+// 오디오 모드별 설정 - Enhanced with quality levels
 const audioModes = {
   voice: { bitrate: 32000, stereo: false, fec: true, dtx: true, name: '음성' },
   music: { bitrate: 128000, stereo: true, fec: true, dtx: false, name: '악기' }
 };
+
+// Dynamic quality levels for bandwidth optimization
+const qualityLevels = {
+  low: { multiplier: 0.5, name: '절약' },
+  medium: { multiplier: 0.75, name: '보통' },
+  high: { multiplier: 1.0, name: '고품질' },
+  auto: { multiplier: 1.0, name: '자동' }
+};
+
+let currentQualityLevel = localStorage.getItem('styx-quality-level') || 'auto';
 
 const $ = id => document.getElementById(id);
 
@@ -395,7 +448,7 @@ function optimizeOpusSdp(sdp, mode) {
   );
 }
 
-// 오디오 설정 적용 (Opus 코덱)
+// 오디오 설정 적용 (Opus 코덱) - Enhanced with bandwidth optimization
 async function applyAudioSettings(pc) {
   const senders = pc.getSenders();
   const audioSender = senders.find(s => s.track?.kind === 'audio');
@@ -407,15 +460,48 @@ async function applyAudioSettings(pc) {
   }
 
   const mode = audioModes[audioMode];
-  params.encodings[0].maxBitrate = mode.bitrate;
+  let bitrate = mode.bitrate;
+  
+  // Apply quality level multiplier
+  if (currentQualityLevel !== 'auto') {
+    bitrate = Math.round(bitrate * qualityLevels[currentQualityLevel].multiplier);
+  } else {
+    // Auto quality based on connection
+    bitrate = getOptimalBitrate(mode.bitrate);
+  }
+  
+  params.encodings[0].maxBitrate = bitrate;
   params.encodings[0].priority = 'high';
   params.encodings[0].networkPriority = 'high';
   
   try {
     await audioSender.setParameters(params);
+    if (DEBUG) console.log(`Audio bitrate set to ${bitrate}bps (${currentQualityLevel})`);
   } catch (e) {
     log('오디오 파라미터 설정 실패:', e);
   }
+}
+
+// Get optimal bitrate based on connection quality
+function getOptimalBitrate(baseBitrate) {
+  if (peers.size === 0) return baseBitrate;
+  
+  let maxJitter = 0, maxLoss = 0;
+  peers.forEach(peer => {
+    if (peer.jitter > maxJitter) maxJitter = peer.jitter;
+    if (peer.packetLoss > maxLoss) maxLoss = peer.packetLoss;
+  });
+  
+  // Reduce bitrate on poor connections
+  if (maxLoss > 5 || maxJitter > 50) {
+    return Math.round(baseBitrate * 0.4); // 40% for very poor
+  } else if (maxLoss > 2 || maxJitter > 25) {
+    return Math.round(baseBitrate * 0.6); // 60% for poor
+  } else if (maxLoss > 0.5 || maxJitter > 10) {
+    return Math.round(baseBitrate * 0.8); // 80% for fair
+  }
+  
+  return baseBitrate; // Full quality for good connections
 }
 
 // 모든 피어에 오디오 설정 적용
@@ -486,6 +572,22 @@ addGlobalListener(window, 'unhandledrejection', (e) => {
 
 // Use addGlobalListener instead of direct addEventListener
 addGlobalListener(document, 'keydown', (e) => {
+  // F1 or ? key: Show shortcuts help
+  if (e.key === 'F1' || (e.key === '?' && !e.target.matches('input, textarea'))) {
+    e.preventDefault();
+    $('shortcuts-overlay')?.classList.remove('hidden');
+    return;
+  }
+  
+  // Esc key: Hide shortcuts help
+  if (e.key === 'Escape') {
+    const overlay = $('shortcuts-overlay');
+    if (overlay && !overlay.classList.contains('hidden')) {
+      overlay.classList.add('hidden');
+      return;
+    }
+  }
+  
   // PTT 모드
   if (pttMode && !isPttActive && e.code === pttKey && localStream) {
     isPttActive = true;
@@ -932,6 +1034,7 @@ socket.on('server-shutdown', () => {
 // 재연결 시 방 자동 재입장
 socket.io.on('reconnect', () => {
   log('서버 재연결됨');
+  hideReconnectProgress();
   toast('서버 재연결됨', 'success');
   
   // TURN 자격증명 갱신
@@ -2526,26 +2629,84 @@ function setJitterBuffer(value) {
   }
 }
 
-// 실시간 자동 지터 버퍼 조절 (세션 중)
+// 실시간 자동 지터 버퍼 조절 (세션 중) - Enhanced
 function autoAdjustJitter() {
   if (!autoJitter || peers.size === 0) return;
   
-  let maxJitter = 0, maxLoss = 0;
+  let maxJitter = 0, maxLoss = 0, avgLatency = 0;
+  let peerCount = 0;
+  
   peers.forEach(peer => {
     if (peer.jitter > maxJitter) maxJitter = peer.jitter;
     if (peer.packetLoss > maxLoss) maxLoss = peer.packetLoss;
+    if (peer.latency) {
+      avgLatency += peer.latency;
+      peerCount++;
+    }
   });
   
-  // 패킷 손실이나 지터가 높으면 버퍼 증가
-  let target = 50; // 기본값
-  if (maxLoss > 3 || maxJitter > 30) target = 100;
-  else if (maxLoss > 1 || maxJitter > 15) target = 70;
+  if (peerCount > 0) avgLatency /= peerCount;
   
-  // 급격한 변화 방지 (점진적 조절)
-  if (Math.abs(jitterBuffer - target) > 20) {
-    const newValue = jitterBuffer + (target > jitterBuffer ? 10 : -10);
-    setJitterBuffer(newValue);
+  // Smarter buffer sizing based on network conditions
+  let target = 50; // 기본값
+  
+  // High packet loss or jitter - increase buffer significantly
+  if (maxLoss > 5 || maxJitter > 50) {
+    target = 120;
+  } else if (maxLoss > 3 || maxJitter > 30) {
+    target = 100;
+  } else if (maxLoss > 1 || maxJitter > 15) {
+    target = 70;
+  } else if (maxLoss < 0.5 && maxJitter < 5 && avgLatency < 30) {
+    // Excellent conditions - can use smaller buffer
+    target = 30;
   }
+  
+  // Consider connection type (WiFi needs larger buffer)
+  if (navigator.connection?.type === 'wifi') {
+    target += 10;
+  }
+  
+  // Gradual adjustment to prevent audio glitches
+  const diff = target - jitterBuffer;
+  if (Math.abs(diff) > 5) {
+    const step = Math.sign(diff) * Math.min(Math.abs(diff), 15);
+    const newValue = Math.max(20, Math.min(150, jitterBuffer + step));
+    setJitterBuffer(newValue);
+    
+    // Log adjustment for debugging
+    if (DEBUG) {
+      console.log(`Buffer adjusted: ${jitterBuffer}ms → ${newValue}ms (loss: ${maxLoss}%, jitter: ${maxJitter}ms)`);
+    }
+  }
+  
+  // Update quality indicator
+  updateQualityIndicator(maxJitter, maxLoss);
+}
+
+// Real-time connection quality indicator
+function updateQualityIndicator(jitter = 0, packetLoss = 0) {
+  const indicator = $('quality-indicator');
+  if (!indicator) return;
+  
+  indicator.classList.remove('hidden');
+  
+  let quality = 'excellent';
+  let text = '우수';
+  
+  if (packetLoss > 5 || jitter > 50) {
+    quality = 'poor';
+    text = '불안정';
+  } else if (packetLoss > 2 || jitter > 25) {
+    quality = 'fair'; 
+    text = '보통';
+  } else if (packetLoss > 0.5 || jitter > 10) {
+    quality = 'good';
+    text = '양호';
+  }
+  
+  indicator.className = `quality-indicator ${quality}`;
+  indicator.querySelector('.quality-text').textContent = text;
 }
 
 // VAD (음성 활동 감지)

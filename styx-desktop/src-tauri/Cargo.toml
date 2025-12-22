@@ -1,6 +1,6 @@
 [package]
 name = "styx-desktop"
-version = "1.0.5"
+version = "1.0.6"
 description = "Styx - HADES Real-time Audio Collaboration"
 authors = ["HADES"]
 license = "MIT"

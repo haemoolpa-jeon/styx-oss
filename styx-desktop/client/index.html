@@ -13,6 +13,41 @@
 </head>
 <body data-theme="dark">
   <div id="connection-status" title="서버 연결 상태"></div>
+  <div id="quality-indicator" class="quality-indicator hidden" title="연결 품질">
+    <div class="quality-bars">
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+    </div>
+    <span class="quality-text">연결 중...</span>
+  </div>
+  <div id="reconnect-overlay" class="reconnect-overlay hidden">
+    <div class="reconnect-content">
+      <div class="reconnect-spinner"></div>
+      <div class="reconnect-text">서버 재연결 중...</div>
+      <div class="reconnect-progress">
+        <div class="progress-bar"></div>
+      </div>
+      <div class="reconnect-attempt">시도 <span id="reconnect-count">1</span>/10</div>
+    </div>
+  </div>
+  <div id="shortcuts-overlay" class="shortcuts-overlay hidden">
+    <div class="shortcuts-content">
+      <div class="shortcuts-header">
+        <h3>키보드 단축키</h3>
+        <button class="close-btn" onclick="$('shortcuts-overlay').classList.add('hidden')">×</button>
+      </div>
+      <div class="shortcuts-list">
+        <div class="shortcut-item"><kbd>M</kbd> 음소거 토글</div>
+        <div class="shortcut-item"><kbd>Space</kbd> 메트로놈 토글</div>
+        <div class="shortcut-item"><kbd>R</kbd> 녹음 토글</div>
+        <div class="shortcut-item"><kbd>I</kbd> 초대 링크 복사</div>
+        <div class="shortcut-item"><kbd>F1</kbd> 또는 <kbd>?</kbd> 이 도움말</div>
+        <div class="shortcut-item"><kbd>Esc</kbd> 도움말 닫기</div>
+      </div>
+    </div>
+  </div>
   <div id="toast-container"></div>
 
   <div id="app">
