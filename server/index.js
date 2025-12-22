@@ -400,9 +400,10 @@ function cancelRoomDeletion(roomName) {
 const broadcastRoomList = () => {
   const list = [];
   rooms.forEach((data, name) => {
+    if (data.isPrivate) return; // Skip private rooms
     list.push({ 
-      name, userCount: data.users.size, hasPassword: !!data.passwordHash,
-      creatorUsername: data.creatorUsername,
+      name, userCount: data.users.size, maxUsers: data.maxUsers || 8,
+      hasPassword: !!data.passwordHash, creatorUsername: data.creatorUsername,
       users: [...data.users.values()].map(u => u.username) 
     });
   });
