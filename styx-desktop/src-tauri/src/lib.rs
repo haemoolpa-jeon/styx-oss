@@ -218,6 +218,7 @@ fn udp_start_relay_stream(state: State<'_, AppState>) -> Result<(), String> {
         stream_state.playback_buffer.clone(),
         input_device,
         output_device,
+        stream_state.input_level.clone(),
     )?;
     
     Ok(())
@@ -242,6 +243,13 @@ fn tcp_get_audio(state: State<'_, AppState>) -> Vec<u8> {
     } else {
         Vec::new()
     }
+}
+
+#[tauri::command]
+fn get_input_level(state: State<'_, AppState>) -> u32 {
+    state.udp_stream.lock()
+        .map(|s| s.input_level.load(Ordering::Relaxed))
+        .unwrap_or(0)
 }
 
 #[derive(serde::Serialize)]
@@ -386,6 +394,8 @@ pub fn run() {
             // TCP fallback
             tcp_receive_audio,
             tcp_get_audio,
+            // Audio level
+            get_input_level,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

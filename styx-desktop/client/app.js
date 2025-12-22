@@ -1588,6 +1588,10 @@ function startUdpStatsMonitor() {
       const stats = await tauriInvoke('get_udp_stats');
       updateUdpStatsUI(stats);
       
+      // Update input level meter
+      const inputLevel = await tauriInvoke('get_input_level');
+      updateInputLevelUI(inputLevel);
+      
       // Health check: if no packets received for 5 seconds, switch to TCP
       if (stats.is_running && stats.packets_received === 0) {
         udpHealthFailCount++;
@@ -1609,7 +1613,14 @@ function startUdpStatsMonitor() {
     } catch (e) {
       console.error('UDP 통계 조회 실패:', e);
     }
-  }, 1000);
+  }, 100); // 100ms for smoother meter
+}
+
+function updateInputLevelUI(level) {
+  const meter = $('audio-meter');
+  if (!meter) return;
+  meter.style.width = level + '%';
+  meter.style.background = level > 80 ? '#ff4757' : level > 50 ? '#ffa502' : '#2ed573';
 }
 
 function stopUdpStatsMonitor() {

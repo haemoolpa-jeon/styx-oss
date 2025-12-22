@@ -131,6 +131,7 @@ pub struct UdpStreamState {
     pub packets_received: Arc<AtomicU32>,
     pub packets_lost: Arc<AtomicU32>,
     pub peer_stats: Arc<Mutex<BTreeMap<SocketAddr, PeerStats>>>,
+    pub input_level: Arc<std::sync::atomic::AtomicU32>, // 0-100 input level
     // 장치 선택
     pub input_device: Option<String>,
     pub output_device: Option<String>,
@@ -153,6 +154,7 @@ impl Default for UdpStreamState {
             packets_received: Arc::new(AtomicU32::new(0)),
             packets_lost: Arc::new(AtomicU32::new(0)),
             peer_stats: Arc::new(Mutex::new(BTreeMap::new())),
+            input_level: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             input_device: None,
             output_device: None,
             relay_addr: None,
@@ -456,10 +458,11 @@ pub fn start_relay_loop(
     sequence: Arc<AtomicU32>,
     packets_sent: Arc<AtomicU32>,
     packets_received: Arc<AtomicU32>,
-    jitter_buffers: Arc<Mutex<BTreeMap<SocketAddr, JitterBuffer>>>,
+    _jitter_buffers: Arc<Mutex<BTreeMap<SocketAddr, JitterBuffer>>>,
     playback_buffer: Arc<Mutex<VecDeque<f32>>>,
     input_device: Option<String>,
     output_device: Option<String>,
+    input_level: Arc<AtomicU32>,
 ) -> Result<(), String> {
     let session_bytes = session_id.as_bytes().to_vec();
     
@@ -468,18 +471,27 @@ pub fn start_relay_loop(
     let is_running_send = is_running.clone();
     let is_muted_send = is_muted.clone();
     let session_send = session_bytes.clone();
+    let input_level_send = input_level.clone();
     
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut encoder = create_encoder().unwrap();
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(r) => r,
+            Err(e) => { eprintln!("[AUDIO] 런타임 생성 실패: {}", e); return; }
+        };
+        let mut encoder = match create_encoder() {
+            Ok(e) => e,
+            Err(e) => { eprintln!("[AUDIO] 인코더 생성 실패: {}", e); return; }
+        };
         let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
         
         // 오디오 입력 스트림
         let host = cpal::default_host();
-        let device = input_device
+        let device = match input_device
             .and_then(|name| host.input_devices().ok()?.find(|d| d.name().ok().as_ref() == Some(&name)))
-            .or_else(|| host.default_input_device())
-            .expect("입력 장치 없음");
+            .or_else(|| host.default_input_device()) {
+            Some(d) => d,
+            None => { eprintln!("[AUDIO] 입력 장치 없음"); return; }
+        };
         
         let config = cpal::StreamConfig {
             channels: 1,
@@ -487,16 +499,28 @@ pub fn start_relay_loop(
             buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
         };
         
-        let _stream = device.build_input_stream(
+        let stream = match device.build_input_stream(
             &config,
             move |data: &[f32], _| { let _ = tx.send(data.to_vec()); },
-            |e| eprintln!("입력 오류: {}", e),
+            |e| eprintln!("[AUDIO] 입력 오류: {}", e),
             None,
-        ).unwrap();
-        _stream.play().unwrap();
+        ) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("[AUDIO] 입력 스트림 생성 실패: {}", e); return; }
+        };
+        if let Err(e) = stream.play() {
+            eprintln!("[AUDIO] 입력 스트림 시작 실패: {}", e);
+            return;
+        }
+        let _stream = stream;
         
         while is_running_send.load(Ordering::SeqCst) {
             if let Ok(samples) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                // Calculate input level (RMS)
+                let rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+                let level = (rms * 200.0).min(100.0) as u32; // Scale to 0-100
+                input_level_send.store(level, Ordering::Relaxed);
+                
                 if is_muted_send.load(Ordering::SeqCst) { continue; }
                 
                 if let Ok(encoded) = encode_frame(&mut encoder, &samples) {
@@ -529,15 +553,20 @@ pub fn start_relay_loop(
     
     // 수신 루프
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(r) => r,
+            Err(e) => { eprintln!("[AUDIO] 런타임 생성 실패: {}", e); return; }
+        };
         let mut decoders: BTreeMap<String, Decoder> = BTreeMap::new();
         
         // 오디오 출력 스트림
         let host = cpal::default_host();
-        let device = output_device
+        let device = match output_device
             .and_then(|name| host.output_devices().ok()?.find(|d| d.name().ok().as_ref() == Some(&name)))
-            .or_else(|| host.default_output_device())
-            .expect("출력 장치 없음");
+            .or_else(|| host.default_output_device()) {
+            Some(d) => d,
+            None => { eprintln!("[AUDIO] 출력 장치 없음"); return; }
+        };
         
         let config = cpal::StreamConfig {
             channels: 1,
@@ -546,7 +575,7 @@ pub fn start_relay_loop(
         };
         
         let pb = playback_buffer.clone();
-        let _stream = device.build_output_stream(
+        let stream = match device.build_output_stream(
             &config,
             move |data: &mut [f32], _| {
                 if let Ok(mut buf) = pb.lock() {
@@ -555,10 +584,17 @@ pub fn start_relay_loop(
                     }
                 }
             },
-            |e| eprintln!("출력 오류: {}", e),
+            |e| eprintln!("[AUDIO] 출력 오류: {}", e),
             None,
-        ).unwrap();
-        _stream.play().unwrap();
+        ) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("[AUDIO] 출력 스트림 생성 실패: {}", e); return; }
+        };
+        if let Err(e) = stream.play() {
+            eprintln!("[AUDIO] 출력 스트림 시작 실패: {}", e);
+            return;
+        }
+        let _stream = stream;
         
         const SESSION_ID_LEN: usize = 20;
         let mut buf = vec![0u8; 2000];
