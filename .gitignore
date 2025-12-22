@@ -23,9 +23,6 @@ server.log
 # Build outputs
 styx-desktop/src-tauri/target/
 
-# Documentation (not needed in OSS)
-docs/
-
 # IDE
 .vscode/
 .idea/

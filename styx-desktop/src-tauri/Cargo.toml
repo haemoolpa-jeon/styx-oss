@@ -1,6 +1,6 @@
 [package]
 name = "styx-desktop"
-version = "1.0.0"
+version = "1.1.4"
 description = "Styx - HADES Real-time Audio Collaboration"
 authors = ["HADES"]
 license = "MIT"
@@ -30,3 +30,4 @@ opus = "0.3"
 
 # UDP 네트워킹
 tokio = { version = "1", features = ["net", "rt-multi-thread", "sync", "macros", "time"] }
+socket2 = "0.5"

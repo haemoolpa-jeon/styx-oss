@@ -1,9 +1,10 @@
 // Styx 서버 - 실시간 오디오 협업
-// Socket.IO 시그널링 서버 + 사용자 인증 + 채팅 + 메트로놈
+// Socket.IO 시그널링 서버 + 사용자 인증 + 채팅 + 메트로놈 + UDP 릴레이
 
 const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
+const dgram = require('dgram');
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
@@ -101,10 +102,17 @@ app.use((req, res, next) => {
 });
 
 // Security headers
-app.use(helmet({
-  contentSecurityPolicy: false, // Disabled for Socket.IO compatibility
-  crossOriginEmbedderPolicy: false
-}));
+app.use((req, res, next) => {
+  // Skip CORP for avatars - allow cross-origin
+  if (req.path.startsWith('/avatars')) {
+    return next();
+  }
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" }
+  })(req, res, next);
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -150,8 +158,8 @@ let whitelistEnabled = false;
 
 function loadWhitelist() {
   try {
-    if (fs.existsSync(WHITELIST_FILE)) {
-      const data = JSON.parse(fs.readFileSync(WHITELIST_FILE, 'utf8'));
+    if (fsSync.existsSync(WHITELIST_FILE)) {
+      const data = JSON.parse(fsSync.readFileSync(WHITELIST_FILE, 'utf8'));
       ipWhitelist = new Set(data.ips || []);
       whitelistEnabled = data.enabled || false;
       console.log(`✓ IP whitelist loaded: ${ipWhitelist.size} IPs, enabled: ${whitelistEnabled}`);
@@ -163,7 +171,7 @@ function loadWhitelist() {
 
 function saveWhitelist() {
   try {
-    fs.writeFileSync(WHITELIST_FILE, JSON.stringify({
+    fsSync.writeFileSync(WHITELIST_FILE, JSON.stringify({
       enabled: whitelistEnabled,
       ips: Array.from(ipWhitelist),
       lastModified: new Date().toISOString()
@@ -354,7 +362,12 @@ setInterval(async () => {
 // Serve client files: config.js from client/, rest from shared/client/
 app.use(express.static(path.join(__dirname, '../client'))); // config.js override
 app.use(express.static(path.join(__dirname, '../shared/client'))); // shared files
-app.use('/avatars', express.static(AVATARS_DIR));
+app.use('/avatars', (req, res, next) => {
+  res.removeHeader('Cross-Origin-Resource-Policy');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(AVATARS_DIR));
 
 // 방 상태
 const rooms = new Map();
@@ -387,9 +400,10 @@ function cancelRoomDeletion(roomName) {
 const broadcastRoomList = () => {
   const list = [];
   rooms.forEach((data, name) => {
+    if (data.isPrivate) return; // Skip private rooms
     list.push({ 
-      name, userCount: data.users.size, hasPassword: !!data.passwordHash,
-      creatorUsername: data.creatorUsername,
+      name, userCount: data.users.size, maxUsers: data.maxUsers || 8,
+      hasPassword: !!data.passwordHash, creatorUsername: data.creatorUsername,
       users: [...data.users.values()].map(u => u.username) 
     });
   });
@@ -810,7 +824,7 @@ io.on('connection', (socket) => {
       broadcastRoomList();
       console.log(`[JOIN] ${username} entered room: ${room} (${roomData.users.size}/${roomData.maxUsers})`);
     } catch (e) {
-      console.error('[JOIN_ERROR] Room join failed:', e.message);
+      console.error('[JOIN_ERROR] Room join failed:', e.message, e.stack);
       cb({ error: 'Server error' });
     }
   });
@@ -980,6 +994,162 @@ io.on('connection', (socket) => {
       if (roomData.users.size === 0) scheduleRoomDeletion(socket.room);
       broadcastRoomList();
       console.log(`[LEAVE] ${socket.username} left ${socket.room}`);
+    }
+  });
+});
+
+// UDP Relay Server (optimized)
+const UDP_PORT = parseInt(process.env.UDP_PORT) || 5000;
+const udpServer = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+const SESSION_ID_LEN = 20;
+
+// Optimized data structures
+const udpClients = new Map(); // sessionId -> { address, port, roomId }
+const roomMembers = new Map(); // roomId -> Set<sessionId> (O(1) room lookup)
+
+// Pre-allocated buffer for relay
+const MAX_PACKET_SIZE = 1500;
+const relayBuffer = Buffer.alloc(MAX_PACKET_SIZE + SESSION_ID_LEN);
+
+// Stats
+let udpStats = { packetsIn: 0, packetsOut: 0, bytesIn: 0, bytesOut: 0 };
+
+udpServer.on('message', (msg, rinfo) => {
+  if (msg.length < SESSION_ID_LEN + 1 || msg.length > MAX_PACKET_SIZE) return;
+  
+  const sessionId = msg.slice(0, SESSION_ID_LEN).toString();
+  const payload = msg.slice(SESSION_ID_LEN);
+  
+  udpStats.packetsIn++;
+  udpStats.bytesIn += msg.length;
+  
+  // Handle ping (health check) - payload starts with 'P'
+  if (payload.length === 1 && payload[0] === 0x50) { // 'P' = ping
+    udpServer.send(Buffer.from([0x4F]), rinfo.port, rinfo.address); // 'O' = pong
+    return;
+  }
+  
+  // Register/update client
+  let client = udpClients.get(sessionId);
+  if (!client) {
+    udpClients.set(sessionId, { address: rinfo.address, port: rinfo.port, roomId: null, lastSeen: Date.now() });
+    return;
+  }
+  
+  // Update address if changed (NAT rebinding)
+  if (client.address !== rinfo.address || client.port !== rinfo.port) {
+    client.address = rinfo.address;
+    client.port = rinfo.port;
+  }
+  client.lastSeen = Date.now();
+  
+  if (!client.roomId) return;
+  
+  // O(1) room member lookup
+  const members = roomMembers.get(client.roomId);
+  if (!members) return;
+  
+  // Relay to room members (using pre-allocated buffer)
+  const packetLen = SESSION_ID_LEN + payload.length;
+  msg.copy(relayBuffer, 0, 0, SESSION_ID_LEN); // Copy sender ID
+  payload.copy(relayBuffer, SESSION_ID_LEN);    // Copy payload
+  
+  for (const otherId of members) {
+    if (otherId === sessionId) continue;
+    const other = udpClients.get(otherId);
+    if (!other) continue;
+    
+    udpServer.send(relayBuffer, 0, packetLen, other.port, other.address);
+    udpStats.packetsOut++;
+    udpStats.bytesOut += packetLen;
+  }
+});
+
+// Helper: Add client to room
+function addToRoom(sessionId, roomId) {
+  const client = udpClients.get(sessionId);
+  if (client) {
+    // Remove from old room
+    if (client.roomId && roomMembers.has(client.roomId)) {
+      roomMembers.get(client.roomId).delete(sessionId);
+    }
+    // Add to new room
+    client.roomId = roomId;
+    if (!roomMembers.has(roomId)) roomMembers.set(roomId, new Set());
+    roomMembers.get(roomId).add(sessionId);
+  }
+}
+
+// Helper: Remove client
+function removeUdpClient(sessionId) {
+  const client = udpClients.get(sessionId);
+  if (client?.roomId && roomMembers.has(client.roomId)) {
+    roomMembers.get(client.roomId).delete(sessionId);
+    if (roomMembers.get(client.roomId).size === 0) {
+      roomMembers.delete(client.roomId);
+    }
+  }
+  udpClients.delete(sessionId);
+}
+
+udpServer.on('listening', () => console.log(`[UDP] Relay server on port ${UDP_PORT}`));
+udpServer.on('error', (err) => console.error('[UDP] Error:', err));
+udpServer.bind(UDP_PORT);
+
+// UDP stats and stale client cleanup (every 30 seconds)
+setInterval(() => {
+  const now = Date.now();
+  let staleCount = 0;
+  for (const [sessionId, client] of udpClients) {
+    if (now - client.lastSeen > 30000) {
+      removeUdpClient(sessionId);
+      staleCount++;
+    }
+  }
+  if (staleCount > 0) console.log(`[UDP] Cleaned ${staleCount} stale clients`);
+  if (udpStats.packetsIn > 0) {
+    console.log(`[UDP] Stats: ${udpStats.packetsIn} in, ${udpStats.packetsOut} out, ${udpClients.size} clients, ${roomMembers.size} rooms`);
+    udpStats = { packetsIn: 0, packetsOut: 0, bytesIn: 0, bytesOut: 0 };
+  }
+}, 30000);
+
+// TCP Relay (via Socket.IO binary) - fallback when UDP blocked
+const tcpClients = new Map(); // sessionId -> { socket, roomId }
+
+io.on('connection', (socket) => {
+  // UDP room binding
+  socket.on('udp-bind-room', ({ sessionId, roomId }) => {
+    addToRoom(sessionId, roomId);
+    socket.udpSessionId = sessionId;
+    console.log(`[UDP] Client bound: ${sessionId.slice(0,8)}... -> ${roomId}`);
+  });
+  
+  // TCP relay binding
+  socket.on('tcp-bind-room', ({ roomId }) => {
+    tcpClients.set(socket.id, { socket, roomId });
+    socket.tcpRelay = true;
+    console.log(`[TCP] Client bound: ${socket.id} -> ${roomId}`);
+  });
+  
+  // TCP audio relay (binary)
+  socket.on('tcp-audio', (audioData) => {
+    const client = tcpClients.get(socket.id);
+    if (!client?.roomId) return;
+    
+    // Relay to all other TCP clients in same room
+    for (const [otherId, other] of tcpClients) {
+      if (otherId !== socket.id && other.roomId === client.roomId) {
+        other.socket.emit('tcp-audio', socket.id, audioData);
+      }
+    }
+  });
+  
+  socket.on('disconnect', () => {
+    if (socket.udpSessionId) {
+      removeUdpClient(socket.udpSessionId);
+    }
+    if (socket.tcpRelay) {
+      tcpClients.delete(socket.id);
     }
   });
 });
