@@ -1557,7 +1557,7 @@ async function startUdpMode() {
     log('UDP 포트 바인딩:', udpPort);
     
     // Always use relay server (simpler, works for everyone)
-    const relayHost = new URL(serverUrl).hostname;
+    const relayHost = serverUrl ? new URL(serverUrl).hostname : window.location.hostname;
     const mySessionId = socket.id;
     
     // Try UDP first
