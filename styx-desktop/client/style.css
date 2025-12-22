@@ -10,6 +10,8 @@
   --text-secondary: #8888aa;
   --accent: #6c5ce7;
   --accent-hover: #7d6ff0;
+  --primary: #6c5ce7;
+  --danger: #ff4757;
   --success: #00d26a;
   --warning: #ffc107;
   --error: #ff4757;
@@ -470,10 +472,11 @@ input[type="range"]::-webkit-slider-thumb {
 .card-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-top: 8px; }
 .volume-slider { width: 70px; }
 .volume-label { font-size: 11px; color: var(--text-secondary); min-width: 30px; }
-.role-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--bg-input); }
-.role-badge.role-host { background: var(--accent); color: white; }
-.role-badge.role-listener { background: var(--text-secondary); color: white; }
-.role-select { font-size: 10px; padding: 2px 4px; border-radius: 4px; background: var(--bg-input); border: 1px solid var(--border); color: var(--text); }
+.role-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--bg-card); color: var(--text-secondary); }
+.role-badge.role-host { background: rgba(255, 165, 2, 0.3); color: var(--warning); }
+.role-badge.role-performer { background: rgba(46, 213, 115, 0.2); color: var(--success); }
+.role-badge.role-listener { background: rgba(108, 92, 231, 0.2); color: var(--accent); }
+.role-select { font-size: 11px; padding: 2px 4px; border-radius: 4px; background: var(--bg-input); border: 1px solid var(--border); color: var(--text-primary); }
 .kick-btn { padding: 3px 6px; font-size: 10px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
 .reconnect-btn { padding: 3px 6px; font-size: 10px; background: var(--warning, #ffa502); color: white; border: none; border-radius: 4px; cursor: pointer; }
 .reconnect-btn:hover { opacity: 0.8; }
@@ -549,18 +552,6 @@ input[type="range"]::-webkit-slider-thumb {
 }
 #screenShareBtn.sharing { background: var(--accent); }
 
-/* Role badges */
-.role-badge {
-  font-size: 10px; padding: 2px 6px; border-radius: 4px;
-  background: var(--bg-card); color: var(--text-secondary);
-}
-.role-host { background: rgba(255, 165, 2, 0.3); color: var(--warning); }
-.role-performer { background: rgba(46, 213, 115, 0.2); color: var(--success); }
-.role-listener { background: rgba(108, 92, 231, 0.2); color: var(--accent); }
-.role-select {
-  font-size: 11px; padding: 2px 4px; border-radius: 4px;
-  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-primary);
-}
 #my-role-badge { margin-left: 8px; font-size: 12px; }
 
 /* Effects panel */
@@ -597,7 +588,7 @@ input[type="range"]::-webkit-slider-thumb {
 .whitelist-controls { margin-bottom: 12px; }
 .whitelist-controls label { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .whitelist-add { display: flex; gap: 8px; }
-.whitelist-add input { flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); }
+.whitelist-add input { flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-primary); }
 .whitelist-item { display: flex; justify-content: space-between; align-items: center; padding: 8px; background: var(--bg-input); border-radius: 4px; margin-bottom: 4px; }
 .whitelist-item button { background: #e94560; border: none; color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
 .btn-small { padding: 6px 12px; border-radius: 4px; border: none; background: var(--primary); color: white; cursor: pointer; }
@@ -625,12 +616,12 @@ input[type="range"]::-webkit-slider-thumb {
 .toolbar-select {
   background: var(--bg-secondary);
   color: var(--text-primary);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 4px 8px;
   font-size: 12px;
   cursor: pointer;
 }
 .toolbar-select:hover {
-  border-color: var(--accent-color);
+  border-color: var(--accent);
 }
