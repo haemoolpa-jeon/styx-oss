@@ -219,15 +219,29 @@ fn udp_start_relay_stream(state: State<'_, AppState>) -> Result<(), String> {
         input_device,
         output_device,
         stream_state.input_level.clone(),
+        stream_state.bitrate.clone(),
     )?;
     
     Ok(())
 }
 
+// ===== Bitrate Control =====
+
+#[tauri::command]
+fn set_bitrate(bitrate_kbps: u32, state: State<'_, AppState>) {
+    let clamped = bitrate_kbps.max(16).min(256); // 16-256 kbps
+    state.udp_stream.lock().unwrap().bitrate.store(clamped, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn get_bitrate(state: State<'_, AppState>) -> u32 {
+    state.udp_stream.lock().unwrap().bitrate.load(Ordering::Relaxed)
+}
+
 // ===== TCP Fallback Commands =====
 
 #[tauri::command]
-fn tcp_receive_audio(sender_id: String, data: Vec<u8>, state: State<'_, AppState>) {
+fn tcp_receive_audio(_sender_id: String, data: Vec<u8>, state: State<'_, AppState>) {
     if let Ok(mut buf) = state.tcp_recv_buffer.lock() {
         buf.push_back(data);
         // Limit buffer size
@@ -394,8 +408,10 @@ pub fn run() {
             // TCP fallback
             tcp_receive_audio,
             tcp_get_audio,
-            // Audio level
+            // Audio level & bitrate
             get_input_level,
+            set_bitrate,
+            get_bitrate,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

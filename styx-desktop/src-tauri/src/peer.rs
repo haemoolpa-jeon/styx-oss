@@ -131,7 +131,8 @@ pub struct UdpStreamState {
     pub packets_received: Arc<AtomicU32>,
     pub packets_lost: Arc<AtomicU32>,
     pub peer_stats: Arc<Mutex<BTreeMap<SocketAddr, PeerStats>>>,
-    pub input_level: Arc<std::sync::atomic::AtomicU32>, // 0-100 input level
+    pub input_level: Arc<AtomicU32>, // 0-100 input level
+    pub bitrate: Arc<AtomicU32>, // Opus bitrate in kbps
     // 장치 선택
     pub input_device: Option<String>,
     pub output_device: Option<String>,
@@ -154,7 +155,8 @@ impl Default for UdpStreamState {
             packets_received: Arc::new(AtomicU32::new(0)),
             packets_lost: Arc::new(AtomicU32::new(0)),
             peer_stats: Arc::new(Mutex::new(BTreeMap::new())),
-            input_level: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            input_level: Arc::new(AtomicU32::new(0)),
+            bitrate: Arc::new(AtomicU32::new(96)), // 96kbps default
             input_device: None,
             output_device: None,
             relay_addr: None,
@@ -164,14 +166,18 @@ impl Default for UdpStreamState {
 }
 
 // Opus 인코더/디코더 생성
-pub fn create_encoder() -> Result<Encoder, String> {
+pub fn create_encoder_with_bitrate(bitrate_kbps: u32) -> Result<Encoder, String> {
     let mut encoder = Encoder::new(48000, Channels::Mono, Application::LowDelay)
         .map_err(|e| format!("Opus 인코더 생성 실패: {:?}", e))?;
-    encoder.set_bitrate(opus::Bitrate::Bits(96000)).ok(); // 96kbps for music
-    encoder.set_inband_fec(true).ok(); // Forward Error Correction
-    encoder.set_packet_loss_perc(5).ok(); // 5% 손실 대비 (낮출수록 저지연)
-    encoder.set_vbr(false).ok(); // CBR for consistent latency
+    encoder.set_bitrate(opus::Bitrate::Bits(bitrate_kbps as i32 * 1000)).ok();
+    encoder.set_inband_fec(true).ok();
+    encoder.set_packet_loss_perc(5).ok();
+    encoder.set_vbr(false).ok();
     Ok(encoder)
+}
+
+pub fn create_encoder() -> Result<Encoder, String> {
+    create_encoder_with_bitrate(96)
 }
 
 pub fn create_decoder() -> Result<Decoder, String> {
@@ -463,8 +469,10 @@ pub fn start_relay_loop(
     input_device: Option<String>,
     output_device: Option<String>,
     input_level: Arc<AtomicU32>,
+    bitrate: Arc<AtomicU32>,
 ) -> Result<(), String> {
     let session_bytes = session_id.as_bytes().to_vec();
+    let bitrate_kbps = bitrate.load(Ordering::Relaxed);
     
     // 송신 루프
     let socket_send = socket.clone();
@@ -478,7 +486,7 @@ pub fn start_relay_loop(
             Ok(r) => r,
             Err(e) => { eprintln!("[AUDIO] 런타임 생성 실패: {}", e); return; }
         };
-        let mut encoder = match create_encoder() {
+        let mut encoder = match create_encoder_with_bitrate(bitrate_kbps) {
             Ok(e) => e,
             Err(e) => { eprintln!("[AUDIO] 인코더 생성 실패: {}", e); return; }
         };

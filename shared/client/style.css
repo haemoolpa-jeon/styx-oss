@@ -620,3 +620,17 @@ input[type="range"]::-webkit-slider-thumb {
 .spectator-banner .download-link:hover {
   color: #ffd700;
 }
+
+/* 비트레이트 선택 */
+.toolbar-select {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.toolbar-select:hover {
+  border-color: var(--accent-color);
+}

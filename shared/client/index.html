@@ -379,6 +379,16 @@
           <span id="room-jitter-value" class="toolbar-value">50ms</span>
           <label class="toolbar-check"><input type="checkbox" id="room-auto-jitter" checked> 자동</label>
         </div>
+        <div class="toolbar-section tauri-only" id="bitrate-section" style="display:none;">
+          <span class="toolbar-label">음질:</span>
+          <select id="bitrate-select" class="toolbar-select">
+            <option value="48">48kbps (저용량)</option>
+            <option value="64">64kbps</option>
+            <option value="96" selected>96kbps (권장)</option>
+            <option value="128">128kbps (고음질)</option>
+            <option value="192">192kbps (최고)</option>
+          </select>
+        </div>
         <div class="toolbar-section metronome-section">
           <button id="metronome-toggle" class="btn-metro">▶️</button>
           <input type="number" id="bpm-input" value="120" min="30" max="300" class="bpm-input">
