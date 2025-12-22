@@ -173,6 +173,52 @@ fn udp_stop_stream(state: State<'_, AppState>) {
     stream_state.is_running.store(false, Ordering::SeqCst);
 }
 
+#[tauri::command]
+fn udp_set_relay(host: String, port: u16, session_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let addr: std::net::SocketAddr = format!("{}:{}", host, port)
+        .parse()
+        .map_err(|e| format!("릴레이 주소 파싱 실패: {}", e))?;
+    let mut stream_state = state.udp_stream.lock().unwrap();
+    stream_state.relay_addr = Some(addr);
+    stream_state.session_id = Some(session_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn udp_start_relay_stream(state: State<'_, AppState>) -> Result<(), String> {
+    let stream_state = state.udp_stream.lock().unwrap();
+    
+    if stream_state.is_running.load(Ordering::SeqCst) {
+        return Err("이미 실행 중".to_string());
+    }
+    
+    let socket = stream_state.socket.clone().ok_or("소켓 없음")?;
+    let relay_addr = stream_state.relay_addr.ok_or("릴레이 주소 없음")?;
+    let session_id = stream_state.session_id.clone().ok_or("세션 ID 없음")?;
+    let input_device = stream_state.input_device.clone();
+    let output_device = stream_state.output_device.clone();
+    
+    stream_state.is_running.store(true, Ordering::SeqCst);
+    
+    // 릴레이 모드 송수신 시작
+    peer::start_relay_loop(
+        socket,
+        relay_addr,
+        session_id,
+        stream_state.is_running.clone(),
+        stream_state.is_muted.clone(),
+        stream_state.sequence.clone(),
+        stream_state.packets_sent.clone(),
+        stream_state.packets_received.clone(),
+        stream_state.jitter_buffers.clone(),
+        stream_state.playback_buffer.clone(),
+        input_device,
+        output_device,
+    )?;
+    
+    Ok(())
+}
+
 #[derive(serde::Serialize)]
 struct UdpStats {
     packets_sent: u32,
@@ -245,6 +291,35 @@ fn get_peer_stats(state: State<'_, AppState>) -> Vec<PeerStatsResponse> {
         .unwrap_or_default()
 }
 
+// ===== Firewall Setup =====
+
+#[tauri::command]
+fn setup_firewall() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        
+        let exe_path = std::env::current_exe()
+            .map_err(|e| e.to_string())?;
+        
+        let output = Command::new("netsh")
+            .args(["advfirewall", "firewall", "add", "rule", 
+                   "name=Styx UDP", "dir=in", "action=allow", 
+                   "protocol=UDP", "localport=10000-65535",
+                   &format!("program={}", exe_path.display())])
+            .output();
+        
+        match output {
+            Ok(o) if o.status.success() => Ok("Firewall configured".to_string()),
+            Ok(o) => Err(String::from_utf8_lossy(&o.stderr).to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    Ok("Not required on this platform".to_string())
+}
+
 // ===== 앱 실행 =====
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -276,8 +351,11 @@ pub fn run() {
             set_audio_devices,
             udp_start_stream,
             udp_stop_stream,
+            udp_set_relay,
+            udp_start_relay_stream,
             get_udp_stats,
             get_peer_stats,
+            setup_firewall,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

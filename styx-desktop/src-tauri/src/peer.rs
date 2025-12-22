@@ -134,6 +134,9 @@ pub struct UdpStreamState {
     // 장치 선택
     pub input_device: Option<String>,
     pub output_device: Option<String>,
+    // 릴레이 모드
+    pub relay_addr: Option<SocketAddr>,
+    pub session_id: Option<String>,
 }
 
 impl Default for UdpStreamState {
@@ -152,6 +155,8 @@ impl Default for UdpStreamState {
             peer_stats: Arc::new(Mutex::new(BTreeMap::new())),
             input_device: None,
             output_device: None,
+            relay_addr: None,
+            session_id: None,
         }
     }
 }
@@ -433,6 +438,151 @@ pub fn start_recv_loop(
                         }
                     }
                 }
+            }
+        }
+    });
+    
+    Ok(())
+}
+
+
+// 릴레이 모드 송수신 루프
+pub fn start_relay_loop(
+    socket: Arc<UdpSocket>,
+    relay_addr: SocketAddr,
+    session_id: String,
+    is_running: Arc<AtomicBool>,
+    is_muted: Arc<AtomicBool>,
+    sequence: Arc<AtomicU32>,
+    packets_sent: Arc<AtomicU32>,
+    packets_received: Arc<AtomicU32>,
+    jitter_buffers: Arc<Mutex<BTreeMap<SocketAddr, JitterBuffer>>>,
+    playback_buffer: Arc<Mutex<VecDeque<f32>>>,
+    input_device: Option<String>,
+    output_device: Option<String>,
+) -> Result<(), String> {
+    let session_bytes = session_id.as_bytes().to_vec();
+    
+    // 송신 루프
+    let socket_send = socket.clone();
+    let is_running_send = is_running.clone();
+    let is_muted_send = is_muted.clone();
+    let session_send = session_bytes.clone();
+    
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut encoder = create_encoder().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
+        
+        // 오디오 입력 스트림
+        let host = cpal::default_host();
+        let device = input_device
+            .and_then(|name| host.input_devices().ok()?.find(|d| d.name().ok().as_ref() == Some(&name)))
+            .or_else(|| host.default_input_device())
+            .expect("입력 장치 없음");
+        
+        let config = cpal::StreamConfig {
+            channels: 1,
+            sample_rate: cpal::SampleRate(48000),
+            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
+        };
+        
+        let _stream = device.build_input_stream(
+            &config,
+            move |data: &[f32], _| { let _ = tx.send(data.to_vec()); },
+            |e| eprintln!("입력 오류: {}", e),
+            None,
+        ).unwrap();
+        _stream.play().unwrap();
+        
+        while is_running_send.load(Ordering::SeqCst) {
+            if let Ok(samples) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                if is_muted_send.load(Ordering::SeqCst) { continue; }
+                
+                if let Ok(encoded) = encode_frame(&mut encoder, &samples) {
+                    let seq = sequence.fetch_add(1, Ordering::SeqCst);
+                    let header = AudioPacketHeader { 
+                        sequence: seq, 
+                        timestamp: 0, 
+                        sample_rate: 48000, 
+                        channels: 1, 
+                        payload_len: encoded.len() as u16 
+                    };
+                    
+                    // 세션ID(20) + 헤더 + 데이터 (Socket.IO ID is 20 chars)
+                    let mut packet = Vec::with_capacity(20 + AudioPacketHeader::SIZE + encoded.len());
+                    // Pad session ID to exactly 20 bytes
+                    let mut padded_session = [0u8; 20];
+                    let session_bytes = session_send.as_slice();
+                    let copy_len = session_bytes.len().min(20);
+                    padded_session[..copy_len].copy_from_slice(&session_bytes[..copy_len]);
+                    packet.extend_from_slice(&padded_session);
+                    packet.extend_from_slice(&header.to_bytes());
+                    packet.extend_from_slice(&encoded);
+                    
+                    rt.block_on(async { let _ = socket_send.send_to(&packet, relay_addr).await; });
+                    packets_sent.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+    });
+    
+    // 수신 루프
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut decoders: BTreeMap<String, Decoder> = BTreeMap::new();
+        
+        // 오디오 출력 스트림
+        let host = cpal::default_host();
+        let device = output_device
+            .and_then(|name| host.output_devices().ok()?.find(|d| d.name().ok().as_ref() == Some(&name)))
+            .or_else(|| host.default_output_device())
+            .expect("출력 장치 없음");
+        
+        let config = cpal::StreamConfig {
+            channels: 1,
+            sample_rate: cpal::SampleRate(48000),
+            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
+        };
+        
+        let pb = playback_buffer.clone();
+        let _stream = device.build_output_stream(
+            &config,
+            move |data: &mut [f32], _| {
+                if let Ok(mut buf) = pb.lock() {
+                    for sample in data.iter_mut() {
+                        *sample = buf.pop_front().unwrap_or(0.0);
+                    }
+                }
+            },
+            |e| eprintln!("출력 오류: {}", e),
+            None,
+        ).unwrap();
+        _stream.play().unwrap();
+        
+        const SESSION_ID_LEN: usize = 20;
+        let mut buf = vec![0u8; 2000];
+        while is_running.load(Ordering::SeqCst) {
+            match rt.block_on(async {
+                tokio::time::timeout(std::time::Duration::from_millis(100), socket.recv_from(&mut buf)).await
+            }) {
+                Ok(Ok((len, _))) if len > SESSION_ID_LEN + AudioPacketHeader::SIZE => {
+                    let sender_id = String::from_utf8_lossy(&buf[..SESSION_ID_LEN]).trim_end_matches('\0').to_string();
+                    if sender_id == session_id { continue; } // 자신의 패킷 무시
+                    
+                    let _header = AudioPacketHeader::from_bytes(&buf[SESSION_ID_LEN..SESSION_ID_LEN + AudioPacketHeader::SIZE]);
+                    let payload = &buf[SESSION_ID_LEN + AudioPacketHeader::SIZE..len];
+                    
+                    let decoder = decoders.entry(sender_id).or_insert_with(|| create_decoder().unwrap());
+                    if let Ok(samples) = decode_frame(decoder, payload) {
+                        packets_received.fetch_add(1, Ordering::Relaxed);
+                        if let Ok(mut pb) = playback_buffer.lock() {
+                            pb.extend(samples);
+                            while pb.len() > 9600 { pb.pop_front(); }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     });

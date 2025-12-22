@@ -89,12 +89,25 @@ function getPeerAudioContext() {
   return peerAudioContext;
 }
 
+// Resume audio contexts on user interaction (browser autoplay policy)
+document.addEventListener('click', function resumeAudio() {
+  if (peerAudioContext?.state === 'suspended') peerAudioContext.resume();
+  if (inputMonitorCtx?.state === 'suspended') inputMonitorCtx.resume();
+  if (tunerCtx?.state === 'suspended') tunerCtx.resume();
+}, { once: false });
+
 // 입력 오디오에 리미터/컴프레서 + EQ 적용 (저지연)
 let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0 };
 let effectNodes = {};
 
 function createProcessedInputStream(rawStream) {
   inputLimiterContext = new AudioContext({ sampleRate: 48000 });
+  
+  // Resume if suspended
+  if (inputLimiterContext.state === 'suspended') {
+    inputLimiterContext.resume();
+  }
+  
   const source = inputLimiterContext.createMediaStreamSource(rawStream);
   
   // EQ (3밴드) - 지연 거의 없음 (~0.1ms each)
@@ -151,9 +164,6 @@ try { inputEffects = JSON.parse(localStorage.getItem('styx-effects')) || inputEf
 const _isTauriApp = typeof window.__TAURI__ !== 'undefined';
 const tauriInvoke = _isTauriApp ? window.__TAURI__.core.invoke : null;
 
-// 연결 모드: 'webrtc' | 'udp'
-let connectionMode = localStorage.getItem('styx-connection-mode') || 'webrtc';
-
 // 안정성 설정
 let audioMode = localStorage.getItem('styx-audio-mode') || 'voice'; // voice | music
 let jitterBuffer = parseInt(localStorage.getItem('styx-jitter-buffer')) || 50; // ms (낮을수록 저지연, 높을수록 안정)
@@ -172,6 +182,87 @@ let compressorNode = null;
 let noiseGateInterval = null;
 let latencyHistory = []; // 핑 그래프용
 let serverTimeOffset = 0; // 서버 시간과 클라이언트 시간 차이 (ms)
+
+// Audio input monitoring
+let inputMonitorEnabled = localStorage.getItem('styx-input-monitor') === 'true';
+let inputMonitorGain = null;
+let inputMonitorCtx = null;
+
+function toggleInputMonitor(enabled) {
+  inputMonitorEnabled = enabled;
+  localStorage.setItem('styx-input-monitor', enabled);
+  
+  if (enabled && localStream) {
+    if (!inputMonitorCtx) inputMonitorCtx = new AudioContext();
+    const source = inputMonitorCtx.createMediaStreamSource(localStream);
+    inputMonitorGain = inputMonitorCtx.createGain();
+    inputMonitorGain.gain.value = 0.7;
+    source.connect(inputMonitorGain);
+    inputMonitorGain.connect(inputMonitorCtx.destination);
+    toast('입력 모니터링 켜짐', 'info');
+  } else if (inputMonitorGain) {
+    inputMonitorGain.disconnect();
+    inputMonitorGain = null;
+    toast('입력 모니터링 꺼짐', 'info');
+  }
+}
+
+// Instrument tuner
+let tunerEnabled = false;
+let tunerCtx = null;
+let tunerAnalyser = null;
+let tunerInterval = null;
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+function toggleTuner(enabled) {
+  tunerEnabled = enabled;
+  const display = $('tuner-display');
+  
+  if (enabled && localStream) {
+    if (!tunerCtx) tunerCtx = new AudioContext();
+    tunerAnalyser = tunerCtx.createAnalyser();
+    tunerAnalyser.fftSize = 4096;
+    tunerCtx.createMediaStreamSource(localStream).connect(tunerAnalyser);
+    
+    const buffer = new Float32Array(tunerAnalyser.fftSize);
+    tunerInterval = setInterval(() => {
+      tunerAnalyser.getFloatTimeDomainData(buffer);
+      const freq = detectPitch(buffer, tunerCtx.sampleRate);
+      if (freq && display) {
+        const note = freqToNote(freq);
+        display.innerHTML = `<span class="note">${note.name}</span><span class="cents">${note.cents > 0 ? '+' : ''}${note.cents}¢</span>`;
+        display.className = Math.abs(note.cents) < 10 ? 'tuner-display in-tune' : 'tuner-display';
+      }
+    }, 50);
+    if (display) display.classList.remove('hidden');
+  } else {
+    if (tunerInterval) { clearInterval(tunerInterval); tunerInterval = null; }
+    if (display) { display.classList.add('hidden'); display.innerHTML = ''; }
+  }
+}
+
+function detectPitch(buffer, sampleRate) {
+  let maxCorr = 0, bestOffset = -1;
+  const minFreq = 60, maxFreq = 1000;
+  const minOffset = Math.floor(sampleRate / maxFreq);
+  const maxOffset = Math.floor(sampleRate / minFreq);
+  
+  for (let offset = minOffset; offset < maxOffset; offset++) {
+    let corr = 0;
+    for (let i = 0; i < buffer.length - offset; i++) {
+      corr += buffer[i] * buffer[i + offset];
+    }
+    if (corr > maxCorr) { maxCorr = corr; bestOffset = offset; }
+  }
+  return bestOffset > 0 ? sampleRate / bestOffset : null;
+}
+
+function freqToNote(freq) {
+  const semitone = 12 * Math.log2(freq / 440) + 69;
+  const note = Math.round(semitone);
+  const cents = Math.round((semitone - note) * 100);
+  return { name: NOTE_NAMES[note % 12] + Math.floor(note / 12 - 1), cents };
+}
 
 // 추가 기능
 let isOnline = navigator.onLine;
@@ -619,6 +710,11 @@ addGlobalListener(document, 'keydown', (e) => {
     e.preventDefault();
     $('recordBtn')?.click();
   }
+  // B: 녹음 마커 추가
+  else if ((e.key === 'b' || e.key === 'B' || e.key === 'ㅠ') && isRecording) {
+    e.preventDefault();
+    addRecordingMarker();
+  }
   // I: 초대 링크 복사
   else if (e.key === 'i' || e.key === 'I' || e.key === 'ㅑ') {
     e.preventDefault();
@@ -687,11 +783,41 @@ function initPttTouch() {
 let recordingAudioCtx = null;
 let multitrackRecorders = new Map(); // 멀티트랙: peerId -> { recorder, chunks, username }
 let multitrackMode = localStorage.getItem('styx-multitrack') === 'true';
+let recordingMarkers = []; // { time: ms, label: string }
+let recordingStartTime = 0;
+
+function addRecordingMarker(label = '') {
+  if (!isRecording) return;
+  const elapsed = Date.now() - recordingStartTime;
+  const marker = { time: elapsed, label: label || `Marker ${recordingMarkers.length + 1}` };
+  recordingMarkers.push(marker);
+  toast(`마커 추가: ${formatTime(elapsed)}`, 'info', 1500);
+}
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
+function exportMarkers(filename) {
+  if (recordingMarkers.length === 0) return;
+  const content = recordingMarkers.map(m => `${formatTime(m.time)}\t${m.label}`).join('\n');
+  const blob = new Blob([content], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${filename}_markers.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 function startRecording() {
   if (isRecording) return;
   
   const timestamp = new Date().toISOString().slice(0,19).replace(/:/g,'-');
+  recordingMarkers = [];
+  recordingStartTime = Date.now();
   
   if (multitrackMode) {
     // 멀티트랙: 각 피어별 개별 녹음
@@ -762,6 +888,8 @@ function downloadTrack(chunks, name) {
 function stopRecording() {
   if (!isRecording) return;
   
+  const timestamp = new Date().toISOString().slice(0,19).replace(/:/g,'-');
+  
   if (multitrackMode && multitrackRecorders.size > 0) {
     multitrackRecorders.forEach(({ recorder }) => recorder.stop());
     multitrackRecorders.clear();
@@ -769,6 +897,11 @@ function stopRecording() {
   } else if (mediaRecorder) {
     mediaRecorder.stop();
     toast('녹음 파일이 다운로드되었습니다', 'success');
+  }
+  
+  // Export markers if any
+  if (recordingMarkers.length > 0) {
+    exportMarkers(`styx-${timestamp}`);
   }
   
   isRecording = false;
@@ -1075,7 +1208,9 @@ function createInviteLink() {
   const roomName = $('roomName')?.textContent;
   if (!roomName) return;
   
-  const url = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(roomName)}`;
+  // Use server URL for Tauri app, otherwise use current origin
+  const baseUrl = serverUrl || window.location.origin;
+  const url = `${baseUrl}/?room=${encodeURIComponent(roomName)}`;
   navigator.clipboard.writeText(url).then(() => {
     toast('초대 링크가 복사되었습니다', 'success');
   }).catch(() => {
@@ -1196,13 +1331,10 @@ async function showLobby() {
 
 // 안정성 설정 초기화
 function initStabilitySettings() {
-  // Tauri 앱이면 연결 모드 선택 표시
+  // Tauri 앱이면 설정 표시
   if (_isTauriApp) {
     const tauriSettings = $('tauri-settings');
     if (tauriSettings) tauriSettings.style.display = 'block';
-    const modeRow = $('connection-mode-row');
-    if (modeRow) modeRow.style.display = 'flex';
-    updateConnectionModeButtons();
     initTauriFeatures();
   }
   
@@ -1290,6 +1422,19 @@ function initStabilitySettings() {
     };
   }
   
+  // 입력 모니터링 설정
+  const monitorCheck = $('input-monitor');
+  if (monitorCheck) {
+    monitorCheck.checked = inputMonitorEnabled;
+    monitorCheck.onchange = () => toggleInputMonitor(monitorCheck.checked);
+  }
+  
+  // 튜너 설정
+  const tunerCheck = $('tuner-toggle');
+  if (tunerCheck) {
+    tunerCheck.onchange = () => toggleTuner(tunerCheck.checked);
+  }
+  
   // 연결 테스트 버튼
   const testBtn = $('test-connection-btn');
   if (testBtn) {
@@ -1304,23 +1449,8 @@ function initStabilitySettings() {
   }
 }
 
-// 연결 모드 설정
-window.setConnectionMode = (mode) => {
-  connectionMode = mode;
-  localStorage.setItem('styx-connection-mode', mode);
-  updateConnectionModeButtons();
-  const modeNames = { webrtc: 'WebRTC', udp: 'Custom UDP' };
-  toast(`${modeNames[mode]} 모드로 변경됨`, 'info');
-};
-
-function updateConnectionModeButtons() {
-  $('webrtcModeBtn')?.classList.toggle('active', connectionMode === 'webrtc');
-  $('udpModeBtn')?.classList.toggle('active', connectionMode === 'udp');
-}
-
 // Tauri 기능 초기화
 let udpPort = null;
-let udpPeers = new Map(); // peerId -> { port, publicIp, username }
 
 async function initTauriFeatures() {
   if (!tauriInvoke) return;
@@ -1341,16 +1471,8 @@ async function initTauriFeatures() {
     // ASIO 사용 가능 여부 확인
     const asioAvailable = await tauriInvoke('check_asio');
     if (asioAvailable) {
-      toast('ASIO 드라이버 감지됨 - UDP 모드 권장', 'success');
-      $('tauri-audio-hint').textContent = 'ASIO 사용 가능 - 저지연 모드 권장';
-      
-      // ASIO + 저지연 모드면 자동으로 UDP 선택
-      if (lowLatencyMode && connectionMode !== 'udp') {
-        connectionMode = 'udp';
-        localStorage.setItem('styx-connection-mode', 'udp');
-        updateConnectionModeButtons();
-        toast('⚡ ASIO 감지 → UDP 모드 자동 선택', 'info');
-      }
+      toast('ASIO 드라이버 감지됨 - 저지연 모드 활성화', 'success');
+      $('tauri-audio-hint').textContent = 'ASIO 사용 가능 - 저지연 모드';
     }
     
     // 오디오 정보 가져오기
@@ -1361,125 +1483,100 @@ async function initTauriFeatures() {
   }
 }
 
-// UDP 모드 시작
+// UDP 릴레이 모드 (항상 서버 릴레이 사용)
+const UDP_RELAY_PORT = 5000;
+
 async function startUdpMode() {
   if (!tauriInvoke) return;
   
   try {
-    // UDP 소켓 바인딩 (0 = 자동 포트)
     udpPort = await tauriInvoke('udp_bind', { port: 0 });
     log('UDP 포트 바인딩:', udpPort);
     
-    // STUN으로 공인 IP 획득
-    let publicIp = null;
+    // Always use relay server (simpler, works for everyone)
+    const relayHost = new URL(serverUrl).hostname;
+    const mySessionId = socket.id;
+    
+    // Try UDP first
+    let udpSuccess = false;
     try {
-      const publicAddr = await tauriInvoke('get_public_ip');
-      publicIp = publicAddr.split(':')[0]; // IP만 추출
-      log('공인 IP:', publicIp);
+      await tauriInvoke('udp_set_relay', { host: relayHost, port: UDP_RELAY_PORT, sessionId: mySessionId });
+      socket.emit('udp-bind-room', { sessionId: mySessionId, roomId: currentRoom });
+      await tauriInvoke('set_audio_devices', { input: null, output: null });
+      await tauriInvoke('udp_start_relay_stream');
+      udpSuccess = true;
+      toast('UDP 오디오 연결됨', 'success');
+      startUdpStatsMonitor();
     } catch (e) {
-      console.warn('STUN 실패:', e);
-      // STUN 실패 시 WebRTC로 fallback
-      toast('NAT 통과 실패, WebRTC 모드로 전환', 'warning');
-      connectionMode = 'webrtc';
-      localStorage.setItem('styx-connection-mode', 'webrtc');
-      updateConnectionModeButtons();
-      return;
+      console.warn('UDP 실패, TCP 폴백:', e);
     }
     
-    // 서버에 UDP 정보 전송
-    socket.emit('udp-info', { port: udpPort, publicIp });
-    
-    // 기존 피어 정보 요청
-    socket.emit('udp-request-peers');
-    
-    const ipInfo = publicIp ? `${publicIp}:${udpPort}` : `포트 ${udpPort}`;
-    toast(`UDP 모드 활성화 (${ipInfo})`, 'success');
+    // Fallback to TCP if UDP fails
+    if (!udpSuccess) {
+      useTcpFallback = true;
+      socket.emit('tcp-bind-room', { roomId: currentRoom });
+      startTcpAudioStream();
+      toast('TCP 오디오 연결됨 (폴백)', 'info');
+    }
   } catch (e) {
-    console.error('UDP 시작 실패:', e);
-    toast('UDP 모드 시작 실패', 'error');
+    console.error('오디오 시작 실패:', e);
+    toast('오디오 연결 실패', 'error');
   }
 }
 
-// UDP 피어 정보 수신 핸들러
-function setupUdpHandlers() {
-  socket.on('udp-peer-info', async ({ id, port, publicIp, username }) => {
-    udpPeers.set(id, { port, publicIp, username });
-    log(`UDP 피어 추가: ${username} (${publicIp}:${port})`);
-    // Tauri에 피어 추가
-    if (tauriInvoke && publicIp && port) {
-      try {
-        await tauriInvoke('udp_add_peer', { addr: `${publicIp}:${port}` });
-      } catch (e) { console.error('피어 추가 실패:', e); }
-    }
+// TCP 폴백 오디오 스트림
+let useTcpFallback = false;
+let tcpAudioInterval = null;
+
+function startTcpAudioStream() {
+  if (!tauriInvoke) return;
+  
+  // TCP 오디오 수신 핸들러
+  socket.on('tcp-audio', async (senderId, audioData) => {
+    try {
+      await tauriInvoke('tcp_receive_audio', { senderId, data: Array.from(new Uint8Array(audioData)) });
+    } catch (e) { console.error('TCP 오디오 수신 실패:', e); }
   });
   
-  socket.on('udp-peers', async (peers) => {
-    for (const p of peers) {
-      udpPeers.set(p.id, { port: p.port, publicIp: p.publicIp, username: p.username });
-      if (tauriInvoke && p.publicIp && p.port) {
-        try {
-          await tauriInvoke('udp_add_peer', { addr: `${p.publicIp}:${p.port}` });
-        } catch (e) { console.error('피어 추가 실패:', e); }
+  // TCP 오디오 송신 (10ms 간격)
+  tcpAudioInterval = setInterval(async () => {
+    try {
+      const audioData = await tauriInvoke('tcp_get_audio');
+      if (audioData && audioData.length > 0) {
+        socket.emit('tcp-audio', new Uint8Array(audioData).buffer);
       }
-    }
-    log('UDP 피어 목록:', udpPeers.size);
-    // 피어가 있으면 스트림 시작
-    if (udpPeers.size > 0) startUdpStream();
-  });
+    } catch (e) { /* 무시 - 오디오 없을 수 있음 */ }
+  }, 10);
+}
+
+function stopTcpAudioStream() {
+  if (tcpAudioInterval) {
+    clearInterval(tcpAudioInterval);
+    tcpAudioInterval = null;
+  }
+  socket.off('tcp-audio');
+  useTcpFallback = false;
 }
 
 // UDP 음소거 연동
 async function setUdpMuted(muted) {
-  if (tauriInvoke && connectionMode === 'udp') {
+  if (tauriInvoke) {
     try {
       await tauriInvoke('udp_set_muted', { muted });
     } catch (e) { console.error('UDP 음소거 설정 실패:', e); }
   }
 }
 
-// 방 퇴장 시 UDP 정리
-async function cleanupUdp() {
+// 방 퇴장 시 오디오 정리
+async function cleanupAudio() {
   stopUdpStatsMonitor();
+  stopTcpAudioStream();
   if (tauriInvoke) {
     try {
       await tauriInvoke('udp_stop_stream');
-      await tauriInvoke('udp_clear_peers');
-    } catch (e) { console.error('UDP 정리 실패:', e); }
+    } catch (e) { console.error('오디오 정리 실패:', e); }
   }
-  udpPeers.clear();
   udpPort = null;
-}
-
-// UDP 스트림 시작
-async function startUdpStream() {
-  if (!tauriInvoke || connectionMode !== 'udp') return;
-  
-  try {
-    // 선택된 장치 설정 (웹 UI에서 선택한 장치 사용)
-    const inputDevice = $('audio-device')?.value ? null : null; // Tauri는 장치 이름 필요
-    const outputDevice = $('audio-output')?.value ? null : null;
-    await tauriInvoke('set_audio_devices', { input: inputDevice, output: outputDevice });
-    
-    await tauriInvoke('udp_start_stream');
-    log('UDP 스트림 시작됨');
-    toast('UDP 오디오 스트림 시작', 'success');
-    startUdpStatsMonitor();
-  } catch (e) {
-    console.error('UDP 스트림 시작 실패:', e);
-    toast('UDP 스트림 시작 실패: ' + e, 'error');
-  }
-}
-
-// UDP 스트림 중지
-async function stopUdpStream() {
-  if (!tauriInvoke) return;
-  
-  try {
-    await tauriInvoke('udp_stop_stream');
-    log('UDP 스트림 중지됨');
-  } catch (e) {
-    console.error('UDP 스트림 중지 실패:', e);
-  }
 }
 
 // UDP 연결 품질 모니터링
@@ -1537,19 +1634,14 @@ function updatePeerStatsUI(peerStats) {
   
   // Update each peer's card with UDP stats
   for (const ps of peerStats) {
-    // Find peer card by matching address (peers Map uses peerId, not addr)
-    // For now, update all peer cards with combined info
     document.querySelectorAll('.user-card .latency').forEach(el => {
       const card = el.closest('.user-card');
       if (!card) return;
       
-      // Show UDP stats if in UDP mode
-      if (connectionMode === 'udp') {
-        const loss = ps.loss_rate.toFixed(1);
-        const level = Math.round(ps.audio_level * 100);
-        el.textContent = `손실 ${loss}% | 레벨 ${level}%`;
-        el.style.color = ps.loss_rate > 5 ? '#f44' : ps.loss_rate > 1 ? '#fa0' : '#4f4';
-      }
+      const loss = ps.loss_rate.toFixed(1);
+      const level = Math.round(ps.audio_level * 100);
+      el.textContent = `손실 ${loss}% | 레벨 ${level}%`;
+      el.style.color = ps.loss_rate > 5 ? '#f44' : ps.loss_rate > 1 ? '#fa0' : '#4f4';
     });
   }
 }
@@ -1657,7 +1749,7 @@ function renderRoomList(rooms) {
     <div class="room-item">
       <div class="room-info" data-room-index="${i}">
         <span class="room-name">${r.hasPassword ? '🔒 ' : ''}${escapeHtml(r.name)}</span>
-        <span class="room-users">${r.userCount}/8 👤</span>
+        <span class="room-users">${r.userCount}/${r.maxUsers} 👤</span>
       </div>
       ${canClose ? `<button class="room-close-btn" data-close-index="${i}">✕</button>` : ''}
     </div>
@@ -1743,6 +1835,20 @@ $('adminBtn').onclick = () => {
 };
 
 function loadAdminData() {
+  // Load whitelist
+  socket.emit('admin-whitelist-status', res => {
+    if (res?.error) return;
+    $('whitelist-enabled').checked = res.enabled;
+    const list = $('whitelist-list');
+    list.innerHTML = res.ips?.length ? '' : '<p>등록된 IP가 없습니다</p>';
+    res.ips?.forEach(ip => {
+      const div = document.createElement('div');
+      div.className = 'whitelist-item';
+      div.innerHTML = `<span>${escapeHtml(ip)}</span><button onclick="removeWhitelistIp('${ip}')">✗</button>`;
+      list.appendChild(div);
+    });
+  });
+  
   socket.emit('get-pending', null, res => {
     const list = $('pending-list');
     list.innerHTML = res.pending?.length ? '' : '<p>대기 중인 요청이 없습니다</p>';
@@ -1770,6 +1876,31 @@ function loadAdminData() {
     });
   });
 }
+
+// Whitelist management
+$('whitelist-enabled')?.addEventListener('change', (e) => {
+  socket.emit('admin-whitelist-toggle', { enabled: e.target.checked }, res => {
+    if (res?.error) toast(res.error, 'error');
+    else toast(e.target.checked ? '화이트리스트 활성화됨' : '화이트리스트 비활성화됨', 'info');
+  });
+});
+
+$('whitelist-add-btn')?.addEventListener('click', () => {
+  const ip = $('whitelist-ip').value.trim();
+  if (!ip) return toast('IP 주소를 입력하세요', 'error');
+  socket.emit('admin-whitelist-add', { ip }, res => {
+    if (res?.error) toast(res.error, 'error');
+    else { toast(`${ip} 추가됨`, 'success'); $('whitelist-ip').value = ''; loadAdminData(); }
+  });
+});
+
+window.removeWhitelistIp = (ip) => {
+  if (!confirm(`${ip}를 화이트리스트에서 제거하시겠습니까?`)) return;
+  socket.emit('admin-whitelist-remove', { ip }, res => {
+    if (res?.error) toast(res.error, 'error');
+    else { toast(`${ip} 제거됨`, 'info'); loadAdminData(); }
+  });
+};
 
 window.approveUser = (username) => socket.emit('approve-user', { username }, () => loadAdminData());
 window.rejectUser = (username) => socket.emit('reject-user', { username }, () => loadAdminData());
@@ -1847,6 +1978,14 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       return toast(errorMsg, 'error');
     }
 
+    // Clear any existing peers from previous room
+    peers.forEach(peer => {
+      peer.pc.close();
+      peer.audioEl.remove();
+    });
+    peers.clear();
+    usersGrid.innerHTML = '';
+
     lobby.classList.add('hidden');
     roomView.classList.remove('hidden');
     $('roomName').textContent = room;
@@ -1905,16 +2044,21 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       updateMuteUI();
     }
 
-    // 기존 사용자들에 대한 피어 연결 생성 (initiator=false: 기존 사용자가 offer를 보냄)
-    res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, false, u.role));
-    startLatencyPing();
-    startAudioMeter();
-    initPttTouch();
-    
-    // UDP 모드면 UDP 시작
-    if (_isTauriApp && connectionMode === 'udp') {
+    // Tauri앱: UDP 릴레이로 오디오, 브라우저: 관전 모드 (오디오 없음)
+    if (_isTauriApp) {
       startUdpMode();
+    } else {
+      // 브라우저 관전 모드 배너 표시, 오디오 컨트롤 숨김
+      $('browser-spectator-banner')?.classList.remove('hidden');
+      $('muteBtn')?.classList.add('hidden');
+      $('room-audio-device')?.classList.add('hidden');
+      $('room-audio-output')?.classList.add('hidden');
+      $('recordBtn')?.classList.add('hidden');
     }
+    
+    startLatencyPing();
+    if (_isTauriApp) startAudioMeter();
+    initPttTouch();
   });
 };
 
@@ -2267,8 +2411,8 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
       // VAD 시작
       if (vadEnabled) startVAD(peerId, peerAnalyser);
       
-    } catch (e) {
-      console.error('오디오 처리 설정 실패:', e);
+    } catch (err) {
+      console.error('오디오 처리 설정 실패:', err);
       audioEl.srcObject = e.streams[0];
     }
     
@@ -2276,7 +2420,7 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
       audioEl.playsInline = true;
     }
     // 오디오 재생 시작
-    audioEl.play().catch(() => {});
+    audioEl.play().catch(err => console.error('Audio play failed:', err));
     renderUsers();
   };
 
@@ -2799,138 +2943,30 @@ function renderPingGraph() {
 
 // 소켓 이벤트
 socket.on('user-joined', ({ id, username, avatar, role }) => {
-  log(`새 사용자 입장: ${username} (${id}), initiator=true, role=${role}`);
-  createPeerConnection(id, username, avatar, true, role);
+  log(`새 사용자 입장: ${username} (${id}), role=${role}`);
+  // 브라우저는 관전 모드 - WebRTC 피어 연결 안함
   playSound('join');
   toast(`${username} 입장`, 'info', 2000);
 });
 
 socket.on('offer', async ({ from, offer }) => {
-  try {
-    log(`Offer 수신: ${from}`);
-    let peer = peers.get(from);
-    if (!peer) {
-      log(`피어 없음, 새로 생성: ${from}`);
-      createPeerConnection(from, '사용자', null, false);
-      peer = peers.get(from);
-    }
-    const pc = peer.pc;
-    
-    // Perfect negotiation: glare 처리
-    const offerCollision = pc.signalingState !== 'stable';
-    const polite = socket.id > from;
-    
-    log(`Offer 처리: signalingState=${pc.signalingState}, collision=${offerCollision}, polite=${polite}`);
-    
-    if (offerCollision && !polite) {
-      log('Offer 무시 (glare, impolite)');
-      return;
-    }
-    
-    if (offerCollision && polite) {
-      log('Rollback 후 Offer 적용');
-      await Promise.all([
-        pc.setLocalDescription({ type: 'rollback' }),
-        pc.setRemoteDescription(offer)
-      ]);
-    } else {
-      await pc.setRemoteDescription(offer);
-    }
-    
-    // 큐에 저장된 ICE 후보 처리
-    await flushIceCandidateQueue(from);
-    
-    let answer = await pc.createAnswer();
-    // Opus SDP 최적화 적용
-    answer = new RTCSessionDescription({
-      type: answer.type,
-      sdp: optimizeOpusSdp(answer.sdp, audioMode)
-    });
-    await pc.setLocalDescription(answer);
-    socket.emit('answer', { to: from, answer });
-    log(`Answer 전송: ${from}`);
-  } catch (e) {
-    console.error('Offer 처리 실패:', e);
-  }
+  // 브라우저는 관전 모드 - WebRTC offer 무시
+  log(`WebRTC offer 무시 (관전 모드): ${from}`);
 });
 
 socket.on('answer', async ({ from, answer }) => {
-  log(`Answer 수신: ${from}`);
-  const peer = peers.get(from);
-  if (peer?.pc.signalingState === 'have-local-offer') {
-    try { 
-      await peer.pc.setRemoteDescription(answer); 
-      log(`Answer 적용 완료: ${from}`);
-      // 큐에 저장된 ICE 후보 처리
-      await flushIceCandidateQueue(from);
-    } catch (e) {
-      console.error('Answer 적용 실패:', e);
-    }
-  } else {
-    log(`Answer 무시: signalingState=${peer?.pc.signalingState}`);
-  }
+  // 브라우저는 관전 모드 - WebRTC answer 무시
+  log(`WebRTC answer 무시 (관전 모드): ${from}`);
 });
 
-// 큐에 저장된 ICE 후보 처리
-async function flushIceCandidateQueue(peerId) {
-  const peer = peers.get(peerId);
-  if (!peer?.iceCandidateQueue?.length) return;
-  
-  log(`ICE 후보 큐 처리: ${peerId} (${peer.iceCandidateQueue.length}개)`);
-  for (const candidate of peer.iceCandidateQueue) {
-    try {
-      await peer.pc.addIceCandidate(candidate);
-    } catch (e) {
-      console.error('큐된 ICE 후보 추가 실패:', e);
-    }
-  }
-  peer.iceCandidateQueue = [];
-}
-
 socket.on('ice-candidate', async ({ from, candidate }) => {
-  try {
-    const peer = peers.get(from);
-    if (!peer || !candidate) return;
-    
-    // remoteDescription이 설정되지 않았으면 큐에 저장
-    if (!peer.pc.remoteDescription) {
-      if (!peer.iceCandidateQueue) peer.iceCandidateQueue = [];
-      peer.iceCandidateQueue.push(candidate);
-      log(`ICE 후보 큐잉: ${from} (remoteDescription 대기)`);
-      return;
-    }
-    
-    await peer.pc.addIceCandidate(candidate);
-  } catch (e) {
-    console.error('ICE 후보 추가 실패:', e);
-  }
+  // 브라우저는 관전 모드 - ICE 후보 무시
 });
 
 socket.on('user-left', ({ id }) => {
-  const peer = peers.get(id);
-  if (peer) {
-    const username = peer.username;
-    peer.pc.close();
-    peer.audioEl.remove();
-    // 오디오 노드 연결 해제 (공유 AudioContext는 닫지 않음)
-    if (peer.audioNodes) {
-      try {
-        peer.audioNodes.source.disconnect();
-        peer.audioNodes.compressor.disconnect();
-        peer.audioNodes.panNode.disconnect();
-        peer.audioNodes.gainNode.disconnect();
-        peer.audioNodes.delayNode.disconnect();
-        peer.audioNodes.peerAnalyser.disconnect();
-      } catch {}
-    }
-    // VAD 인터벌 정리
-    const vadInt = vadIntervals.get(id);
-    if (vadInt) { clearInterval(vadInt); vadIntervals.delete(id); }
-    peers.delete(id);
-    renderUsers();
-    playSound('leave');
-    toast(`${username} 퇴장`, 'info', 2000);
-  }
+  playSound('leave');
+  toast(`사용자 퇴장`, 'info', 2000);
+  renderUsers();
 });
 
 socket.on('user-updated', ({ id, avatar }) => {
@@ -3089,8 +3125,8 @@ function leaveRoom() {
   isMuted = false;
   isPttActive = false;
   
-  // UDP 정리
-  cleanupUdp();
+  // 오디오 정리
+  cleanupAudio();
   
   socket.room = null;
   lastRoom = null;
@@ -3167,10 +3203,56 @@ $('test-network-btn')?.addEventListener('click', async () => {
 });
 
 // ===== 방 생성 모달 =====
+const roomTemplates = JSON.parse(localStorage.getItem('styx-room-templates') || '{}');
+
+function saveRoomTemplate(name) {
+  if (!name?.trim()) return toast('템플릿 이름을 입력하세요', 'error');
+  const settings = {
+    maxUsers: parseInt($('new-room-max-users')?.value, 10) || 8,
+    audioMode: $('new-room-audio-mode')?.value || 'music',
+    sampleRate: parseInt($('new-room-sample-rate')?.value, 10) || 48000,
+    bitrate: parseInt($('new-room-bitrate')?.value, 10) || 96,
+    bpm: parseInt($('new-room-bpm')?.value, 10) || 120,
+    isPrivate: $('new-room-private')?.checked || false
+  };
+  roomTemplates[name] = settings;
+  localStorage.setItem('styx-room-templates', JSON.stringify(roomTemplates));
+  updateTemplateSelect();
+  toast(`템플릿 "${name}" 저장됨`, 'success');
+}
+
+function loadRoomTemplate(name) {
+  const t = roomTemplates[name];
+  if (!t) return;
+  if ($('new-room-max-users')) $('new-room-max-users').value = t.maxUsers;
+  if ($('new-room-audio-mode')) $('new-room-audio-mode').value = t.audioMode;
+  if ($('new-room-sample-rate')) $('new-room-sample-rate').value = t.sampleRate;
+  if ($('new-room-bitrate')) $('new-room-bitrate').value = t.bitrate;
+  if ($('new-room-bpm')) $('new-room-bpm').value = t.bpm;
+  if ($('new-room-private')) $('new-room-private').checked = t.isPrivate;
+  toast(`템플릿 "${name}" 적용됨`, 'info');
+}
+
+function deleteRoomTemplate(name) {
+  delete roomTemplates[name];
+  localStorage.setItem('styx-room-templates', JSON.stringify(roomTemplates));
+  updateTemplateSelect();
+  toast(`템플릿 "${name}" 삭제됨`, 'info');
+}
+
+function updateTemplateSelect() {
+  const sel = $('room-template-select');
+  if (!sel) return;
+  const names = Object.keys(roomTemplates);
+  sel.innerHTML = '<option value="">-- 템플릿 선택 --</option>' + 
+    names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+}
+
 window.openCreateRoomModal = () => {
   $('create-room-modal').classList.remove('hidden');
   $('new-room-name').value = '';
   $('new-room-password').value = '';
+  updateTemplateSelect();
   $('new-room-name').focus();
 };
 
@@ -3188,14 +3270,17 @@ window.createRoom = () => {
   }
   
   // 방 설정 수집
+  const maxUsersEl = $('new-room-max-users');
   const settings = {
-    maxUsers: parseInt($('new-room-max-users')?.value) || 8,
+    maxUsers: maxUsersEl ? parseInt(maxUsersEl.value, 10) : 8,
     audioMode: $('new-room-audio-mode')?.value || 'music',
-    sampleRate: parseInt($('new-room-sample-rate')?.value) || 48000,
-    bitrate: parseInt($('new-room-bitrate')?.value) || 96,
-    bpm: parseInt($('new-room-bpm')?.value) || 120,
+    sampleRate: parseInt($('new-room-sample-rate')?.value, 10) || 48000,
+    bitrate: parseInt($('new-room-bitrate')?.value, 10) || 96,
+    bpm: parseInt($('new-room-bpm')?.value, 10) || 120,
     isPrivate: $('new-room-private')?.checked || false
   };
+  
+  log('Room settings:', settings);
   
   closeCreateRoomModal();
   joinRoom(name, !!password, password, settings);
@@ -3482,8 +3567,6 @@ $('effects-toggle')?.addEventListener('click', () => {
 
 // ===== Inline 이벤트 핸들러 대체 =====
 $('themeBtn').onclick = toggleTheme;
-$('webrtcModeBtn')?.addEventListener('click', () => setConnectionMode('webrtc'));
-$('udpModeBtn')?.addEventListener('click', () => setConnectionMode('udp'));
 document.querySelectorAll('.modal-backdrop').forEach(el => {
   el.onclick = () => {
     closeCreateRoomModal();
@@ -3502,7 +3585,7 @@ $('closeRoomBtn')?.addEventListener('click', closeRoom);
 function collectSettings() {
   return {
     audioMode, jitterBuffer, autoAdapt, echoCancellation, noiseSuppression,
-    pttMode, pttKey, duckingEnabled, vadEnabled, connectionMode,
+    pttMode, pttKey, duckingEnabled, vadEnabled,
     theme: document.documentElement.getAttribute('data-theme') || 'dark'
   };
 }
@@ -3518,7 +3601,6 @@ function applySettings(s) {
   pttKey = s.pttKey ?? pttKey;
   duckingEnabled = s.duckingEnabled ?? duckingEnabled;
   vadEnabled = s.vadEnabled ?? vadEnabled;
-  connectionMode = s.connectionMode ?? connectionMode;
   if (s.theme) document.documentElement.setAttribute('data-theme', s.theme);
   // localStorage 동기화
   localStorage.setItem('styx-audio-mode', audioMode);
@@ -3530,7 +3612,6 @@ function applySettings(s) {
   localStorage.setItem('styx-ptt-key', pttKey);
   localStorage.setItem('styx-ducking', duckingEnabled);
   localStorage.setItem('styx-vad', vadEnabled);
-  localStorage.setItem('styx-connection-mode', connectionMode);
   localStorage.setItem('styx-theme', s.theme || 'dark');
 }
 

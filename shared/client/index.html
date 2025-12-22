@@ -118,7 +118,11 @@
                 <label><input type="checkbox" id="ptt-mode"> 눌러서 말하기 (Space)</label>
                 <label><input type="checkbox" id="vad-mode" checked> 말할 때 표시</label>
                 <label><input type="checkbox" id="ducking-mode"> 자동 볼륨 낮춤</label>
+                <label><input type="checkbox" id="input-monitor"> 🎧 입력 모니터링</label>
+                <label><input type="checkbox" id="tuner-toggle"> 🎸 튜너</label>
                 <label><input type="checkbox" id="auto-adapt" checked> 자동 품질 조절</label>
+              </div>
+              <div id="tuner-display" class="tuner-display hidden"></div>
               </div>
             </div>
             <div class="audio-col">
@@ -248,6 +252,22 @@
               🔒 비공개 방 (목록에 표시 안 함)
             </label>
           </div>
+
+          <!-- 템플릿 -->
+          <div class="form-section template-section">
+            <h4>📋 템플릿</h4>
+            <div class="form-row">
+              <select id="room-template-select" style="flex:1">
+                <option value="">-- 템플릿 선택 --</option>
+              </select>
+              <button type="button" onclick="loadRoomTemplate($('room-template-select').value)" class="btn-small">적용</button>
+              <button type="button" onclick="deleteRoomTemplate($('room-template-select').value)" class="btn-small btn-danger">삭제</button>
+            </div>
+            <div class="form-row" style="margin-top:8px">
+              <input type="text" id="new-template-name" placeholder="새 템플릿 이름" style="flex:1">
+              <button type="button" onclick="saveRoomTemplate($('new-template-name').value)" class="btn-small">저장</button>
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary">취소</button>
@@ -289,9 +309,20 @@
           <button class="modal-close" id="closeAdminBtn">✕</button>
         </div>
         <div class="modal-body">
-          <h4>가입 승인 대기</h4>
+          <h4>🔒 IP 화이트리스트</h4>
+          <div class="whitelist-controls">
+            <label><input type="checkbox" id="whitelist-enabled"> 화이트리스트 활성화</label>
+            <div class="whitelist-add">
+              <input type="text" id="whitelist-ip" placeholder="IP 주소 (예: 123.45.67.89)">
+              <button id="whitelist-add-btn" class="btn-small">추가</button>
+            </div>
+          </div>
+          <div id="whitelist-list" class="admin-list"></div>
+          
+          <h4>⏳ 가입 승인 대기</h4>
           <div id="pending-list" class="admin-list"></div>
-          <h4>사용자 관리</h4>
+          
+          <h4>👥 사용자 관리</h4>
           <div id="users-list" class="admin-list"></div>
         </div>
       </div>
@@ -299,6 +330,12 @@
 
     <!-- 방 화면 -->
     <div id="room-view" class="hidden">
+      <!-- 브라우저 관전 모드 안내 -->
+      <div id="browser-spectator-banner" class="spectator-banner hidden">
+        <span>🎧 관전 모드 - 오디오 참여를 위해 </span>
+        <a href="https://github.com/jeonghyeonee/styx/releases" target="_blank" class="download-link">데스크톱 앱 다운로드</a>
+      </div>
+      
       <header class="room-header">
         <div class="room-title">
           <h2>🎸 <span id="roomName"></span><span id="my-role-badge" class="role-badge"></span></h2>
