@@ -83,12 +83,15 @@
       </div>
       <header class="lobby-header">
         <div class="header-user">
-          <div id="my-avatar" class="avatar"></div>
+          <label class="avatar-clickable" title="클릭하여 아바타 변경 (하루 1회)">
+            <div id="my-avatar" class="avatar"></div>
+            <div class="avatar-overlay">📷</div>
+            <input type="file" id="avatar-input" accept="image/*" style="display:none;">
+          </label>
           <span id="my-username"></span>
         </div>
         <div class="header-actions">
           <button id="themeBtn" title="테마 변경">☀️</button>
-          <label class="avatar-upload" title="아바타 변경">📷<input type="file" id="avatar-input" accept="image/*"></label>
           <button id="shortcutsBtn" title="단축키 (F1)">⌨️</button>
           <button id="settingsBtn" title="비밀번호 변경">🔑</button>
           <button id="adminBtn" class="hidden" title="관리자">👑</button>

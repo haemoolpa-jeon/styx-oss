@@ -209,15 +209,24 @@ button { cursor: pointer; border: none; font-family: inherit; }
   width: 58px; height: 58px; border-radius: 50%;
   background: var(--bg-card); background-size: cover;
 }
+.avatar-clickable {
+  position: relative; cursor: pointer; display: block;
+}
+.avatar-overlay {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.6); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; opacity: 0; transition: opacity 0.2s;
+}
+.avatar-clickable:hover .avatar-overlay { opacity: 1; }
 #my-username { font-weight: 500; font-size: 22px; }
 .header-actions { display: flex; gap: 12px; align-items: center; margin-left: auto; }
-.header-actions button, .header-actions label {
+.header-actions button {
   width: 58px; height: 58px; border-radius: 12px;
   background: var(--bg-card); display: flex; align-items: center;
   justify-content: center; cursor: pointer; font-size: 24px;
 }
-.header-actions button:hover, .header-actions label:hover { background: var(--border); }
-.avatar-upload input { display: none; }
+.header-actions button:hover { background: var(--border); }
 .btn-logout {
   width: auto !important; padding: 0 24px; font-size: 19px;
   color: var(--text-secondary);

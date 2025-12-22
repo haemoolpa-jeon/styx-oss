@@ -1806,10 +1806,23 @@ function closeRoomFromLobby(roomName) {
   });
 }
 
-// 아바타 업로드
+// 아바타 업로드 (하루 1회 제한)
 $('avatar-input').onchange = (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  
+  // Check daily limit
+  const lastChange = localStorage.getItem('styx-avatar-change');
+  if (lastChange) {
+    const lastDate = new Date(parseInt(lastChange)).toDateString();
+    const today = new Date().toDateString();
+    if (lastDate === today) {
+      toast('아바타는 하루에 한 번만 변경할 수 있습니다', 'warning');
+      e.target.value = '';
+      return;
+    }
+  }
+  
   if (file.size > 2 * 1024 * 1024) return toast('이미지 크기는 2MB 이하여야 합니다', 'error');
   
   const reader = new FileReader();
@@ -1818,6 +1831,7 @@ $('avatar-input').onchange = (e) => {
       if (res.success) {
         currentUser.avatar = res.avatar;
         $('my-avatar').style.backgroundImage = `url(${avatarUrl(res.avatar)})`;
+        localStorage.setItem('styx-avatar-change', Date.now().toString());
         toast('아바타가 변경되었습니다', 'success');
       } else {
         toast(res.error, 'error');
