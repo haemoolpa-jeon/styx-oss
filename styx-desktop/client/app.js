@@ -1118,7 +1118,7 @@ async function autoRejoin() {
     
     // Get audio stream for Tauri
     if (actuallyTauri) {
-      socket.emit('join', { room: lastRoom, username: currentUser.username, password: lastRoomPassword }, res => {
+      socket.emit('join', { room: lastRoom, username: currentUser.username, password: lastRoomPassword }, async (res) => {
         if (res.error) {
           toast('재입장 실패: ' + res.error, 'error');
           lastRoom = null;
@@ -1126,7 +1126,11 @@ async function autoRejoin() {
           toast('방에 재입장했습니다', 'success');
           socket.room = lastRoom;
           // Restart UDP
-          startUdpMode();
+          try {
+            await startUdpMode();
+          } catch (udpError) {
+            console.error('UDP 재시작 실패:', udpError);
+          }
           startLatencyPing();
         }
       });
@@ -1582,11 +1586,15 @@ async function initTauriFeatures() {
 const UDP_RELAY_PORT = 5000;
 
 async function startUdpMode() {
-  if (!tauriInvoke) return;
+  if (!tauriInvoke) {
+    console.warn('Tauri not available, skipping UDP mode');
+    return;
+  }
   
   try {
+    console.log('Starting UDP mode...');
     udpPort = await tauriInvoke('udp_bind', { port: 0 });
-    log('UDP 포트 바인딩:', udpPort);
+    console.log('UDP 포트 바인딩:', udpPort);
     
     // Always use relay server (simpler, works for everyone)
     let relayHost = serverUrl ? new URL(serverUrl).hostname : window.location.hostname;
@@ -1603,15 +1611,20 @@ async function startUdpMode() {
     // Try UDP first
     let udpSuccess = false;
     try {
+      console.log('Setting UDP relay...');
       await tauriInvoke('udp_set_relay', { host: relayHost, port: UDP_RELAY_PORT, sessionId: mySessionId });
+      console.log('Binding to room...');
       socket.emit('udp-bind-room', { sessionId: mySessionId, roomId: socket.room });
+      console.log('Setting audio devices...');
       await tauriInvoke('set_audio_devices', { input: null, output: null });
+      console.log('Starting relay stream...');
       await tauriInvoke('udp_start_relay_stream');
       udpSuccess = true;
       toast('UDP 오디오 연결됨', 'success');
       startUdpStatsMonitor();
     } catch (e) {
-      console.warn('UDP 실패, TCP 폴백:', e);
+      console.error('UDP 실패, TCP 폴백:', e);
+      toast(`UDP 연결 실패: ${e.message || e}`, 'warning');
     }
     
     // Fallback to TCP if UDP fails
@@ -1623,7 +1636,18 @@ async function startUdpMode() {
     }
   } catch (e) {
     console.error('오디오 시작 실패:', e);
-    toast('오디오 연결 실패', 'error');
+    toast(`오디오 연결 실패: ${e.message || e}`, 'error');
+    
+    // Force TCP fallback on any error
+    try {
+      useTcpFallback = true;
+      socket.emit('tcp-bind-room', { roomId: socket.room });
+      startTcpAudioStream();
+      toast('TCP 오디오 연결됨 (폴백)', 'info');
+    } catch (tcpError) {
+      console.error('TCP 폴백도 실패:', tcpError);
+      toast('모든 오디오 연결 실패', 'error');
+    }
   }
 }
 
@@ -1695,8 +1719,12 @@ function startUdpStatsMonitor() {
       updateUdpStatsUI(stats);
       
       // Update input level meter
-      const inputLevel = await tauriInvoke('get_input_level');
-      updateInputLevelUI(inputLevel);
+      try {
+        const inputLevel = await tauriInvoke('get_input_level');
+        updateInputLevelUI(inputLevel);
+      } catch (levelError) {
+        console.warn('Input level update failed:', levelError);
+      }
       
       // Health check: if no packets received for 5 seconds, switch to TCP
       if (stats.is_running && stats.packets_received === 0) {
@@ -1714,10 +1742,15 @@ function startUdpStatsMonitor() {
       }
       
       // Per-peer stats
-      const peerStats = await tauriInvoke('get_peer_stats');
-      updatePeerStatsUI(peerStats);
+      try {
+        const peerStats = await tauriInvoke('get_peer_stats');
+        updatePeerStatsUI(peerStats);
+      } catch (peerError) {
+        console.warn('Peer stats update failed:', peerError);
+      }
     } catch (e) {
       console.error('UDP 통계 조회 실패:', e);
+      // Don't crash the interval, just log the error
     }
   }, 100); // 100ms for smoother meter
 }
@@ -2107,7 +2140,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     return toast('마이크 접근이 거부되었습니다', 'error');
   }
 
-  socket.emit('join', { room, username: currentUser.username, password: roomPassword, settings: roomSettings }, res => {
+  socket.emit('join', { room, username: currentUser.username, password: roomPassword, settings: roomSettings }, async (res) => {
     if (res.error) {
       localStream._rawStream?.getTracks().forEach(t => t.stop());
       localStream.getTracks().forEach(t => t.stop());
@@ -2189,7 +2222,12 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
 
     // Tauri앱: UDP 릴레이로 오디오, 브라우저: 관전 모드 (오디오 없음)
     if (actuallyTauri) {
-      startUdpMode();
+      try {
+        await startUdpMode();
+      } catch (udpError) {
+        console.error('UDP 시작 실패:', udpError);
+        toast('오디오 연결 중 오류 발생', 'warning');
+      }
     } else {
       // 브라우저 관전 모드 배너 표시, 오디오 컨트롤 숨김
       $('browser-spectator-banner')?.classList.remove('hidden');
