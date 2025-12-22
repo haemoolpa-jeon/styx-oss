@@ -177,6 +177,17 @@ try { inputEffects = JSON.parse(localStorage.getItem('styx-effects')) || inputEf
 const _isTauriApp = typeof window.__TAURI__ !== 'undefined';
 const tauriInvoke = _isTauriApp ? window.__TAURI__.core.invoke : null;
 
+// Debug: Tauri 감지 상태 확인
+console.log('Tauri detection:', {
+  __TAURI__: typeof window.__TAURI__,
+  _isTauriApp,
+  userAgent: navigator.userAgent.includes('Tauri')
+});
+
+// 추가 감지 방법 (fallback)
+const isTauriByUA = navigator.userAgent.includes('Tauri');
+const actuallyTauri = _isTauriApp || isTauriByUA;
+
 // 안정성 설정
 let audioMode = localStorage.getItem('styx-audio-mode') || 'voice'; // voice | music
 let jitterBuffer = parseInt(localStorage.getItem('styx-jitter-buffer')) || 50; // ms (낮을수록 저지연, 높을수록 안정)
@@ -1063,7 +1074,7 @@ async function autoRejoin() {
     cleanupAudio();
     
     // Get audio stream for Tauri
-    if (_isTauriApp) {
+    if (actuallyTauri) {
       socket.emit('join', { room: lastRoom, username: currentUser.username, password: lastRoomPassword }, res => {
         if (res.error) {
           toast('재입장 실패: ' + res.error, 'error');
@@ -1344,7 +1355,7 @@ async function showLobby() {
 // 안정성 설정 초기화
 function initStabilitySettings() {
   // Tauri 앱이면 오디오 설정 표시, 웹이면 다운로드 배너 표시
-  if (_isTauriApp) {
+  if (actuallyTauri) {
     const tauriSettings = $('tauri-settings');
     if (tauriSettings) tauriSettings.style.display = 'block';
     initTauriFeatures();
@@ -2123,7 +2134,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     }
 
     // Tauri앱: UDP 릴레이로 오디오, 브라우저: 관전 모드 (오디오 없음)
-    if (_isTauriApp) {
+    if (actuallyTauri) {
       startUdpMode();
     } else {
       // 브라우저 관전 모드 배너 표시, 오디오 컨트롤 숨김
@@ -2135,7 +2146,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     }
     
     startLatencyPing();
-    if (_isTauriApp) startAudioMeter();
+    if (actuallyTauri) startAudioMeter();
     initPttTouch();
   });
 };
