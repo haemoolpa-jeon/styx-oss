@@ -158,8 +158,8 @@ let whitelistEnabled = false;
 
 function loadWhitelist() {
   try {
-    if (fs.existsSync(WHITELIST_FILE)) {
-      const data = JSON.parse(fs.readFileSync(WHITELIST_FILE, 'utf8'));
+    if (fsSync.existsSync(WHITELIST_FILE)) {
+      const data = JSON.parse(fsSync.readFileSync(WHITELIST_FILE, 'utf8'));
       ipWhitelist = new Set(data.ips || []);
       whitelistEnabled = data.enabled || false;
       console.log(`✓ IP whitelist loaded: ${ipWhitelist.size} IPs, enabled: ${whitelistEnabled}`);
@@ -171,7 +171,7 @@ function loadWhitelist() {
 
 function saveWhitelist() {
   try {
-    fs.writeFileSync(WHITELIST_FILE, JSON.stringify({
+    fsSync.writeFileSync(WHITELIST_FILE, JSON.stringify({
       enabled: whitelistEnabled,
       ips: Array.from(ipWhitelist),
       lastModified: new Date().toISOString()
