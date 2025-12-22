@@ -2557,6 +2557,9 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
     } catch (err) {
       console.error('오디오 처리 설정 실패:', err);
       audioEl.srcObject = e.streams[0];
+      
+      // 폴백: 간단한 볼륨 모니터링
+      if (vadEnabled) startVAD(peerId, null);
     }
     
     if (audioEl.playsInline !== undefined) {
@@ -2679,6 +2682,9 @@ function renderUsers() {
           <span class="quality-badge" style="background:${q.color}">${q.label}${connType ? ` (${connType})` : ''}</span>
           <span class="stat">${peer.latency ? peer.latency + 'ms' : '--'}</span>
           <span class="stat">${peer.packetLoss.toFixed(1)}% 손실</span>
+        </div>
+        <div class="volume-meter">
+          <div class="volume-bar" data-peer="${id}"></div>
         </div>
       </div>
       <div class="card-mixer">
@@ -2998,17 +3004,28 @@ function updateQualityIndicator(jitter = 0, packetLoss = 0) {
 
 // VAD (음성 활동 감지)
 function startVAD(peerId, analyser) {
-  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+  const dataArray = analyser ? new Uint8Array(analyser.frequencyBinCount) : null;
   const threshold = 30; // 음성 감지 임계값
   
   const interval = setInterval(() => {
     const peer = peers.get(peerId);
     if (!peer) { clearInterval(interval); return; }
     
-    analyser.getByteFrequencyData(dataArray);
-    const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+    let avg = 0;
+    if (analyser && dataArray) {
+      analyser.getByteFrequencyData(dataArray);
+      avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+    }
+    
     const wasSpeaking = peer.isSpeaking;
     peer.isSpeaking = avg > threshold;
+    
+    // 볼륨 바 업데이트 (0-255 -> 0-100%)
+    const volumeLevel = Math.min(100, (avg / 255) * 100);
+    const volumeBar = document.querySelector(`.volume-bar[data-peer="${peerId}"]`);
+    if (volumeBar) {
+      volumeBar.style.width = `${volumeLevel}%`;
+    }
     
     // 상태 변경 시 UI 업데이트
     if (wasSpeaking !== peer.isSpeaking) {
@@ -3018,6 +3035,9 @@ function startVAD(peerId, analyser) {
     }
   }, 100);
   
+  // VAD 인터벌 저장 (정리용)
+  const peer = peers.get(peerId);
+  if (peer) peer.vadInterval = interval;
   vadIntervals.set(peerId, interval);
 }
 
