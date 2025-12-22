@@ -3403,6 +3403,26 @@ function syncRoomAudioSettings() {
     roomOutput.innerHTML = lobbyOutput.innerHTML;
     roomOutput.value = lobbyOutput.value;
   }
+  
+  // Sync checkboxes from lobby to room
+  const syncCheckbox = (lobbyId, roomId) => {
+    const lobby = $(lobbyId), room = $(roomId);
+    if (lobby && room) room.checked = lobby.checked;
+  };
+  syncCheckbox('echo-cancel', 'room-echo-cancel');
+  syncCheckbox('noise-suppress', 'room-noise-suppress');
+  syncCheckbox('ptt-mode', 'room-ptt-mode');
+  syncCheckbox('vad-mode', 'room-vad-mode');
+  syncCheckbox('auto-adapt', 'room-auto-adapt');
+  syncCheckbox('ducking-mode', 'room-ducking');
+  syncCheckbox('auto-jitter', 'room-auto-jitter');
+  
+  // Sync jitter slider
+  const lobbySlider = $('jitter-slider'), roomSlider = $('room-jitter-slider');
+  if (lobbySlider && roomSlider) {
+    roomSlider.value = lobbySlider.value;
+    if ($('room-jitter-value')) $('room-jitter-value').textContent = lobbySlider.value + 'ms';
+  }
 }
 
 // 방 내 오디오 장치 변경
