@@ -167,12 +167,19 @@ function updateInputEffect(effect, value) {
     case 'eqLow': effectNodes.eqLow.gain.value = value; break;
     case 'eqMid': effectNodes.eqMid.gain.value = value; break;
     case 'eqHigh': effectNodes.eqHigh.gain.value = value; break;
-    case 'inputVolume': effectNodes.makeupGain.gain.value = value / 100; break;
+    case 'inputVolume': 
+      if (effectNodes.makeupGain) effectNodes.makeupGain.gain.value = value / 100; 
+      break;
   }
 }
 
 // 저장된 이펙트 설정 로드
-try { inputEffects = JSON.parse(localStorage.getItem('styx-effects')) || inputEffects; } catch {}
+try { 
+  const saved = localStorage.getItem('styx-effects');
+  if (saved) inputEffects = { ...inputEffects, ...JSON.parse(saved) };
+} catch (e) { 
+  console.warn('Effects settings load failed:', e);
+}
 
 // Tauri 감지 - 더 안정적인 방법
 const isTauriApp = () => {
@@ -3707,11 +3714,14 @@ $('effects-toggle')?.addEventListener('click', () => {
 // 입력 볼륨 슬라이더 초기화
 const inputVolumeEl = $('input-volume');
 if (inputVolumeEl) {
-  inputVolumeEl.value = inputEffects.inputVolume || 120;
-  inputVolumeEl.nextElementSibling.textContent = `${inputVolumeEl.value}%`;
+  const initialValue = inputEffects.inputVolume || 120;
+  inputVolumeEl.value = initialValue;
+  const valueLabel = inputVolumeEl.nextElementSibling;
+  if (valueLabel) valueLabel.textContent = `${initialValue}%`;
+  
   inputVolumeEl.oninput = () => {
     const val = parseInt(inputVolumeEl.value);
-    inputVolumeEl.nextElementSibling.textContent = `${val}%`;
+    if (valueLabel) valueLabel.textContent = `${val}%`;
     updateInputEffect('inputVolume', val);
   };
 }
