@@ -1096,7 +1096,6 @@ async function autoRejoin() {
         } else {
           toast('방에 재입장했습니다', 'success');
           socket.room = lastRoom;
-          currentRoom = lastRoom;
           // Restart UDP
           startUdpMode();
           startLatencyPing();
@@ -1564,7 +1563,7 @@ async function startUdpMode() {
     let udpSuccess = false;
     try {
       await tauriInvoke('udp_set_relay', { host: relayHost, port: UDP_RELAY_PORT, sessionId: mySessionId });
-      socket.emit('udp-bind-room', { sessionId: mySessionId, roomId: currentRoom });
+      socket.emit('udp-bind-room', { sessionId: mySessionId, roomId: socket.room });
       await tauriInvoke('set_audio_devices', { input: null, output: null });
       await tauriInvoke('udp_start_relay_stream');
       udpSuccess = true;
@@ -1577,7 +1576,7 @@ async function startUdpMode() {
     // Fallback to TCP if UDP fails
     if (!udpSuccess) {
       useTcpFallback = true;
-      socket.emit('tcp-bind-room', { roomId: currentRoom });
+      socket.emit('tcp-bind-room', { roomId: socket.room });
       startTcpAudioStream();
       toast('TCP 오디오 연결됨 (폴백)', 'info');
     }
@@ -1666,7 +1665,7 @@ function startUdpStatsMonitor() {
           toast('UDP 연결 끊김, TCP로 전환 중...', 'warning');
           await tauriInvoke('udp_stop_stream');
           useTcpFallback = true;
-          socket.emit('tcp-bind-room', { roomId: currentRoom });
+          socket.emit('tcp-bind-room', { roomId: socket.room });
           startTcpAudioStream();
         }
       } else {
