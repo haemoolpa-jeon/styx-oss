@@ -1044,40 +1044,40 @@ async function autoRejoin() {
   if (!lastRoom || !currentUser || !isOnline) return;
   
   try {
-    const audioConstraints = {
-      audio: {
-        deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-        echoCancellation, noiseSuppression, autoGainControl: true,
-        sampleRate: 48000,
-        channelCount: 1,
-        latency: { ideal: 0.01 }
-      }
-    };
-    const rawStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
-    // 입력 리미터 적용
-    localStream = createProcessedInputStream(rawStream);
-    localStream._rawStream = rawStream;
+    // Cleanup previous audio state
+    cleanupAudio();
     
-    if (pttMode) localStream.getAudioTracks().forEach(t => t.enabled = false);
-    
-    socket.emit('join', { room: lastRoom, username: currentUser.username, password: lastRoomPassword }, res => {
-      if (res.error) {
-        toast('재입장 실패: ' + res.error, 'error');
-        localStream?._rawStream?.getTracks().forEach(t => t.stop());
-        localStream?.getTracks().forEach(t => t.stop());
-        if (inputLimiterContext) { inputLimiterContext.close(); inputLimiterContext = null; }
-        lastRoom = null;
-      } else {
-        toast('방에 재입장했습니다', 'success');
-        socket.room = lastRoom;
-        // 기존 사용자들에 대한 피어 연결 (initiator=false: 기존 사용자가 offer를 보냄)
-        res.users.forEach(u => createPeerConnection(u.id, u.username, u.avatar, false));
-        startLatencyPing();
-        startAudioMeter();
-      }
-    });
-  } catch {
-    toast('마이크 접근 실패', 'error');
+    // Get audio stream for Tauri
+    if (_isTauriApp) {
+      socket.emit('join', { room: lastRoom, username: currentUser.username, password: lastRoomPassword }, res => {
+        if (res.error) {
+          toast('재입장 실패: ' + res.error, 'error');
+          lastRoom = null;
+        } else {
+          toast('방에 재입장했습니다', 'success');
+          socket.room = lastRoom;
+          currentRoom = lastRoom;
+          // Restart UDP
+          startUdpMode();
+          startLatencyPing();
+        }
+      });
+    } else {
+      // Browser: spectator mode
+      socket.emit('join', { room: lastRoom, username: currentUser.username, password: lastRoomPassword }, res => {
+        if (res.error) {
+          toast('재입장 실패: ' + res.error, 'error');
+          lastRoom = null;
+        } else {
+          toast('방에 재입장했습니다 (관전 모드)', 'success');
+          socket.room = lastRoom;
+          startLatencyPing();
+        }
+      });
+    }
+  } catch (e) {
+    console.error('재입장 실패:', e);
+    toast('재입장 실패', 'error');
   }
 }
 
@@ -1091,9 +1091,6 @@ socket.on('connect', () => {
   
   // TURN 자격증명 업데이트
   updateTurnCredentials();
-  
-  // UDP 핸들러 설정 (Tauri 앱일 때만)
-  if (_isTauriApp) setupUdpHandlers();
   
   // 세션 복구 (최초 연결 시에만)
   if (!sessionRestored) {
@@ -1581,6 +1578,7 @@ async function cleanupAudio() {
 
 // UDP 연결 품질 모니터링
 let udpStatsInterval = null;
+let udpHealthFailCount = 0;
 
 function startUdpStatsMonitor() {
   if (!tauriInvoke || udpStatsInterval) return;
@@ -1589,6 +1587,21 @@ function startUdpStatsMonitor() {
     try {
       const stats = await tauriInvoke('get_udp_stats');
       updateUdpStatsUI(stats);
+      
+      // Health check: if no packets received for 5 seconds, switch to TCP
+      if (stats.is_running && stats.packets_received === 0) {
+        udpHealthFailCount++;
+        if (udpHealthFailCount >= 5 && !useTcpFallback) {
+          console.warn('UDP 연결 끊김, TCP로 전환');
+          toast('UDP 연결 끊김, TCP로 전환 중...', 'warning');
+          await tauriInvoke('udp_stop_stream');
+          useTcpFallback = true;
+          socket.emit('tcp-bind-room', { roomId: currentRoom });
+          startTcpAudioStream();
+        }
+      } else {
+        udpHealthFailCount = 0;
+      }
       
       // Per-peer stats
       const peerStats = await tauriInvoke('get_peer_stats');

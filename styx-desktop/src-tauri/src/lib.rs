@@ -5,6 +5,7 @@ mod peer;
 
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
+use std::collections::VecDeque;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
@@ -16,6 +17,9 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut}
 struct AppState {
     udp_port: Mutex<Option<u16>>,
     udp_stream: Mutex<peer::UdpStreamState>,
+    // TCP fallback buffers
+    tcp_send_buffer: Mutex<VecDeque<Vec<u8>>>,
+    tcp_recv_buffer: Mutex<VecDeque<Vec<u8>>>,
 }
 
 // ===== 오디오 커맨드 =====
@@ -219,6 +223,27 @@ fn udp_start_relay_stream(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+// ===== TCP Fallback Commands =====
+
+#[tauri::command]
+fn tcp_receive_audio(sender_id: String, data: Vec<u8>, state: State<'_, AppState>) {
+    if let Ok(mut buf) = state.tcp_recv_buffer.lock() {
+        buf.push_back(data);
+        // Limit buffer size
+        while buf.len() > 100 { buf.pop_front(); }
+    }
+}
+
+#[tauri::command]
+fn tcp_get_audio(state: State<'_, AppState>) -> Vec<u8> {
+    // Return encoded audio from send buffer (captured by audio input)
+    if let Ok(mut buf) = state.tcp_send_buffer.lock() {
+        buf.pop_front().unwrap_or_default()
+    } else {
+        Vec::new()
+    }
+}
+
 #[derive(serde::Serialize)]
 struct UdpStats {
     packets_sent: u32,
@@ -329,6 +354,8 @@ pub fn run() {
         .manage(AppState {
             udp_port: Mutex::new(None),
             udp_stream: Mutex::new(peer::UdpStreamState::default()),
+            tcp_send_buffer: Mutex::new(VecDeque::new()),
+            tcp_recv_buffer: Mutex::new(VecDeque::new()),
         })
         .invoke_handler(tauri::generate_handler![
             // 오디오
@@ -356,6 +383,9 @@ pub fn run() {
             get_udp_stats,
             get_peer_stats,
             setup_firewall,
+            // TCP fallback
+            tcp_receive_audio,
+            tcp_get_audio,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

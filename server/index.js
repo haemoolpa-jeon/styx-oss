@@ -1017,15 +1017,21 @@ udpServer.on('message', (msg, rinfo) => {
   if (msg.length < SESSION_ID_LEN + 1 || msg.length > MAX_PACKET_SIZE) return;
   
   const sessionId = msg.slice(0, SESSION_ID_LEN).toString();
-  const audioData = msg.slice(SESSION_ID_LEN);
+  const payload = msg.slice(SESSION_ID_LEN);
   
   udpStats.packetsIn++;
   udpStats.bytesIn += msg.length;
   
+  // Handle ping (health check) - payload starts with 'P'
+  if (payload.length === 1 && payload[0] === 0x50) { // 'P' = ping
+    udpServer.send(Buffer.from([0x4F]), rinfo.port, rinfo.address); // 'O' = pong
+    return;
+  }
+  
   // Register/update client
   let client = udpClients.get(sessionId);
   if (!client) {
-    udpClients.set(sessionId, { address: rinfo.address, port: rinfo.port, roomId: null });
+    udpClients.set(sessionId, { address: rinfo.address, port: rinfo.port, roomId: null, lastSeen: Date.now() });
     return;
   }
   
@@ -1034,6 +1040,7 @@ udpServer.on('message', (msg, rinfo) => {
     client.address = rinfo.address;
     client.port = rinfo.port;
   }
+  client.lastSeen = Date.now();
   
   if (!client.roomId) return;
   
@@ -1048,7 +1055,7 @@ udpServer.on('message', (msg, rinfo) => {
     if (!other) continue;
     
     // Send with sender ID prefix
-    udpServer.send([Buffer.from(sessionId), audioData], other.port, other.address);
+    udpServer.send([Buffer.from(sessionId), payload], other.port, other.address);
     udpStats.packetsOut++;
     udpStats.bytesOut += msg.length;
   }
