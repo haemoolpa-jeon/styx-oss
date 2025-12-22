@@ -1328,11 +1328,15 @@ async function showLobby() {
 
 // 안정성 설정 초기화
 function initStabilitySettings() {
-  // Tauri 앱이면 설정 표시
+  // Tauri 앱이면 오디오 설정 표시, 웹이면 다운로드 배너 표시
   if (_isTauriApp) {
     const tauriSettings = $('tauri-settings');
     if (tauriSettings) tauriSettings.style.display = 'block';
     initTauriFeatures();
+  } else {
+    // 웹 브라우저: 오디오 설정 숨기고 다운로드 배너 표시
+    $('audio-settings-section')?.classList.add('hidden');
+    $('web-download-banner')?.classList.remove('hidden');
   }
   
   // 지터 버퍼 슬라이더

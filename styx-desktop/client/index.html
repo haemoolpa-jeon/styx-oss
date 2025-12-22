@@ -100,8 +100,15 @@
       </header>
 
       <main class="lobby-main">
-        <!-- 오디오 설정 -->
-        <section class="lobby-card">
+        <!-- 웹 사용자용 다운로드 안내 -->
+        <section id="web-download-banner" class="lobby-card download-banner hidden">
+          <h3>🎧 음성 참여를 위해 데스크톱 앱을 설치하세요</h3>
+          <p>웹 브라우저에서는 관전만 가능합니다. 음성 채팅에 참여하려면 데스크톱 앱이 필요합니다.</p>
+          <a href="https://github.com/jeonghyeonee/styx/releases" target="_blank" class="btn-primary">📥 데스크톱 앱 다운로드</a>
+        </section>
+
+        <!-- 오디오 설정 (데스크톱 앱 전용) -->
+        <section id="audio-settings-section" class="lobby-card">
           <h3>🎧 오디오 설정</h3>
           <div class="audio-grid">
             <div class="audio-col">
