@@ -97,7 +97,7 @@ document.addEventListener('click', function resumeAudio() {
 }, { once: false });
 
 // 입력 오디오에 리미터/컴프레서 + EQ 적용 (저지연)
-let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0 };
+let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0, inputVolume: 120 };
 let effectNodes = {};
 let noiseGateWorklet = null;
 
@@ -138,9 +138,9 @@ async function createProcessedInputStream(rawStream) {
   compressor.threshold.value = -12; compressor.knee.value = 6;
   compressor.ratio.value = 12; compressor.attack.value = 0.003; compressor.release.value = 0.1;
   
-  // 메이크업 게인
+  // 메이크업 게인 (입력 볼륨 컨트롤)
   const makeupGain = inputLimiterContext.createGain();
-  makeupGain.gain.value = 1.2;
+  makeupGain.gain.value = inputEffects.inputVolume / 100;
   
   const dest = inputLimiterContext.createMediaStreamDestination();
   
@@ -167,6 +167,7 @@ function updateInputEffect(effect, value) {
     case 'eqLow': effectNodes.eqLow.gain.value = value; break;
     case 'eqMid': effectNodes.eqMid.gain.value = value; break;
     case 'eqHigh': effectNodes.eqHigh.gain.value = value; break;
+    case 'inputVolume': effectNodes.makeupGain.gain.value = value / 100; break;
   }
 }
 
@@ -3694,6 +3695,18 @@ $('effects-toggle')?.addEventListener('click', () => {
     updateInputEffect(effect, val);
   };
 });
+
+// 입력 볼륨 슬라이더 초기화
+const inputVolumeEl = $('input-volume');
+if (inputVolumeEl) {
+  inputVolumeEl.value = inputEffects.inputVolume || 120;
+  inputVolumeEl.nextElementSibling.textContent = `${inputVolumeEl.value}%`;
+  inputVolumeEl.oninput = () => {
+    const val = parseInt(inputVolumeEl.value);
+    inputVolumeEl.nextElementSibling.textContent = `${val}%`;
+    updateInputEffect('inputVolume', val);
+  };
+}
 
 
 // ===== Inline 이벤트 핸들러 대체 =====
