@@ -13,6 +13,41 @@
 </head>
 <body data-theme="dark">
   <div id="connection-status" title="서버 연결 상태"></div>
+  <div id="quality-indicator" class="quality-indicator hidden" title="연결 품질">
+    <div class="quality-bars">
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+    </div>
+    <span class="quality-text">연결 중...</span>
+  </div>
+  <div id="reconnect-overlay" class="reconnect-overlay hidden">
+    <div class="reconnect-content">
+      <div class="reconnect-spinner"></div>
+      <div class="reconnect-text">서버 재연결 중...</div>
+      <div class="reconnect-progress">
+        <div class="progress-bar"></div>
+      </div>
+      <div class="reconnect-attempt">시도 <span id="reconnect-count">1</span>/10</div>
+    </div>
+  </div>
+  <div id="shortcuts-overlay" class="shortcuts-overlay hidden">
+    <div class="shortcuts-content">
+      <div class="shortcuts-header">
+        <h3>키보드 단축키</h3>
+        <button class="close-btn" onclick="$('shortcuts-overlay').classList.add('hidden')">×</button>
+      </div>
+      <div class="shortcuts-list">
+        <div class="shortcut-item"><kbd>M</kbd> 음소거 토글</div>
+        <div class="shortcut-item"><kbd>Space</kbd> 메트로놈 토글</div>
+        <div class="shortcut-item"><kbd>R</kbd> 녹음 토글</div>
+        <div class="shortcut-item"><kbd>I</kbd> 초대 링크 복사</div>
+        <div class="shortcut-item"><kbd>F1</kbd> 또는 <kbd>?</kbd> 이 도움말</div>
+        <div class="shortcut-item"><kbd>Esc</kbd> 도움말 닫기</div>
+      </div>
+    </div>
+  </div>
   <div id="toast-container"></div>
 
   <div id="app">
@@ -88,15 +123,21 @@
             </div>
             <div class="audio-col">
               <div class="form-field">
-                <label>📊 버퍼 크기 <span id="jitter-value">100ms</span></label>
-                <input type="range" id="jitter-slider" min="50" max="200" value="100" step="10">
-                <span class="hint">높을수록 안정적, 지연 증가</span>
+                <label>📊 버퍼 <span id="jitter-value">50ms</span> <label class="auto-jitter-label"><input type="checkbox" id="auto-jitter" checked> 자동</label></label>
+                <input type="range" id="jitter-slider" min="20" max="150" value="50" step="10">
               </div>
-              <button id="test-audio-btn" class="btn-test">🎤 마이크 테스트</button>
+              <div class="form-field">
+                <label class="low-latency-label"><input type="checkbox" id="low-latency-mode"> ⚡ 저지연 모드 <small>(ASIO + 유선랜 권장)</small></label>
+              </div>
+              <div class="test-buttons">
+                <button id="test-audio-btn" class="btn-test">🎤 마이크</button>
+                <button id="test-network-btn" class="btn-test">📡 네트워크</button>
+              </div>
               <div class="mic-meter">
                 <div id="mic-level"></div>
               </div>
-              <span id="test-status-text" class="test-status"></span>
+              <div id="test-results" class="test-results hidden"></div>
+              <span id="test-status" class="test-status"></span>
             </div>
           </div>
           <!-- Tauri 앱 전용 설정 -->
@@ -260,7 +301,7 @@
     <div id="room-view" class="hidden">
       <header class="room-header">
         <div class="room-title">
-          <h2>🎸 <span id="roomName"></span></h2>
+          <h2>🎸 <span id="roomName"></span><span id="my-role-badge" class="role-badge"></span></h2>
           <div id="room-settings-display" class="room-settings-display"></div>
         </div>
         <div class="room-controls">
@@ -269,10 +310,20 @@
           <button id="muteBtn" class="btn-icon" title="음소거 (M)">🎤</button>
           <button id="inviteBtn" class="btn-icon" title="초대 링크">🔗</button>
           <button id="recordBtn" class="btn-icon" title="녹음">⏺️</button>
+          <button id="screenShareBtn" class="btn-icon" title="화면 공유">🖥️</button>
           <button id="closeRoomBtn" class="btn-icon hidden" title="방 닫기">🚪</button>
           <button id="leaveBtn" class="btn-leave">나가기</button>
         </div>
       </header>
+
+      <!-- 화면 공유 영역 -->
+      <div id="screen-share-container" class="screen-share-container hidden">
+        <div class="screen-share-header">
+          <span id="screen-share-user">화면 공유 중</span>
+          <button id="screen-share-close" class="btn-icon">✕</button>
+        </div>
+        <video id="screen-share-video" autoplay playsinline></video>
+      </div>
 
       <div class="room-toolbar">
         <div class="toolbar-section">
@@ -283,11 +334,13 @@
           <label class="toolbar-check"><input type="checkbox" id="room-auto-adapt" checked> 자동 품질</label>
           <label class="toolbar-check"><input type="checkbox" id="room-ducking"> 자동 볼륨</label>
           <label class="toolbar-check"><input type="checkbox" id="delay-compensation"> 지연 맞추기</label>
+          <label class="toolbar-check"><input type="checkbox" id="multitrack-mode"> 멀티트랙</label>
         </div>
         <div class="toolbar-section">
           <span class="toolbar-label">버퍼:</span>
-          <input type="range" id="room-jitter-slider" min="50" max="200" value="100" step="10" class="toolbar-slider">
-          <span id="room-jitter-value" class="toolbar-value">100ms</span>
+          <input type="range" id="room-jitter-slider" min="30" max="150" value="50" step="10" class="toolbar-slider">
+          <span id="room-jitter-value" class="toolbar-value">50ms</span>
+          <label class="toolbar-check"><input type="checkbox" id="room-auto-jitter" checked> 자동</label>
         </div>
         <div class="toolbar-section metronome-section">
           <button id="metronome-toggle" class="btn-metro">▶️</button>
@@ -305,6 +358,14 @@
         <div class="toolbar-section">
           <span class="toolbar-label">입력:</span>
           <div class="input-meter"><div id="audio-meter"></div></div>
+        </div>
+        <div class="toolbar-section effects-section">
+          <button id="effects-toggle" class="btn-icon" title="EQ">🎛️</button>
+          <div id="effects-panel" class="effects-panel hidden">
+            <div class="effect-row"><span>저음</span><input type="range" id="eq-low" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span>중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span>고음</span><input type="range" id="eq-high" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+          </div>
         </div>
       </div>
 

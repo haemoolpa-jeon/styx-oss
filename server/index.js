@@ -29,8 +29,8 @@ const schemas = {
   }).optional()
 };
 
-// TURN server settings (set via environment variables)
-const TURN_SERVER = process.env.TURN_SERVER || '';
+// TURN 서버 설정
+const TURN_SERVER = process.env.TURN_SERVER;
 const TURN_SECRET = process.env.TURN_SECRET || '';
 const TURN_TTL = 24 * 60 * 60; // 24시간
 
@@ -48,18 +48,57 @@ function generateTurnCredentials(username) {
 // 환경 변수 검증
 function validateEnv() {
   const warnings = [];
+  const errors = [];
+  
   if (!process.env.PORT) warnings.push('PORT not set, using default 3000');
   if (!process.env.CORS_ORIGINS) warnings.push('CORS_ORIGINS not set, allowing same origin only');
   if (process.env.NODE_ENV === 'production' && !process.env.FORCE_HTTPS) {
     warnings.push('FORCE_HTTPS not set in production');
   }
+  
+  // TURN server validation
+  if (!TURN_SERVER) warnings.push('TURN_SERVER not set, WebRTC may fail behind NAT');
+  if (!TURN_SECRET) {
+    if (process.env.NODE_ENV === 'production') {
+      errors.push('TURN_SECRET required in production for WebRTC NAT traversal');
+    } else {
+      warnings.push('TURN_SECRET not set, WebRTC may fail behind NAT');
+    }
+  }
+  
   warnings.forEach(w => console.warn(`⚠️  ${w}`));
+  
+  if (errors.length > 0) {
+    errors.forEach(e => console.error(`❌ ${e}`));
+    console.error('Fix critical configuration errors before starting server');
+    process.exit(1);
+  }
+  
   console.log('✓ Environment validated');
 }
 validateEnv();
 
 const app = express();
 const server = createServer(app);
+
+// CORS 설정 for HTTP requests
+const ALLOWED_ORIGINS = process.env.CORS_ORIGINS 
+  ? process.env.CORS_ORIGINS.split(',') 
+  : ['http://tauri.localhost', 'https://tauri.localhost', 'http://localhost:3000'];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin) || ALLOWED_ORIGINS === true) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // Security headers
 app.use(helmet({
@@ -69,7 +108,17 @@ app.use(helmet({
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', uptime: Math.floor(process.uptime()) });
+  const uptime = Math.floor(process.uptime());
+  const memUsage = process.memoryUsage();
+  res.json({ 
+    status: 'ok', 
+    uptime,
+    memory: {
+      used: Math.round(memUsage.heapUsed / 1024 / 1024) + 'MB',
+      total: Math.round(memUsage.heapTotal / 1024 / 1024) + 'MB'
+    },
+    connections: io.engine.clientsCount || 0
+  });
 });
 
 // HTTPS 리다이렉트 (프로덕션)
@@ -83,11 +132,6 @@ if (process.env.FORCE_HTTPS === 'true') {
   console.log('✓ HTTPS redirect enabled');
 }
 
-// CORS 설정
-const ALLOWED_ORIGINS = process.env.CORS_ORIGINS 
-  ? process.env.CORS_ORIGINS.split(',') 
-  : true;
-
 const io = new Server(server, { 
   cors: { origin: ALLOWED_ORIGINS, credentials: true }, 
   maxHttpBufferSize: 5e6 
@@ -96,17 +140,58 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 const USERS_FILE = path.join(__dirname, 'data', 'users.json');
 const SESSIONS_FILE = path.join(__dirname, 'data', 'sessions.json');
+const WHITELIST_FILE = path.join(__dirname, 'data', 'whitelist.json');
 const AVATARS_DIR = path.join(__dirname, '..', 'avatars');
 const SALT_ROUNDS = 10;
 
-// Rate Limiting with inline cleanup
-const rateLimits = new Map();
-const RATE_LIMIT_WINDOW = 60000;
-const RATE_LIMIT_MAX = 100;
+// IP Whitelist System
+let ipWhitelist = new Set();
+let whitelistEnabled = false;
 
-function checkRateLimit(ip) {
+function loadWhitelist() {
+  try {
+    if (fs.existsSync(WHITELIST_FILE)) {
+      const data = JSON.parse(fs.readFileSync(WHITELIST_FILE, 'utf8'));
+      ipWhitelist = new Set(data.ips || []);
+      whitelistEnabled = data.enabled || false;
+      console.log(`✓ IP whitelist loaded: ${ipWhitelist.size} IPs, enabled: ${whitelistEnabled}`);
+    }
+  } catch (e) {
+    console.error('Failed to load whitelist:', e);
+  }
+}
+
+function saveWhitelist() {
+  try {
+    fs.writeFileSync(WHITELIST_FILE, JSON.stringify({
+      enabled: whitelistEnabled,
+      ips: Array.from(ipWhitelist),
+      lastModified: new Date().toISOString()
+    }, null, 2));
+  } catch (e) {
+    console.error('Failed to save whitelist:', e);
+  }
+}
+
+function isIpWhitelisted(ip) {
+  if (!whitelistEnabled) return true;
+  return ipWhitelist.has(ip) || ip === '127.0.0.1' || ip === '::1'; // Always allow localhost
+}
+
+// Load whitelist on startup
+loadWhitelist();
+
+// Enhanced Rate Limiting with per-user tracking
+const rateLimits = new Map(); // IP-based
+const userRateLimits = new Map(); // User session-based
+const RATE_LIMIT_WINDOW = 60000;
+const RATE_LIMIT_MAX = 100; // Per IP
+const USER_RATE_LIMIT_MAX = 50; // Per user session
+
+function checkRateLimit(ip, userId = null) {
   const now = Date.now();
-  // Inline cleanup: remove expired entries (max 10 per call to avoid blocking)
+  
+  // Cleanup expired entries
   let cleaned = 0;
   for (const [key, record] of rateLimits) {
     if (now - record.start > RATE_LIMIT_WINDOW) {
@@ -115,13 +200,35 @@ function checkRateLimit(ip) {
     }
   }
   
-  const record = rateLimits.get(ip);
-  if (!record || now - record.start > RATE_LIMIT_WINDOW) {
-    rateLimits.set(ip, { start: now, count: 1 });
-    return true;
+  // Cleanup expired user rate limits
+  for (const [key, record] of userRateLimits) {
+    if (now - record.start > RATE_LIMIT_WINDOW) {
+      userRateLimits.delete(key);
+      if (++cleaned >= 20) break;
+    }
   }
-  record.count++;
-  return record.count <= RATE_LIMIT_MAX;
+  
+  // Check IP-based rate limit
+  const ipRecord = rateLimits.get(ip);
+  if (!ipRecord || now - ipRecord.start > RATE_LIMIT_WINDOW) {
+    rateLimits.set(ip, { start: now, count: 1 });
+  } else {
+    ipRecord.count++;
+    if (ipRecord.count > RATE_LIMIT_MAX) return false;
+  }
+  
+  // Check user-based rate limit if userId provided
+  if (userId) {
+    const userRecord = userRateLimits.get(userId);
+    if (!userRecord || now - userRecord.start > RATE_LIMIT_WINDOW) {
+      userRateLimits.set(userId, { start: now, count: 1 });
+    } else {
+      userRecord.count++;
+      if (userRecord.count > USER_RATE_LIMIT_MAX) return false;
+    }
+  }
+  
+  return true;
 }
 
 // 디렉토리 초기화
@@ -138,7 +245,7 @@ const loadUsers = async () => {
     const data = await fs.readFile(USERS_FILE, 'utf8');
     return JSON.parse(data);
   } catch (e) {
-    console.error('사용자 파일 로드 실패:', e.message);
+    console.error('[FILE_ERROR] Failed to load users file:', e.message);
     return { users: {}, pending: {} };
   }
 };
@@ -147,7 +254,7 @@ const saveUsers = async (data) => {
   try {
     await fs.writeFile(USERS_FILE, JSON.stringify(data, null, 2));
   } catch (e) {
-    console.error('사용자 파일 저장 실패:', e.message);
+    console.error('[FILE_ERROR] Failed to save users file:', e.message);
   }
 };
 
@@ -161,7 +268,7 @@ const loadSessions = async () => {
     }
     return new Map(Object.entries(parsed));
   } catch (e) {
-    if (e.code !== 'ENOENT') console.error('세션 파일 로드 실패:', e.message);
+    if (e.code !== 'ENOENT') console.error('[SESSION_ERROR] Failed to load sessions file:', e.message);
     return new Map();
   }
 };
@@ -170,7 +277,7 @@ const saveSessions = async (sessions) => {
   try {
     await fs.writeFile(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions), null, 2));
   } catch (e) {
-    console.error('세션 파일 저장 실패:', e.message);
+    console.error('[SESSION_ERROR] Failed to save sessions file:', e.message);
   }
 };
 
@@ -188,8 +295,42 @@ function safeTokenCompare(a, b) {
 
 // 입력 검증 (legacy - kept for compatibility, use zod schemas for new code)
 const validateUsername = (u) => schemas.username.safeParse(u).success;
-const validatePassword = (p) => schemas.password.safeParse(p).success;
-const sanitize = (s) => String(s).replace(/[<>"'&]/g, '');
+const validatePassword = (p) => {
+  if (!schemas.password.safeParse(p).success) return { valid: false, error: 'Password must be 4-50 characters' };
+  
+  // Enhanced password requirements
+  if (p.length < 6) return { valid: false, error: 'Password must be at least 6 characters' };
+  if (!/[a-zA-Z]/.test(p)) return { valid: false, error: 'Password must contain at least one letter' };
+  if (!/[0-9]/.test(p)) return { valid: false, error: 'Password must contain at least one number' };
+  
+  // Check for common weak passwords
+  const weak = ['123456', 'password', 'qwerty', '111111', '123123', 'admin', 'user'];
+  if (weak.includes(p.toLowerCase())) return { valid: false, error: 'Password is too common' };
+  
+  return { valid: true };
+};
+
+// Input sanitization
+function sanitizeInput(input, maxLength = 100) {
+  if (typeof input !== 'string') return '';
+  return input
+    .trim()
+    .slice(0, maxLength)
+    .replace(/[<>]/g, '') // Remove potential HTML tags
+    .replace(/javascript:/gi, '') // Remove javascript: URLs
+    .replace(/on\w+=/gi, '') // Remove event handlers
+    .replace(/[\x00-\x1f\x7f]/g, ''); // Remove control characters
+}
+
+function validateRoomName(name) {
+  if (!name || typeof name !== 'string') return false;
+  const sanitized = sanitizeInput(name, 30);
+  return sanitized.length >= 2 && sanitized.length <= 30 && 
+         /^[a-zA-Z0-9가-힣\s_-]+$/.test(sanitized) &&
+         !sanitized.includes('..') && // Prevent path traversal
+         !sanitized.startsWith('.'); // Prevent hidden files
+}
+const sanitize = (s) => String(s).replace(/[<>"'&]/g, '').replace(/[\x00-\x1f\x7f]/g, '');
 
 // 세션 정리 (1시간마다)
 setInterval(async () => {
@@ -200,10 +341,13 @@ setInterval(async () => {
   }
   if (cleaned > 0) {
     await saveSessions(sessions);
-    console.log(`만료 세션 ${cleaned}개 정리됨`);
+    console.log(`[CLEANUP] Cleaned ${cleaned} expired sessions`);
   }
   for (const [ip, record] of rateLimits) {
     if (now - record.start > 60000) rateLimits.delete(ip);
+  }
+  for (const [userId, record] of userRateLimits) {
+    if (now - record.start > 60000) userRateLimits.delete(userId);
   }
 }, 60 * 60 * 1000);
 
@@ -254,36 +398,69 @@ const broadcastRoomList = () => {
 
 io.on('connection', (socket) => {
   const clientIp = socket.handshake.address;
+  const userAgent = socket.handshake.headers['user-agent'] || 'unknown';
+  
+  // IP Whitelist Check
+  if (!isIpWhitelisted(clientIp)) {
+    console.log(`[WHITELIST_BLOCK] ${clientIp}`);
+    socket.emit('error', { message: 'Access denied from this IP address' });
+    socket.disconnect(true);
+    return;
+  }
   
   if (!checkRateLimit(clientIp)) {
-    console.log(`Rate limit 초과: ${clientIp}`);
+    console.log(`[RATE_LIMIT] ${clientIp}`);
     socket.emit('error', { message: 'Too many requests' });
     socket.disconnect(true);
     return;
   }
   
-  console.log(`연결됨: ${socket.id}`);
+  console.log(`[CONNECT] ${socket.id} from ${clientIp}`);
   
   socket.on('login', async ({ username, password }, cb) => {
     try {
       await sessionsReady;
-      if (!validateUsername(username)) return cb({ error: 'Invalid credentials' });
+      if (!checkRateLimit(clientIp, username)) {
+        console.log(`[RATE_LIMIT] ${clientIp} user:${username}`);
+        return cb({ error: 'Too many requests' });
+      }
+      if (!validateUsername(username)) {
+        console.log(`[LOGIN_FAIL] invalid username format from ${clientIp}`);
+        return cb({ error: 'Invalid credentials' });
+      }
       const data = await loadUsers();
       const user = data.users[username];
       // Use generic error to prevent username enumeration
-      if (!user) return cb({ error: 'Invalid credentials' });
+      if (!user) {
+        console.log(`[LOGIN_FAIL] ${username} not found from ${clientIp}`);
+        return cb({ error: 'Invalid credentials' });
+      }
       const valid = await bcrypt.compare(password, user.password);
-      if (!valid) return cb({ error: 'Invalid credentials' });
-      if (!user.approved) return cb({ error: 'Account pending approval' });
+      if (!valid) {
+        console.log(`[LOGIN_FAIL] ${username} wrong password from ${clientIp}`);
+        return cb({ error: 'Invalid credentials' });
+      }
+      if (!user.approved) {
+        console.log(`[LOGIN_FAIL] ${username} not approved from ${clientIp}`);
+        return cb({ error: 'Account pending approval' });
+      }
       
       socket.username = username;
       socket.isAdmin = user.isAdmin;
       const token = generateToken();
-      sessions.set(username, { token, expires: Date.now() + 7 * 24 * 60 * 60 * 1000 });
+      const sessionTimeout = user.isAdmin ? 24 * 60 * 60 * 1000 : 4 * 60 * 60 * 1000; // Admin: 24h, User: 4h
+      sessions.set(username, { 
+        token, 
+        expires: Date.now() + sessionTimeout,
+        ip: clientIp,
+        userAgent,
+        lastActivity: Date.now()
+      });
       await saveSessions(sessions);
+      console.log(`[LOGIN] ${username} from ${clientIp}`);
       cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar }, token });
     } catch (e) {
-      console.error('로그인 오류:', e.message);
+      console.error('[LOGIN_ERROR]', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -306,15 +483,21 @@ io.on('connection', (socket) => {
       session.expires = Date.now() + 7 * 24 * 60 * 60 * 1000;
       cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar } });
     } catch (e) {
-      console.error('세션 복구 오류:', e.message);
+      console.error('[SESSION_ERROR] Session restore failed:', e.message);
       cb({ error: 'Server error' });
     }
   });
 
   socket.on('signup', async ({ username, password }, cb) => {
     try {
+      if (!checkRateLimit(clientIp, username)) {
+        console.log(`[RATE_LIMIT] ${clientIp} user:${username}`);
+        return cb({ error: 'Too many requests' });
+      }
       if (!validateUsername(username)) return cb({ error: 'Invalid username (2-20자, 영문/숫자/한글/_)' });
-      if (!validatePassword(password)) return cb({ error: 'Invalid password (4-50자)' });
+      
+      const passwordCheck = validatePassword(password);
+      if (!passwordCheck.valid) return cb({ error: passwordCheck.error });
       
       const result = await withLock(async () => {
         const data = await loadUsers();
@@ -326,7 +509,7 @@ io.on('connection', (socket) => {
       });
       cb(result);
     } catch (e) {
-      console.error('회원가입 오류:', e.message);
+      console.error('[SIGNUP_ERROR]', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -334,7 +517,9 @@ io.on('connection', (socket) => {
   socket.on('change-password', async ({ oldPassword, newPassword }, cb) => {
     try {
       if (!socket.username) return cb({ error: 'Not logged in' });
-      if (!validatePassword(newPassword)) return cb({ error: 'Invalid new password' });
+      
+      const passwordCheck = validatePassword(newPassword);
+      if (!passwordCheck.valid) return cb({ error: passwordCheck.error });
       
       const result = await withLock(async () => {
         const data = await loadUsers();
@@ -349,7 +534,7 @@ io.on('connection', (socket) => {
       });
       cb(result);
     } catch (e) {
-      console.error('비밀번호 변경 오류:', e.message);
+      console.error('[PASSWORD_ERROR] Password change failed:', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -360,7 +545,7 @@ io.on('connection', (socket) => {
       const data = await loadUsers();
       cb({ pending: Object.keys(data.pending) });
     } catch (e) {
-      console.error('대기 목록 조회 오류:', e.message);
+      console.error('[PENDING_ERROR] Failed to get pending users:', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -374,7 +559,7 @@ io.on('connection', (socket) => {
       }));
       cb({ users });
     } catch (e) {
-      console.error('사용자 목록 조회 오류:', e.message);
+      console.error('[USERS_ERROR] Failed to get users list:', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -395,7 +580,7 @@ io.on('connection', (socket) => {
       });
       cb(result);
     } catch (e) {
-      console.error('사용자 승인 오류:', e.message);
+      console.error('[APPROVE_ERROR] User approval failed:', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -410,7 +595,7 @@ io.on('connection', (socket) => {
       });
       cb({ success: true });
     } catch (e) {
-      console.error('사용자 거절 오류:', e.message);
+      console.error('[REJECT_ERROR] User rejection failed:', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -433,13 +618,13 @@ io.on('connection', (socket) => {
           const avatarFile = files.find(f => f.startsWith(username + '.'));
           if (avatarFile) await fs.unlink(path.join(AVATARS_DIR, avatarFile));
         } catch (e) {
-          console.error('아바타 삭제 오류:', e.message);
+          console.error('[AVATAR_ERROR] Failed to delete old avatar:', e.message);
         }
         return { success: true };
       });
       cb(result);
     } catch (e) {
-      console.error('사용자 삭제 오류:', e.message);
+      console.error('[DELETE_ERROR] User deletion failed:', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -467,7 +652,7 @@ io.on('connection', (socket) => {
       roomData.users.delete(socket.id);
       socket.to(socket.room).emit('user-left', { id: socket.id });
       socket.leave(socket.room);
-      console.log(`${socket.username} 퇴장: ${socket.room}`);
+      console.log(`[LEAVE] ${socket.username} left room: ${socket.room}`);
       if (roomData.users.size === 0) scheduleRoomDeletion(socket.room);
       socket.room = null;
       broadcastRoomList();
@@ -490,7 +675,7 @@ io.on('connection', (socket) => {
         const oldAvatar = files.find(f => f.startsWith(username + '.') && f !== filename);
         if (oldAvatar) await fs.unlink(path.join(AVATARS_DIR, oldAvatar));
       } catch (e) {
-        console.error('기존 아바타 삭제 오류:', e.message);
+        console.error('[AVATAR_ERROR] Failed to delete existing avatar:', e.message);
       }
       
       await fs.writeFile(path.join(AVATARS_DIR, filename), buffer);
@@ -506,7 +691,7 @@ io.on('connection', (socket) => {
       });
       cb(result);
     } catch (e) {
-      console.error('아바타 업로드 오류:', e.message);
+      console.error('[AVATAR_ERROR] Avatar upload failed:', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -522,7 +707,7 @@ io.on('connection', (socket) => {
       });
       cb?.({ success: true });
     } catch (e) {
-      console.error('설정 저장 오류:', e.message);
+      console.error('[SETTINGS_ERROR] Failed to save settings:', e.message);
       cb?.({ error: 'Server error' });
     }
   });
@@ -534,7 +719,7 @@ io.on('connection', (socket) => {
       const user = data.users[socket.username];
       cb?.({ settings: user?.settings || null });
     } catch (e) {
-      console.error('설정 로드 오류:', e.message);
+      console.error('[SETTINGS_ERROR] Failed to load settings:', e.message);
       cb?.({ error: 'Server error' });
     }
   });
@@ -554,6 +739,10 @@ io.on('connection', (socket) => {
 
   socket.on('join', async ({ room, username, password: roomPassword, settings }, cb) => {
     try {
+      if (!checkRateLimit(clientIp, username)) {
+        console.log(`[RATE_LIMIT] ${clientIp} user:${username}`);
+        return cb({ error: 'Too many requests' });
+      }
       // Validate inputs with zod
       const roomResult = schemas.roomName.safeParse(room);
       if (!roomResult.success) return cb({ error: 'Invalid room name' });
@@ -576,7 +765,8 @@ io.on('connection', (socket) => {
           delayCompensation: false,
           maxUsers: Math.min(Math.max(s.maxUsers || 8, 2), 8),
           audioMode: s.audioMode || 'music', bitrate: s.bitrate || 96,
-          sampleRate: s.sampleRate || 48000, isPrivate: s.isPrivate || false
+          sampleRate: s.sampleRate || 48000, isPrivate: s.isPrivate || false,
+          roles: new Map() // userId -> 'host' | 'performer' | 'listener'
         });
       }
       const roomData = rooms.get(room);
@@ -594,30 +784,33 @@ io.on('connection', (socket) => {
 
       socket.join(room);
       roomData.users.set(socket.id, { username, avatar: user.avatar });
+      // 역할 설정: 방 생성자는 host, 나머지는 performer
+      const role = roomData.creatorId === socket.id ? 'host' : 'performer';
+      roomData.roles.set(socket.id, role);
       socket.username = username;
       socket.room = room;
       socket.isAdmin = user.isAdmin;
 
       const existingUsers = [];
       for (const [id, u] of roomData.users) {
-        if (id !== socket.id) existingUsers.push({ id, username: u.username, avatar: u.avatar });
+        if (id !== socket.id) existingUsers.push({ id, username: u.username, avatar: u.avatar, role: roomData.roles.get(id) });
       }
 
-      socket.to(room).emit('user-joined', { id: socket.id, username, avatar: user.avatar });
+      socket.to(room).emit('user-joined', { id: socket.id, username, avatar: user.avatar, role });
       cb({ 
         success: true, users: existingUsers, isAdmin: user.isAdmin,
         isCreator: roomData.creatorId === socket.id, creatorUsername: roomData.creatorUsername,
         messages: roomData.messages.slice(-50), metronome: roomData.metronome,
-        delayCompensation: roomData.delayCompensation,
+        delayCompensation: roomData.delayCompensation, myRole: role,
         roomSettings: {
           maxUsers: roomData.maxUsers, audioMode: roomData.audioMode,
           bitrate: roomData.bitrate, sampleRate: roomData.sampleRate, isPrivate: roomData.isPrivate
         }
       });
       broadcastRoomList();
-      console.log(`${username} 입장: ${room} (${roomData.users.size}/${roomData.maxUsers})`);
+      console.log(`[JOIN] ${username} entered room: ${room} (${roomData.users.size}/${roomData.maxUsers})`);
     } catch (e) {
-      console.error('방 입장 오류:', e.message);
+      console.error('[JOIN_ERROR] Room join failed:', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -636,6 +829,33 @@ io.on('connection', (socket) => {
     if (!roomData) return;
     roomData.delayCompensation = !!enabled;
     io.to(socket.room).emit('delay-compensation-sync', enabled);
+  });
+
+  // 화면 공유
+  socket.on('screen-share-start', () => {
+    if (!socket.room) return;
+    socket.to(socket.room).emit('screen-share-start', { userId: socket.id, username: socket.username });
+  });
+
+  socket.on('screen-share-stop', () => {
+    if (!socket.room) return;
+    socket.to(socket.room).emit('screen-share-stop', { userId: socket.id });
+  });
+
+  // 역할 변경 (호스트만 가능)
+  socket.on('change-role', ({ userId, role }, cb) => {
+    if (!socket.room) return cb?.({ error: 'Not in room' });
+    const roomData = rooms.get(socket.room);
+    if (!roomData) return cb?.({ error: 'Room not found' });
+    
+    const myRole = roomData.roles.get(socket.id);
+    if (myRole !== 'host' && !socket.isAdmin) return cb?.({ error: 'Not authorized' });
+    if (!['performer', 'listener'].includes(role)) return cb?.({ error: 'Invalid role' });
+    if (!roomData.users.has(userId)) return cb?.({ error: 'User not found' });
+    
+    roomData.roles.set(userId, role);
+    io.to(socket.room).emit('role-changed', { userId, role });
+    cb?.({ success: true });
   });
 
   socket.on('update-room-settings', ({ setting, value }, cb) => {
@@ -715,19 +935,56 @@ io.on('connection', (socket) => {
     socket.emit('udp-peers', peers);
   });
 
-  socket.on('disconnect', () => {
+  // Admin: IP Whitelist Management
+  socket.on('admin-whitelist-status', (cb) => {
+    if (!socket.isAdmin) return cb?.({ error: 'Not authorized' });
+    cb?.({ 
+      enabled: whitelistEnabled, 
+      ips: Array.from(ipWhitelist),
+      count: ipWhitelist.size 
+    });
+  });
+
+  socket.on('admin-whitelist-toggle', ({ enabled }, cb) => {
+    if (!socket.isAdmin) return cb?.({ error: 'Not authorized' });
+    whitelistEnabled = enabled;
+    saveWhitelist();
+    console.log(`[ADMIN] ${socket.username} ${enabled ? 'enabled' : 'disabled'} IP whitelist`);
+    cb?.({ success: true, enabled: whitelistEnabled });
+  });
+
+  socket.on('admin-whitelist-add', ({ ip }, cb) => {
+    if (!socket.isAdmin) return cb?.({ error: 'Not authorized' });
+    if (!ip || !/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) return cb?.({ error: 'Invalid IP format' });
+    
+    ipWhitelist.add(ip);
+    saveWhitelist();
+    console.log(`[ADMIN] ${socket.username} added IP to whitelist: ${ip}`);
+    cb?.({ success: true, ips: Array.from(ipWhitelist) });
+  });
+
+  socket.on('admin-whitelist-remove', ({ ip }, cb) => {
+    if (!socket.isAdmin) return cb?.({ error: 'Not authorized' });
+    ipWhitelist.delete(ip);
+    saveWhitelist();
+    console.log(`[ADMIN] ${socket.username} removed IP from whitelist: ${ip}`);
+    cb?.({ success: true, ips: Array.from(ipWhitelist) });
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log(`[DISCONNECT] ${socket.id} ${socket.username || 'anonymous'} (${reason})`);
     if (socket.room && rooms.has(socket.room)) {
       const roomData = rooms.get(socket.room);
       roomData.users.delete(socket.id);
       socket.to(socket.room).emit('user-left', { id: socket.id });
       if (roomData.users.size === 0) scheduleRoomDeletion(socket.room);
       broadcastRoomList();
-      console.log(`${socket.username} 퇴장: ${socket.room}`);
+      console.log(`[LEAVE] ${socket.username} left ${socket.room}`);
     }
   });
 });
 
-server.listen(PORT, () => console.log(`Styx 서버 실행 중: 포트 ${PORT}`));
+server.listen(PORT, () => console.log(`[SERVER] Styx server running on port ${PORT}`));
 
 // Graceful shutdown
 const shutdown = async (signal) => {

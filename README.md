@@ -1,117 +1,122 @@
 # 🎵 Styx
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+HADES를 위한 실시간 오디오 협업 플랫폼
 
-Real-time audio collaboration platform for musicians and voice chat.
+## 기능
 
-## Features
+### 오디오
+- **실시간 P2P 오디오** - WebRTC 기반 저지연 스트리밍
+- **최대 8명** - 방당 최대 8명 동시 접속
+- **TURN 서버** - NAT/방화벽 뒤에서도 안정적 연결
+- **개별 볼륨 조절** - 사용자별 볼륨/팬/뮤트/솔로
+- **음성/음악 모드** - 용도에 맞는 오디오 최적화
+- **3밴드 EQ** - 저음/중음/고음 조절
+- **입력 리미터** - 클리핑 방지
 
-### Audio
-- **Real-time P2P audio** - Low-latency WebRTC streaming
-- **Up to 8 users** - Per room
-- **TURN server support** - Reliable connection behind NAT/firewall
-- **Individual volume control** - Per-user volume/pan/mute/solo
-- **Voice/Music modes** - Optimized audio settings for different use cases
+### 녹음
+- **믹스다운 녹음** - 전체 오디오를 하나의 파일로
+- **멀티트랙 녹음** - 각 참가자별 개별 파일 저장
 
-### Metronome
-- **Shared metronome** - Room-wide BPM sync
-- **Server time sync** - Accurate beat alignment across all users
-- **Count-in** - 4-beat countdown before start
+### 화면 공유
+- **악보/가사 공유** - 화면 공유로 악보 표시
+- **실시간 표시** - 모든 참가자에게 동시 표시
 
-### User Management
-- **Registration/Login** - bcrypt encrypted passwords
-- **Admin approval** - Approve/reject sign-up requests
-- **Avatars** - Profile image upload
+### 역할 시스템
+- **호스트** - 방 생성자, 역할 변경 권한
+- **연주자** - 오디오 송수신 가능
+- **청취자** - 수신만 가능 (음소거 고정)
 
-### Room Features
-- **Room browser** - Active room list
-- **Private rooms** - Password protection
-- **Chat** - In-room text chat
+### 네트워크
+- **연결 테스트** - 마이크/스피커/네트워크 품질 측정
+- **Wi-Fi 경고** - 유선 연결 권장 메시지
+- **자동 지터 버퍼** - 네트워크 상태에 따라 자동 조절
+- **연결 유형 표시** - 직접/STUN/TURN 연결 상태
 
-## Quick Start
+### 메트로놈
+- **공유 메트로놈** - 방 전체 BPM 동기화
+- **서버 시간 동기화** - 정확한 박자 맞춤
+- **카운트인** - 4박 카운트 후 시작
+
+### 사용자 관리
+- **회원가입/로그인** - bcrypt 암호화
+- **관리자 승인** - 가입 요청 승인/거절
+- **아바타** - 프로필 이미지 업로드
+
+### 방 기능
+- **방 브라우저** - 활성 방 목록
+- **비공개 방** - 비밀번호 설정
+- **채팅** - 방 내 텍스트 채팅
+
+## 빠른 시작
 
 ```bash
-git clone https://github.com/haemoolpa-jeon/styx-oss.git
-cd styx-oss
+git clone https://github.com/haemoolpa-jeon/styx.git
+cd styx
 npm install
-npm run setup    # Create admin account
-npm start        # Start server
+npm run setup    # 관리자 계정 생성
+npm start        # 서버 시작
 ```
 
-Open `http://localhost:3000` in your browser (Chrome recommended).
+브라우저에서 `http://localhost:3000` 접속
 
-**Default admin**: `admin` / `admin123` (change after first login!)
+**기본 관리자**: `admin` / `admin123` (첫 로그인 후 변경 필수!)
 
-## File Structure
+## 서버 주소
+
+- **웹**: https://3-39-223-2.nip.io
+- **TURN**: 3.39.223.2:3478
+
+## 키보드 단축키
+
+| 키 | 기능 |
+|----|------|
+| M | 음소거 토글 |
+| Space | 메트로놈 시작/정지 |
+| R | 녹음 시작/정지 |
+| I | 초대 링크 복사 |
+| Esc | 방 나가기 |
+| 1-8 | 해당 피어 음소거 |
+
+## 파일 구조
 
 ```
 styx/
-├── server/index.js       # Signaling server
-├── shared/client/        # Shared client code
-├── client/config.js      # Web client config
-├── styx-desktop/         # Tauri desktop app
-├── docs/                 # Documentation
-└── .env.example          # Environment variables template
+├── server/index.js       # 시그널링 서버
+├── shared/client/        # 공유 클라이언트 코드
+├── client/config.js      # 웹 버전 설정
+├── styx-desktop/         # Tauri 데스크톱 앱
+├── docs/                 # 문서
+└── .env.example          # 환경변수 예시
 ```
 
-## Architecture
+## 아키텍처
 
 ```
 ┌─────────┐                           ┌─────────┐
-│ User A  │◄──── WebRTC P2P Audio ───►│ User B  │
+│ User A  │◄──── WebRTC P2P 오디오 ───►│ User B  │
 └────┬────┘                           └────┬────┘
      │                                      │
      │    ┌─────────────────────────┐      │
-     └───►│      Styx Server        │◄─────┘
-          │  • Socket.IO signaling  │
-          │  • Room/Chat/Metronome  │
-          │  • TURN credentials     │
+     └───►│   Styx 서버 (서울)       │◄─────┘
+          │  • Socket.IO 시그널링    │
+          │  • 방/채팅/메트로놈       │
+          │  • TURN 자격증명 발급    │
           └───────────┬─────────────┘
                       │
           ┌───────────▼─────────────┐
-          │   Coturn TURN Server    │
-          │  • NAT traversal relay  │
+          │   Coturn TURN 서버      │
+          │  • NAT 통과 릴레이       │
           │  • UDP/TCP 3478         │
           └─────────────────────────┘
 ```
 
-## Configuration
+## 문서
 
-Copy `.env.example` to `.env` and configure:
+- [사용 설명서](docs/USER_MANUAL.md)
+- [배포 가이드](docs/AWS_LIGHTSAIL_DEPLOY.md)
+- [테스트 가이드](docs/TESTING_GUIDE.md)
+- [HADES 소개](docs/HADES_STYX_소개.md)
 
-```bash
-PORT=3000
-CORS_ORIGINS=https://your-domain.com,tauri://localhost
-TURN_SERVER=your-turn-server-ip
-TURN_SECRET=your-coturn-secret
-```
+## 라이선스
 
-## Deployment
-
-See deployment guides:
-- [AWS Lightsail](docs/AWS_LIGHTSAIL_DEPLOY.md)
-- [Oracle Cloud](docs/ORACLE_CLOUD_DEPLOY.md)
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| Server | Node.js + Express + Socket.IO |
-| Client | Vanilla JS + WebRTC + Web Audio API |
-| TURN | Coturn (time-limited credentials) |
-| Desktop | Tauri + Rust |
-
-## Documentation
-
-- [User Manual (Korean)](docs/USER_MANUAL.md)
-- [Deployment Guide](docs/AWS_LIGHTSAIL_DEPLOY.md)
-- [Testing Guide](docs/TESTING_GUIDE.md)
-- [Roadmap](docs/ROADMAP.md)
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+HADES 전용 - 비공개 사용
