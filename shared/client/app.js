@@ -192,7 +192,7 @@ const isTauriApp = () => {
 };
 
 const actuallyTauri = isTauriApp();
-const tauriInvoke = actuallyTauri && window.__TAURI__?.core?.invoke;
+const tauriInvoke = actuallyTauri ? (window.__TAURI__?.core?.invoke || null) : null;
 
 // Debug: Tauri 감지 상태 확인
 console.log('Tauri detection:', {
