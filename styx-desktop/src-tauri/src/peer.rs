@@ -474,18 +474,24 @@ pub fn start_relay_loop(
     let session_bytes = session_id.as_bytes().to_vec();
     let bitrate_kbps = bitrate.load(Ordering::Relaxed);
     
-    // 송신 루프
+    // 송신 루프 (async channel for better performance)
     let socket_send = socket.clone();
     let is_running_send = is_running.clone();
     let is_muted_send = is_muted.clone();
     let session_send = session_bytes.clone();
     let input_level_send = input_level.clone();
     
+    // Async send task
+    let (packet_tx, mut packet_rx) = mpsc::channel::<Vec<u8>>(64);
+    let rt_handle = tokio::runtime::Handle::current();
+    rt_handle.spawn(async move {
+        while let Some(packet) = packet_rx.recv().await {
+            let _ = socket_send.send_to(&packet, relay_addr).await;
+            packets_sent.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+    
     std::thread::spawn(move || {
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(r) => r,
-            Err(e) => { eprintln!("[AUDIO] 런타임 생성 실패: {}", e); return; }
-        };
         let mut encoder = match create_encoder_with_bitrate(bitrate_kbps) {
             Ok(e) => e,
             Err(e) => { eprintln!("[AUDIO] 인코더 생성 실패: {}", e); return; }
@@ -522,11 +528,18 @@ pub fn start_relay_loop(
         }
         let _stream = stream;
         
+        // Pre-allocate packet buffer
+        let mut packet = Vec::with_capacity(20 + AudioPacketHeader::SIZE + MAX_PACKET_SIZE);
+        let mut padded_session = [0u8; 20];
+        let session_bytes = session_send.as_slice();
+        let copy_len = session_bytes.len().min(20);
+        padded_session[..copy_len].copy_from_slice(&session_bytes[..copy_len]);
+        
         while is_running_send.load(Ordering::SeqCst) {
             if let Ok(samples) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
                 // Calculate input level (RMS)
                 let rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-                let level = (rms * 200.0).min(100.0) as u32; // Scale to 0-100
+                let level = (rms * 200.0).min(100.0) as u32;
                 input_level_send.store(level, Ordering::Relaxed);
                 
                 if is_muted_send.load(Ordering::SeqCst) { continue; }
@@ -534,38 +547,30 @@ pub fn start_relay_loop(
                 if let Ok(encoded) = encode_frame(&mut encoder, &samples) {
                     let seq = sequence.fetch_add(1, Ordering::SeqCst);
                     let header = AudioPacketHeader { 
-                        sequence: seq, 
-                        timestamp: 0, 
-                        sample_rate: 48000, 
-                        channels: 1, 
+                        sequence: seq, timestamp: 0, sample_rate: 48000, channels: 1, 
                         payload_len: encoded.len() as u16 
                     };
                     
-                    // 세션ID(20) + 헤더 + 데이터 (Socket.IO ID is 20 chars)
-                    let mut packet = Vec::with_capacity(20 + AudioPacketHeader::SIZE + encoded.len());
-                    // Pad session ID to exactly 20 bytes
-                    let mut padded_session = [0u8; 20];
-                    let session_bytes = session_send.as_slice();
-                    let copy_len = session_bytes.len().min(20);
-                    padded_session[..copy_len].copy_from_slice(&session_bytes[..copy_len]);
+                    packet.clear();
                     packet.extend_from_slice(&padded_session);
                     packet.extend_from_slice(&header.to_bytes());
                     packet.extend_from_slice(&encoded);
                     
-                    rt.block_on(async { let _ = socket_send.send_to(&packet, relay_addr).await; });
-                    packets_sent.fetch_add(1, Ordering::Relaxed);
+                    let _ = packet_tx.blocking_send(packet.clone());
                 }
             }
         }
     });
     
-    // 수신 루프
+    // 수신 루프 (with jitter buffer and audio mixing)
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Runtime::new() {
             Ok(r) => r,
             Err(e) => { eprintln!("[AUDIO] 런타임 생성 실패: {}", e); return; }
         };
         let mut decoders: BTreeMap<String, Decoder> = BTreeMap::new();
+        let mut jitter_buffers: BTreeMap<String, JitterBuffer> = BTreeMap::new();
+        let mut last_seq: BTreeMap<String, u32> = BTreeMap::new();
         
         // 오디오 출력 스트림
         let host = cpal::default_host();
@@ -606,28 +611,69 @@ pub fn start_relay_loop(
         
         const SESSION_ID_LEN: usize = 20;
         let mut buf = vec![0u8; 2000];
+        let mut mix_buffer = vec![0f32; FRAME_SIZE];
+        
         while is_running.load(Ordering::SeqCst) {
-            match rt.block_on(async {
-                tokio::time::timeout(std::time::Duration::from_millis(100), socket.recv_from(&mut buf)).await
-            }) {
-                Ok(Ok((len, _))) if len > SESSION_ID_LEN + AudioPacketHeader::SIZE => {
-                    let sender_id = String::from_utf8_lossy(&buf[..SESSION_ID_LEN]).trim_end_matches('\0').to_string();
-                    if sender_id == session_id { continue; } // 자신의 패킷 무시
-                    
-                    let _header = AudioPacketHeader::from_bytes(&buf[SESSION_ID_LEN..SESSION_ID_LEN + AudioPacketHeader::SIZE]);
-                    let payload = &buf[SESSION_ID_LEN + AudioPacketHeader::SIZE..len];
-                    
-                    let decoder = decoders.entry(sender_id).or_insert_with(|| create_decoder().unwrap());
-                    if let Ok(samples) = decode_frame(decoder, payload) {
-                        packets_received.fetch_add(1, Ordering::Relaxed);
-                        if let Ok(mut pb) = playback_buffer.lock() {
-                            pb.extend(samples);
-                            while pb.len() > 9600 { pb.pop_front(); }
+            // Receive packets (non-blocking batch)
+            loop {
+                match rt.block_on(async {
+                    tokio::time::timeout(std::time::Duration::from_millis(1), socket.recv_from(&mut buf)).await
+                }) {
+                    Ok(Ok((len, _))) if len > SESSION_ID_LEN + AudioPacketHeader::SIZE => {
+                        let sender_id = String::from_utf8_lossy(&buf[..SESSION_ID_LEN]).trim_end_matches('\0').to_string();
+                        if sender_id == session_id { continue; }
+                        
+                        let header = match AudioPacketHeader::from_bytes(&buf[SESSION_ID_LEN..SESSION_ID_LEN + AudioPacketHeader::SIZE]) {
+                            Some(h) => h,
+                            None => continue,
+                        };
+                        let payload = &buf[SESSION_ID_LEN + AudioPacketHeader::SIZE..len];
+                        
+                        // PLC for lost packets
+                        if let Some(&prev_seq) = last_seq.get(&sender_id) {
+                            let expected = prev_seq.wrapping_add(1);
+                            if header.sequence > expected && header.sequence.wrapping_sub(expected) < 10 {
+                                let decoder = decoders.entry(sender_id.clone()).or_insert_with(|| create_decoder().unwrap_or_else(|_| Decoder::new(48000, Channels::Mono).unwrap()));
+                                let jb = jitter_buffers.entry(sender_id.clone()).or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER));
+                                for seq in expected..header.sequence {
+                                    if let Ok(plc) = decode_plc(decoder) { jb.push(seq, plc); }
+                                }
+                            }
+                        }
+                        last_seq.insert(sender_id.clone(), header.sequence);
+                        
+                        let decoder = decoders.entry(sender_id.clone()).or_insert_with(|| create_decoder().unwrap_or_else(|_| Decoder::new(48000, Channels::Mono).unwrap()));
+                        if let Ok(samples) = decode_frame(decoder, payload) {
+                            packets_received.fetch_add(1, Ordering::Relaxed);
+                            jitter_buffers.entry(sender_id).or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER)).push(header.sequence, samples);
                         }
                     }
+                    _ => break, // No more packets ready
                 }
-                _ => {}
             }
+            
+            // Mix audio from all jitter buffers
+            mix_buffer.fill(0.0);
+            let mut has_audio = false;
+            for jb in jitter_buffers.values_mut() {
+                if let Some(samples) = jb.pop() {
+                    has_audio = true;
+                    for (i, &s) in samples.iter().enumerate() {
+                        if i < mix_buffer.len() { mix_buffer[i] += s; }
+                    }
+                }
+            }
+            
+            if has_audio {
+                // Soft clip to prevent distortion
+                for s in &mut mix_buffer { *s = s.tanh(); }
+                if let Ok(mut pb) = playback_buffer.lock() {
+                    pb.extend(mix_buffer.iter().copied());
+                    while pb.len() > 9600 { pb.pop_front(); }
+                }
+            }
+            
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
     });
     

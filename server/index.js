@@ -1006,9 +1006,9 @@ const SESSION_ID_LEN = 20;
 const udpClients = new Map(); // sessionId -> { address, port, roomId }
 const roomMembers = new Map(); // roomId -> Set<sessionId> (O(1) room lookup)
 
-// Pre-allocated buffer for relay (avoid Buffer.concat per packet)
-const RELAY_HEADER_SIZE = SESSION_ID_LEN;
+// Pre-allocated buffer for relay
 const MAX_PACKET_SIZE = 1500;
+const relayBuffer = Buffer.alloc(MAX_PACKET_SIZE + SESSION_ID_LEN);
 
 // Stats
 let udpStats = { packetsIn: 0, packetsOut: 0, bytesIn: 0, bytesOut: 0 };
@@ -1048,16 +1048,19 @@ udpServer.on('message', (msg, rinfo) => {
   const members = roomMembers.get(client.roomId);
   if (!members) return;
   
-  // Relay to room members
+  // Relay to room members (using pre-allocated buffer)
+  const packetLen = SESSION_ID_LEN + payload.length;
+  msg.copy(relayBuffer, 0, 0, SESSION_ID_LEN); // Copy sender ID
+  payload.copy(relayBuffer, SESSION_ID_LEN);    // Copy payload
+  
   for (const otherId of members) {
     if (otherId === sessionId) continue;
     const other = udpClients.get(otherId);
     if (!other) continue;
     
-    // Send with sender ID prefix
-    udpServer.send([Buffer.from(sessionId), payload], other.port, other.address);
+    udpServer.send(relayBuffer, 0, packetLen, other.port, other.address);
     udpStats.packetsOut++;
-    udpStats.bytesOut += msg.length;
+    udpStats.bytesOut += packetLen;
   }
 });
 
@@ -1092,13 +1095,22 @@ udpServer.on('listening', () => console.log(`[UDP] Relay server on port ${UDP_PO
 udpServer.on('error', (err) => console.error('[UDP] Error:', err));
 udpServer.bind(UDP_PORT);
 
-// UDP stats endpoint (for monitoring)
+// UDP stats and stale client cleanup (every 30 seconds)
 setInterval(() => {
+  const now = Date.now();
+  let staleCount = 0;
+  for (const [sessionId, client] of udpClients) {
+    if (now - client.lastSeen > 30000) {
+      removeUdpClient(sessionId);
+      staleCount++;
+    }
+  }
+  if (staleCount > 0) console.log(`[UDP] Cleaned ${staleCount} stale clients`);
   if (udpStats.packetsIn > 0) {
     console.log(`[UDP] Stats: ${udpStats.packetsIn} in, ${udpStats.packetsOut} out, ${udpClients.size} clients, ${roomMembers.size} rooms`);
     udpStats = { packetsIn: 0, packetsOut: 0, bytesIn: 0, bytesOut: 0 };
   }
-}, 60000); // Log every minute
+}, 30000);
 
 // TCP Relay (via Socket.IO binary) - fallback when UDP blocked
 const tcpClients = new Map(); // sessionId -> { socket, roomId }
