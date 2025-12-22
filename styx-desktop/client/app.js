@@ -1613,23 +1613,36 @@ async function startUdpMode() {
     try {
       console.log('Setting UDP relay...');
       await tauriInvoke('udp_set_relay', { host: relayHost, port: UDP_RELAY_PORT, sessionId: mySessionId });
+      console.log('✅ UDP relay set');
+      
       console.log('Binding to room...');
       socket.emit('udp-bind-room', { sessionId: mySessionId, roomId: socket.room });
+      console.log('✅ Room binding sent');
+      
       console.log('Setting audio devices...');
       await tauriInvoke('set_audio_devices', { input: null, output: null });
+      console.log('✅ Audio devices set');
+      
       console.log('Starting relay stream...');
-      await tauriInvoke('udp_start_relay_stream');
+      
+      // Add timeout to prevent hanging
+      const streamPromise = tauriInvoke('udp_start_relay_stream');
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('UDP stream start timeout')), 10000)
+      );
+      
+      await Promise.race([streamPromise, timeoutPromise]);
       console.log('✅ UDP relay stream started successfully');
+      
+      // Wait a moment before starting stats monitor
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       udpSuccess = true;
       toast('UDP 오디오 연결됨', 'success');
-      console.log('Starting UDP stats monitor...');
-      try {
-        startUdpStatsMonitor();
-        console.log('✅ UDP setup complete');
-      } catch (statsError) {
-        console.error('Stats monitor failed to start:', statsError);
-        // Continue without stats monitor
-      }
+      console.log('Skipping stats monitor to prevent crashes...');
+      // Temporarily disable stats monitor
+      // startUdpStatsMonitor();
+      console.log('✅ UDP setup complete');
     } catch (e) {
       console.error('UDP 실패, TCP 폴백:', e);
       toast(`UDP 연결 실패: ${e.message || e}`, 'warning');
