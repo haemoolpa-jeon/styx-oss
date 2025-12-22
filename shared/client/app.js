@@ -469,10 +469,10 @@ function showTestResults(results) {
   el.innerHTML = `
     <div class="test-item ${results.mic ? 'pass' : 'fail'}">🎤 마이크: ${results.mic ? '✓' : '✗'}</div>
     <div class="test-item ${results.speaker ? 'pass' : 'fail'}">🔊 스피커: ${results.speaker ? '✓' : '✗'}</div>
-    <div class="test-item ${results.network ? 'pass' : 'fail'}">🌐 P2P 연결: ${results.network ? '✓' : '✗'}</div>
-    ${!results.network ? `<div class="test-item ${results.turn ? 'pass' : 'fail'}">🔄 TURN 릴레이: ${results.turn ? '✓ (폴백 사용)' : '✗ 연결 불가'}</div>` : ''}
+    <div class="test-item ${results.network ? 'pass' : 'fail'}">🌐 서버 연결: ${results.network ? '✓' : '✗'}</div>
     ${q ? `<div class="test-item" style="color:${qualityColor}">📡 네트워크: ${qualityLabel} (${q.latency}ms, 지터 ${q.jitter}ms)</div>` : ''}
     ${q?.isWifi ? '<div class="test-item warn">⚠️ Wi-Fi 감지 - 유선 연결 권장</div>' : ''}
+    <button class="btn-small" onclick="$('test-results').classList.add('hidden')" style="margin-top:8px;">닫기</button>
   `;
   el.classList.remove('hidden');
   
