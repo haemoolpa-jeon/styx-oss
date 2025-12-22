@@ -1827,6 +1827,11 @@ $('avatar-input').onchange = (e) => {
   reader.readAsDataURL(file);
 };
 
+// 단축키 도움말
+$('shortcutsBtn')?.addEventListener('click', () => {
+  $('shortcuts-overlay')?.classList.remove('hidden');
+});
+
 // 설정 패널
 $('settingsBtn').onclick = () => {
   $('settings-panel').classList.remove('hidden');
