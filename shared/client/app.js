@@ -1557,8 +1557,16 @@ async function startUdpMode() {
     log('UDP 포트 바인딩:', udpPort);
     
     // Always use relay server (simpler, works for everyone)
-    const relayHost = serverUrl ? new URL(serverUrl).hostname : window.location.hostname;
+    let relayHost = serverUrl ? new URL(serverUrl).hostname : window.location.hostname;
+    
+    // Convert nip.io hostname to IP for Rust SocketAddr parsing
+    if (relayHost === '3-39-223-2.nip.io') {
+      relayHost = '3.39.223.2';
+    }
+    
     const mySessionId = socket.id;
+    
+    console.log('UDP relay debug:', { serverUrl, relayHost, UDP_RELAY_PORT, mySessionId });
     
     // Try UDP first
     let udpSuccess = false;
