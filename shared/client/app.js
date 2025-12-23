@@ -130,6 +130,92 @@ function saveAccessibilitySettings() {
   localStorage.setItem('styx-accessibility', JSON.stringify(accessibility));
 }
 
+// 스펙트럼 분석기
+let spectrumAnalyser = null;
+let spectrumCanvas = null;
+let spectrumCtx = null;
+let spectrumAnimationId = null;
+let spectrumEnabled = false;
+
+function initSpectrum() {
+  spectrumCanvas = $('spectrum-canvas');
+  if (!spectrumCanvas) return;
+  
+  spectrumCtx = spectrumCanvas.getContext('2d');
+  spectrumCanvas.width = 200;
+  spectrumCanvas.height = 60;
+}
+
+function toggleSpectrum() {
+  spectrumEnabled = !spectrumEnabled;
+  const canvas = $('spectrum-canvas');
+  const btn = $('spectrum-toggle');
+  
+  if (spectrumEnabled) {
+    canvas?.classList.remove('hidden');
+    if (btn) btn.textContent = '📊';
+    startSpectrum();
+  } else {
+    canvas?.classList.add('hidden');
+    if (btn) btn.textContent = '📊';
+    stopSpectrum();
+  }
+}
+
+function startSpectrum() {
+  if (!localStream || !spectrumCtx) return;
+  
+  const ctx = getSharedAudioContext();
+  spectrumAnalyser = ctx.createAnalyser();
+  spectrumAnalyser.fftSize = 256;
+  spectrumAnalyser.smoothingTimeConstant = 0.8;
+  
+  const source = ctx.createMediaStreamSource(localStream);
+  source.connect(spectrumAnalyser);
+  
+  drawSpectrum();
+}
+
+function stopSpectrum() {
+  if (spectrumAnimationId) {
+    cancelAnimationFrame(spectrumAnimationId);
+    spectrumAnimationId = null;
+  }
+  if (spectrumAnalyser) {
+    try { spectrumAnalyser.disconnect(); } catch {}
+    spectrumAnalyser = null;
+  }
+}
+
+function drawSpectrum() {
+  if (!spectrumEnabled || !spectrumAnalyser || !spectrumCtx) return;
+  
+  const bufferLength = spectrumAnalyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  spectrumAnalyser.getByteFrequencyData(dataArray);
+  
+  const width = spectrumCanvas.width;
+  const height = spectrumCanvas.height;
+  
+  spectrumCtx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+  spectrumCtx.fillRect(0, 0, width, height);
+  
+  const barWidth = width / bufferLength * 2;
+  let x = 0;
+  
+  for (let i = 0; i < bufferLength; i++) {
+    const barHeight = (dataArray[i] / 255) * height;
+    
+    const hue = (i / bufferLength) * 240; // Blue to red
+    spectrumCtx.fillStyle = `hsl(${hue}, 70%, 50%)`;
+    spectrumCtx.fillRect(x, height - barHeight, barWidth, barHeight);
+    
+    x += barWidth + 1;
+  }
+  
+  spectrumAnimationId = requestAnimationFrame(drawSpectrum);
+}
+
 // 키보드 네비게이션 개선
 function enhanceKeyboardNavigation() {
   // 포커스 가능한 요소들에 포커스 표시 개선
@@ -337,6 +423,7 @@ function showUserFriendlyError(error, context) {
 document.addEventListener('DOMContentLoaded', () => {
   loadAccessibilitySettings();
   enhanceKeyboardNavigation();
+  initSpectrum();
   setTimeout(autoDetectOptimalSettings, 1000);
 });
 
@@ -3983,6 +4070,7 @@ function leaveRoom() {
   
   stopMetronome();
   cleanupRecording();
+  stopSpectrum(); // 스펙트럼 분석기 정리
   
   // 모든 AudioContext 정리
   const contexts = [audioContext, metronomeAudio, peerAudioContext, inputLimiterContext, inputMonitorCtx, tunerCtx];
@@ -4527,6 +4615,9 @@ if (compressionEl) {
     updateInputEffect('compressionRatio', val);
   };
 }
+
+// 스펙트럼 분석기 토글
+$('spectrum-toggle')?.addEventListener('click', toggleSpectrum);
 
 // 입력 볼륨 슬라이더 초기화
 const inputVolumeEl = $('input-volume');

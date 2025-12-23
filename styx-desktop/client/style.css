@@ -686,7 +686,13 @@ input[type="range"]::-webkit-slider-thumb {
   100% { transform: scale(1); }
 }
 
-/* 접근성 개선 */
+/* 스펙트럼 분석기 */
+.spectrum-row { flex-direction: column; align-items: flex-start; }
+.spectrum-canvas {
+  width: 100%; height: 60px; margin-top: 8px;
+  background: var(--bg-primary); border: 1px solid var(--border);
+  border-radius: 4px;
+}
 /* 고대비 모드 */
 body.high-contrast {
   --bg-primary: #000000;
