@@ -913,7 +913,86 @@ input[type="range"]::-webkit-slider-thumb {
 .btn-small { padding: 6px 12px; border-radius: 4px; border: none; background: var(--primary); color: white; cursor: pointer; }
 .btn-small.btn-danger { background: #e94560; }
 
-/* User management */
+/* User management controls */
+.user-management-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.search-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.search-input:focus {
+  border-color: var(--primary);
+  outline: none;
+}
+
+/* Enhanced user item with admin controls */
+.user-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--bg-input);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+}
+
+.user-details {
+  flex: 1;
+}
+
+.user-name {
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.user-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.user-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.admin-badge {
+  background: var(--primary);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+}
 .pending-user, .user-item {
   display: flex; justify-content: space-between; align-items: center;
   padding: 12px; background: var(--bg-input); border-radius: 6px; margin-bottom: 8px;

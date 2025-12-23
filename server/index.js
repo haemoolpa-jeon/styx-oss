@@ -816,7 +816,7 @@ io.on('connection', (socket) => {
       if (!socket.isAdmin) return cb({ error: 'Not admin' });
       const data = await loadUsers();
       const users = Object.entries(data.users).map(([username, u]) => ({
-        username, isAdmin: u.isAdmin, createdAt: u.createdAt
+        username, isAdmin: u.isAdmin, createdAt: u.createdAt, avatar: u.avatar
       }));
       cb({ users });
     } catch (e) {
@@ -874,8 +874,8 @@ io.on('connection', (socket) => {
         delete data.users[username];
         await saveUsers(data);
         sessions.delete(username);
-        await saveSessions(sessions);
         
+        // Delete avatar if exists
         try {
           const files = await fs.readdir(AVATARS_DIR);
           const avatarFile = files.find(f => f.startsWith(username + '.'));
@@ -888,6 +888,35 @@ io.on('connection', (socket) => {
       cb(result);
     } catch (e) {
       console.error('[DELETE_ERROR] User deletion failed:', e.message);
+      cb({ error: 'Server error' });
+    }
+  });
+
+  socket.on('set-admin', async ({ username, isAdmin }, cb) => {
+    try {
+      if (!socket.isAdmin) return cb({ error: 'Not admin' });
+      if (username === socket.username && !isAdmin) return cb({ error: 'Cannot remove your own admin rights' });
+      
+      const result = await withLock(async () => {
+        const data = await loadUsers();
+        if (!data.users[username]) return { error: 'User not found' };
+        
+        data.users[username].isAdmin = isAdmin;
+        await saveUsers(data);
+        
+        logSecurityEvent('ADMIN_RIGHTS_CHANGED', { 
+          ip: socket.handshake.address, 
+          targetUser: username, 
+          isAdmin, 
+          adminUser: socket.username, 
+          userAgent: socket.handshake.headers['user-agent'] 
+        });
+        
+        return { success: true };
+      });
+      cb(result);
+    } catch (e) {
+      console.error('[SET_ADMIN_ERROR] Admin rights change failed:', e.message);
       cb({ error: 'Server error' });
     }
   });

@@ -3378,17 +3378,75 @@ function loadAdminData() {
   socket.emit('get-users', null, res => {
     const list = $('users-list');
     list.innerHTML = '';
-    res.users?.forEach(u => {
-      const div = document.createElement('div');
-      div.className = 'user-item';
-      div.innerHTML = `
-        <span>${escapeHtml(u.username)} ${u.isAdmin ? '👑' : ''}</span>
-        ${!u.isAdmin ? `<button onclick="deleteUser('${u.username.replace(/'/g, "\\'")}')">삭제</button>` : ''}
-      `;
-      list.appendChild(div);
-    });
+    
+    if (!res.users?.length) {
+      list.innerHTML = '<p>등록된 사용자가 없습니다</p>';
+      return;
+    }
+    
+    // Store users for search functionality
+    window.allUsers = res.users;
+    renderUserList(res.users);
   });
 }
+
+// Enhanced user management functions
+function renderUserList(users) {
+  const list = $('users-list');
+  list.innerHTML = '';
+  
+  users.forEach(u => {
+    const div = document.createElement('div');
+    div.className = 'user-item';
+    div.innerHTML = `
+      <div class="user-info">
+        <div class="user-avatar">${u.username.charAt(0).toUpperCase()}</div>
+        <div class="user-details">
+          <div class="user-name">${escapeHtml(u.username)}</div>
+          <div class="user-status">
+            ${u.isAdmin ? '<span class="admin-badge">관리자</span>' : '일반 사용자'}
+            ${u.avatar ? ' • 아바타 설정됨' : ''}
+          </div>
+        </div>
+      </div>
+      <div class="user-actions">
+        ${!u.isAdmin ? `<button onclick="makeAdmin('${u.username.replace(/'/g, "\\'")}', true)" class="btn-small">관리자 지정</button>` : 
+          currentUser.username !== u.username ? `<button onclick="makeAdmin('${u.username.replace(/'/g, "\\'")}', false)" class="btn-small btn-danger">관리자 해제</button>` : ''}
+        ${currentUser.username !== u.username ? `<button onclick="deleteUser('${u.username.replace(/'/g, "\\'")}'))" class="btn-small btn-danger">삭제</button>` : ''}
+      </div>
+    `;
+    list.appendChild(div);
+  });
+}
+
+function searchUsers() {
+  const query = $('user-search').value.toLowerCase().trim();
+  if (!window.allUsers) return;
+  
+  const filtered = window.allUsers.filter(u => 
+    u.username.toLowerCase().includes(query)
+  );
+  
+  renderUserList(filtered);
+}
+
+window.makeAdmin = (username, isAdmin) => {
+  const action = isAdmin ? '관리자로 지정' : '관리자 권한 해제';
+  if (!confirm(`${username} 사용자를 ${action}하시겠습니까?`)) return;
+  
+  socket.emit('set-admin', { username, isAdmin }, (res) => {
+    if (res?.error) {
+      toast(res.error, 'error');
+    } else {
+      toast(`${username} 사용자가 ${action}되었습니다`, 'success');
+      loadAdminData();
+    }
+  });
+};
+
+// User management controls
+$('user-search')?.addEventListener('input', searchUsers);
+$('refresh-users')?.addEventListener('click', loadAdminData);
 
 // Whitelist management
 $('whitelist-enabled')?.addEventListener('change', (e) => {
