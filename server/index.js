@@ -82,6 +82,106 @@ validateEnv();
 const app = express();
 const server = createServer(app);
 
+// 에러 추적 래퍼
+function trackError(operation, error) {
+  serverStats.errors++;
+  console.error(`[ERROR] ${operation}:`, error.message);
+}
+
+// 모니터링 및 헬스체크 시스템
+let serverStats = {
+  startTime: Date.now(),
+  totalConnections: 0,
+  activeConnections: 0,
+  totalRooms: 0,
+  activeRooms: 0,
+  totalMessages: 0,
+  errors: 0
+};
+
+// 헬스체크 엔드포인트
+app.get('/health', (req, res) => {
+  const uptime = Date.now() - serverStats.startTime;
+  res.json({
+    status: 'healthy',
+    uptime: Math.floor(uptime / 1000),
+    stats: {
+      ...serverStats,
+      activeRooms: rooms?.size || 0,
+      memoryUsage: process.memoryUsage(),
+      cpuUsage: process.cpuUsage()
+    }
+  });
+});
+
+// 메트릭스 엔드포인트 (Prometheus 형식)
+app.get('/metrics', (req, res) => {
+  const metrics = {
+    connections_total: serverStats.totalConnections,
+    connections_active: serverStats.activeConnections,
+    rooms_total: serverStats.totalRooms,
+    rooms_active: rooms?.size || 0,
+    messages_total: serverStats.totalMessages,
+    errors_total: serverStats.errors,
+    uptime_seconds: Math.floor((Date.now() - serverStats.startTime) / 1000)
+  };
+  
+  let output = '';
+  Object.entries(metrics).forEach(([key, value]) => {
+    output += `styx_${key} ${value}\n`;
+  });
+  
+  res.set('Content-Type', 'text/plain');
+  res.send(output);
+});
+
+// 자동화된 테스트 엔드포인트
+app.get('/test', (req, res) => {
+  const tests = [];
+  
+  // 기본 서버 상태 테스트
+  tests.push({
+    name: 'Server Status',
+    status: 'pass',
+    message: 'Server is running'
+  });
+  
+  // 메모리 사용량 테스트
+  const memUsage = process.memoryUsage();
+  const memoryTest = memUsage.heapUsed < 500 * 1024 * 1024; // 500MB 제한
+  tests.push({
+    name: 'Memory Usage',
+    status: memoryTest ? 'pass' : 'fail',
+    message: `Heap used: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`
+  });
+  
+  // 활성 연결 테스트
+  const connectionTest = serverStats.activeConnections >= 0;
+  tests.push({
+    name: 'Active Connections',
+    status: connectionTest ? 'pass' : 'fail',
+    message: `${serverStats.activeConnections} active connections`
+  });
+  
+  // 에러율 테스트
+  const errorRate = serverStats.totalConnections > 0 ? 
+    (serverStats.errors / serverStats.totalConnections) : 0;
+  const errorTest = errorRate < 0.1; // 10% 미만
+  tests.push({
+    name: 'Error Rate',
+    status: errorTest ? 'pass' : 'fail',
+    message: `${(errorRate * 100).toFixed(2)}% error rate`
+  });
+  
+  const allPassed = tests.every(t => t.status === 'pass');
+  
+  res.json({
+    status: allPassed ? 'pass' : 'fail',
+    timestamp: new Date().toISOString(),
+    tests
+  });
+});
+
 // CORS 설정 for HTTP requests
 const ALLOWED_ORIGINS = process.env.CORS_ORIGINS 
   ? process.env.CORS_ORIGINS.split(',') 
@@ -411,6 +511,10 @@ const broadcastRoomList = () => {
 };
 
 io.on('connection', (socket) => {
+  // 연결 통계 업데이트
+  serverStats.totalConnections++;
+  serverStats.activeConnections++;
+  
   const clientIp = socket.handshake.address;
   const userAgent = socket.handshake.headers['user-agent'] || 'unknown';
   
@@ -770,6 +874,9 @@ io.on('connection', (socket) => {
       if (!user || !user.approved) return cb({ error: 'Not authorized' });
 
       if (!rooms.has(room)) {
+        // 방 생성 통계 업데이트
+        serverStats.totalRooms++;
+        
         const passwordHash = roomPassword ? await bcrypt.hash(roomPassword, 8) : null;
         const s = validSettings;
         rooms.set(room, { 
@@ -890,6 +997,9 @@ io.on('connection', (socket) => {
   });
 
   socket.on('chat', (text, cb) => {
+    // 메시지 통계 업데이트
+    serverStats.totalMessages++;
+    
     if (!socket.room || !socket.username) return;
     const roomData = rooms.get(socket.room);
     if (!roomData) return;
@@ -986,6 +1096,9 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', (reason) => {
+    // 연결 통계 업데이트
+    serverStats.activeConnections = Math.max(0, serverStats.activeConnections - 1);
+    
     console.log(`[DISCONNECT] ${socket.id} ${socket.username || 'anonymous'} (${reason})`);
     if (socket.room && rooms.has(socket.room)) {
       const roomData = rooms.get(socket.room);
