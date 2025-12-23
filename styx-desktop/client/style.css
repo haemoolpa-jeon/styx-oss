@@ -686,6 +686,94 @@ input[type="range"]::-webkit-slider-thumb {
   100% { transform: scale(1); }
 }
 
+/* 접근성 개선 */
+/* 고대비 모드 */
+body.high-contrast {
+  --bg-primary: #000000;
+  --bg-secondary: #1a1a1a;
+  --bg-card: #2a2a2a;
+  --bg-input: #333333;
+  --text-primary: #ffffff;
+  --text-secondary: #cccccc;
+  --accent: #ffff00;
+  --primary: #0080ff;
+  --border: #666666;
+}
+
+body.high-contrast button {
+  border: 2px solid var(--accent);
+  font-weight: bold;
+}
+
+body.high-contrast .btn-primary {
+  background: #0080ff;
+  border-color: #0080ff;
+}
+
+body.high-contrast .btn-danger {
+  background: #ff0000;
+  border-color: #ff0000;
+}
+
+/* 키보드 네비게이션 강화 */
+body.keyboard-navigation *:focus {
+  outline: 3px solid var(--accent) !important;
+  outline-offset: 2px !important;
+}
+
+body.keyboard-navigation button:focus {
+  box-shadow: 0 0 0 3px var(--accent) !important;
+}
+
+/* 애니메이션 감소 */
+body.reduced-motion * {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+body.reduced-motion .notification-badge {
+  animation: none !important;
+}
+
+/* 스크린 리더 전용 텍스트 */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* 포커스 표시 개선 */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 접근성 상태 표시 */
+body.screen-reader .user-card::after {
+  content: attr(aria-label);
+  position: absolute;
+  left: -10000px;
+}
+
+/* 고대비 모드에서 볼륨 미터 개선 */
+body.high-contrast .volume-meter {
+  border: 2px solid var(--accent);
+}
+
+body.high-contrast .volume-bar {
+  background: var(--accent) !important;
+}
+
 /* 브라우저 관전 모드 배너 */
 .spectator-banner {
   background: linear-gradient(90deg, #667eea, #764ba2);

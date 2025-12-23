@@ -1,6 +1,159 @@
 // Styx 클라이언트 - HADES 실시간 오디오 협업
 // WebRTC P2P 오디오 + 안정성 중심 설계
 
+// 접근성 개선 시스템
+const accessibility = {
+  highContrast: false,
+  screenReaderMode: false,
+  reducedMotion: false
+};
+
+// 접근성 설정 로드
+function loadAccessibilitySettings() {
+  try {
+    const saved = localStorage.getItem('styx-accessibility');
+    if (saved) {
+      Object.assign(accessibility, JSON.parse(saved));
+      applyAccessibilitySettings();
+    }
+  } catch (e) {
+    console.warn('Accessibility settings load failed:', e);
+  }
+  
+  // 시스템 설정 감지
+  if (window.matchMedia('(prefers-contrast: high)').matches) {
+    accessibility.highContrast = true;
+  }
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    accessibility.reducedMotion = true;
+  }
+  
+  applyAccessibilitySettings();
+}
+
+// 접근성 설정 적용
+function applyAccessibilitySettings() {
+  document.body.classList.toggle('high-contrast', accessibility.highContrast);
+  document.body.classList.toggle('screen-reader', accessibility.screenReaderMode);
+  document.body.classList.toggle('reduced-motion', accessibility.reducedMotion);
+  
+  // 스크린 리더 모드에서 추가 정보 제공
+  if (accessibility.screenReaderMode) {
+    addScreenReaderSupport();
+  }
+}
+
+// 스크린 리더 지원 추가
+function addScreenReaderSupport() {
+  // ARIA 레이블 추가
+  const elements = [
+    { id: 'muteBtn', label: () => isMuted ? '음소거 해제' : '음소거' },
+    { id: 'recordBtn', label: () => isRecording ? '녹음 중지' : '녹음 시작' },
+    { id: 'metronome-toggle', label: () => '메트로놈 토글' },
+    { id: 'inviteBtn', label: () => '초대 링크 복사' },
+    { id: 'leaveBtn', label: () => '방 나가기' },
+    { id: 'settingsBtn', label: () => '설정 열기' },
+    { id: 'adminBtn', label: () => '관리자 패널 열기' }
+  ];
+  
+  elements.forEach(({ id, label }) => {
+    const el = $(id);
+    if (el) {
+      el.setAttribute('aria-label', typeof label === 'function' ? label() : label);
+      el.setAttribute('role', 'button');
+    }
+  });
+  
+  // 볼륨 슬라이더에 ARIA 속성 추가
+  const volumeSliders = document.querySelectorAll('input[type="range"]');
+  volumeSliders.forEach(slider => {
+    slider.setAttribute('role', 'slider');
+    slider.setAttribute('aria-valuemin', slider.min);
+    slider.setAttribute('aria-valuemax', slider.max);
+    slider.setAttribute('aria-valuenow', slider.value);
+    slider.addEventListener('input', () => {
+      slider.setAttribute('aria-valuenow', slider.value);
+    });
+  });
+  
+  // 라이브 영역 추가 (상태 변경 알림용)
+  if (!$('aria-live-region')) {
+    const liveRegion = document.createElement('div');
+    liveRegion.id = 'aria-live-region';
+    liveRegion.setAttribute('aria-live', 'polite');
+    liveRegion.setAttribute('aria-atomic', 'true');
+    liveRegion.style.position = 'absolute';
+    liveRegion.style.left = '-10000px';
+    liveRegion.style.width = '1px';
+    liveRegion.style.height = '1px';
+    liveRegion.style.overflow = 'hidden';
+    document.body.appendChild(liveRegion);
+  }
+}
+
+// 스크린 리더에 상태 알림
+function announceToScreenReader(message) {
+  if (!accessibility.screenReaderMode) return;
+  
+  const liveRegion = $('aria-live-region');
+  if (liveRegion) {
+    liveRegion.textContent = message;
+    setTimeout(() => liveRegion.textContent = '', 1000);
+  }
+}
+
+// 접근성 토글 함수들
+function toggleHighContrast() {
+  accessibility.highContrast = !accessibility.highContrast;
+  saveAccessibilitySettings();
+  applyAccessibilitySettings();
+  toast(`고대비 모드 ${accessibility.highContrast ? '활성화' : '비활성화'}`, 'info');
+  announceToScreenReader(`고대비 모드가 ${accessibility.highContrast ? '활성화' : '비활성화'}되었습니다`);
+}
+
+function toggleScreenReaderMode() {
+  accessibility.screenReaderMode = !accessibility.screenReaderMode;
+  saveAccessibilitySettings();
+  applyAccessibilitySettings();
+  toast(`스크린 리더 모드 ${accessibility.screenReaderMode ? '활성화' : '비활성화'}`, 'info');
+}
+
+function toggleReducedMotion() {
+  accessibility.reducedMotion = !accessibility.reducedMotion;
+  saveAccessibilitySettings();
+  applyAccessibilitySettings();
+  toast(`애니메이션 감소 ${accessibility.reducedMotion ? '활성화' : '비활성화'}`, 'info');
+}
+
+// 접근성 설정 저장
+function saveAccessibilitySettings() {
+  localStorage.setItem('styx-accessibility', JSON.stringify(accessibility));
+}
+
+// 키보드 네비게이션 개선
+function enhanceKeyboardNavigation() {
+  // 포커스 가능한 요소들에 포커스 표시 개선
+  const focusableElements = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+  
+  document.addEventListener('keydown', (e) => {
+    // Tab 키로 네비게이션 시 포커스 표시 강화
+    if (e.key === 'Tab') {
+      document.body.classList.add('keyboard-navigation');
+    }
+  });
+  
+  document.addEventListener('mousedown', () => {
+    document.body.classList.remove('keyboard-navigation');
+  });
+  
+  // Enter 키로 버튼 활성화
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.matches('button:not([disabled])')) {
+      e.target.click();
+    }
+  });
+}
+
 // 디버그 모드 (프로덕션에서는 false)
 const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const log = (...args) => DEBUG && console.log(...args);
@@ -182,6 +335,8 @@ function showUserFriendlyError(error, context) {
 
 // 페이지 로드 시 자동 설정 감지 실행
 document.addEventListener('DOMContentLoaded', () => {
+  loadAccessibilitySettings();
+  enhanceKeyboardNavigation();
   setTimeout(autoDetectOptimalSettings, 1000);
 });
 
@@ -963,7 +1118,12 @@ const keyboardShortcuts = {
   'F1': { action: 'showHelp', description: 'F1 - 단축키 도움말', global: true },
   'F11': { action: 'toggleFullscreen', description: 'F11 - 전체화면 토글', global: true },
   'ControlKeyS': { action: 'saveSettings', description: 'Ctrl+S - 설정 저장', global: true },
-  'ControlKeyO': { action: 'openSettings', description: 'Ctrl+O - 설정 열기', global: true }
+  'ControlKeyO': { action: 'openSettings', description: 'Ctrl+O - 설정 열기', global: true },
+  
+  // 접근성 단축키
+  'ControlAltKeyH': { action: 'toggleHighContrast', description: 'Ctrl+Alt+H - 고대비 모드', global: true },
+  'ControlAltKeyS': { action: 'toggleScreenReader', description: 'Ctrl+Alt+S - 스크린 리더 모드', global: true },
+  'ControlAltKeyM': { action: 'toggleReducedMotion', description: 'Ctrl+Alt+M - 애니메이션 감소', global: true }
 };
 
 // 키보드 단축키 액션 실행
@@ -971,13 +1131,17 @@ function executeShortcut(action, options = {}) {
   try {
     switch (action) {
       case 'toggleMute':
-        if (!pttMode) $('muteBtn')?.click();
+        if (!pttMode) {
+          $('muteBtn')?.click();
+          announceToScreenReader(isMuted ? '음소거 해제됨' : '음소거됨');
+        }
         break;
       case 'toggleMetronome':
         $('metronome-toggle')?.click();
         break;
       case 'toggleRecording':
         $('recordBtn')?.click();
+        announceToScreenReader(isRecording ? '녹음 시작됨' : '녹음 중지됨');
         break;
       case 'addMarker':
         if (isRecording) addRecordingMarker();
@@ -1031,6 +1195,15 @@ function executeShortcut(action, options = {}) {
         break;
       case 'openSettings':
         $('settingsBtn')?.click();
+        break;
+      case 'toggleHighContrast':
+        toggleHighContrast();
+        break;
+      case 'toggleScreenReader':
+        toggleScreenReaderMode();
+        break;
+      case 'toggleReducedMotion':
+        toggleReducedMotion();
         break;
     }
   } catch (e) {
@@ -1098,7 +1271,8 @@ addGlobalListener(document, 'keydown', (e) => {
   const isInputField = e.target.matches('input, textarea, [contenteditable]');
   
   // 전역 단축키 처리
-  const globalKey = e.ctrlKey ? `Control${e.code}` : e.code;
+  const globalKey = e.ctrlKey && e.altKey ? `ControlAlt${e.code}` : 
+                   e.ctrlKey ? `Control${e.code}` : e.code;
   const globalShortcut = keyboardShortcuts[globalKey];
   
   if (globalShortcut?.global) {
