@@ -137,6 +137,15 @@ let spectrumCtx = null;
 let spectrumAnimationId = null;
 let spectrumEnabled = false;
 
+// 공간 오디오 (Spatial Audio)
+let spatialAudioEnabled = false;
+const spatialPanners = new Map(); // peer ID -> panner node
+
+// 대역폭 적응 (Bandwidth Adaptation)
+let bandwidthMonitoring = false;
+const connectionStats = new Map(); // peer ID -> stats
+let bandwidthStatsInterval = null;
+
 function initSpectrum() {
   spectrumCanvas = $('spectrum-canvas');
   if (!spectrumCanvas) return;
@@ -160,6 +169,145 @@ function toggleSpectrum() {
     if (btn) btn.textContent = '📊';
     stopSpectrum();
   }
+}
+
+function toggleSpatialAudio() {
+  spatialAudioEnabled = !spatialAudioEnabled;
+  const btn = $('spatial-toggle');
+  
+  if (spatialAudioEnabled) {
+    if (btn) btn.textContent = '🎧';
+    // Enable spatial audio for all existing peers
+    for (const [peerId, peer] of peers) {
+      if (peer.audioElement && peer.audioElement.srcObject) {
+        setupSpatialAudio(peerId, peer.audioElement);
+      }
+    }
+  } else {
+    if (btn) btn.textContent = '🎧';
+    // Disable spatial audio
+    for (const [peerId, panner] of spatialPanners) {
+      if (panner && panner.disconnect) {
+        panner.disconnect();
+      }
+    }
+    spatialPanners.clear();
+  }
+}
+
+function setupSpatialAudio(peerId, audioElement) {
+  if (!spatialAudioEnabled || !audioContext) return;
+  
+  try {
+    // Create media element source and stereo panner
+    const source = audioContext.createMediaElementSource(audioElement);
+    const panner = audioContext.createStereoPanner();
+    
+    // Position peers in stereo field based on their index
+    const peerIndex = Array.from(peers.keys()).indexOf(peerId);
+    const totalPeers = peers.size;
+    const panValue = totalPeers > 1 ? (peerIndex / (totalPeers - 1)) * 2 - 1 : 0; // -1 to 1
+    
+    panner.pan.value = Math.max(-1, Math.min(1, panValue));
+    
+    // Connect: source -> panner -> destination
+    source.connect(panner);
+    panner.connect(audioContext.destination);
+    
+    spatialPanners.set(peerId, panner);
+  } catch (e) {
+    console.warn('Spatial audio setup failed:', e);
+  }
+}
+
+function toggleBandwidthMonitoring() {
+  bandwidthMonitoring = !bandwidthMonitoring;
+  const btn = $('bandwidth-toggle');
+  
+  if (bandwidthMonitoring) {
+    if (btn) btn.textContent = '📊';
+    startBandwidthMonitoring();
+  } else {
+    if (btn) btn.textContent = '📊';
+    stopBandwidthMonitoring();
+  }
+}
+
+function startBandwidthMonitoring() {
+  if (bandwidthStatsInterval) return;
+  
+  bandwidthStatsInterval = setInterval(async () => {
+    for (const [peerId, peer] of peers) {
+      if (peer.pc && peer.pc.connectionState === 'connected') {
+        try {
+          const stats = await peer.pc.getStats();
+          const inboundStats = Array.from(stats.values()).find(s => s.type === 'inbound-rtp' && s.mediaType === 'audio');
+          
+          if (inboundStats) {
+            const currentStats = connectionStats.get(peerId) || {};
+            const now = Date.now();
+            
+            if (currentStats.timestamp) {
+              const timeDiff = (now - currentStats.timestamp) / 1000;
+              const bytesDiff = inboundStats.bytesReceived - (currentStats.bytesReceived || 0);
+              const bandwidth = Math.round((bytesDiff * 8) / timeDiff / 1000); // kbps
+              
+              const newStats = {
+                bandwidth,
+                packetsLost: inboundStats.packetsLost || 0,
+                jitter: Math.round((inboundStats.jitter || 0) * 1000), // ms
+                timestamp: now,
+                bytesReceived: inboundStats.bytesReceived
+              };
+              
+              connectionStats.set(peerId, newStats);
+              
+              // Simple bandwidth adaptation - adjust audio processing based on connection quality
+              adaptAudioQuality(peerId, newStats);
+            } else {
+              connectionStats.set(peerId, {
+                timestamp: now,
+                bytesReceived: inboundStats.bytesReceived
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('Stats collection failed for peer', peerId, e);
+        }
+      }
+    }
+  }, 2000); // Every 2 seconds
+}
+
+function adaptAudioQuality(peerId, stats) {
+  const peer = peers.get(peerId);
+  if (!peer || !peer.audioNodes) return;
+  
+  // Simple adaptation based on packet loss and jitter
+  const { packetsLost, jitter, bandwidth } = stats;
+  
+  // If connection quality is poor, reduce processing complexity
+  if (packetsLost > 10 || jitter > 50 || bandwidth < 32) {
+    // Reduce compressor complexity for poor connections
+    if (peer.compressor) {
+      peer.compressor.attack.value = 0.01; // Faster attack
+      peer.compressor.release.value = 0.1;  // Faster release
+    }
+  } else {
+    // Restore normal quality for good connections
+    if (peer.compressor) {
+      peer.compressor.attack.value = 0.003; // Normal attack
+      peer.compressor.release.value = 0.25;  // Normal release
+    }
+  }
+}
+
+function stopBandwidthMonitoring() {
+  if (bandwidthStatsInterval) {
+    clearInterval(bandwidthStatsInterval);
+    bandwidthStatsInterval = null;
+  }
+  connectionStats.clear();
 }
 
 function startSpectrum() {
@@ -3579,12 +3727,22 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
         peerData.audioNodes = { source, compressor, makeupGain, panNode, gainNode, delayNode, peerAnalyser, dest }; // 정리용
       }
       
+      // 공간 오디오 설정
+      if (spatialAudioEnabled) {
+        setupSpatialAudio(peerId, audioEl);
+      }
+      
       // VAD 시작
       if (vadEnabled) startVAD(peerId, peerAnalyser);
       
     } catch (err) {
       console.error('오디오 처리 설정 실패:', err);
       audioEl.srcObject = e.streams[0];
+      
+      // 공간 오디오 설정
+      if (spatialAudioEnabled) {
+        setupSpatialAudio(peerId, audioEl);
+      }
       
       // 폴백: 간단한 볼륨 모니터링
       if (vadEnabled) startVAD(peerId, null);
@@ -4855,6 +5013,12 @@ if (compressionEl) {
 
 // 스펙트럼 분석기 토글
 $('spectrum-toggle')?.addEventListener('click', toggleSpectrum);
+
+// 공간 오디오 토글
+$('spatial-toggle')?.addEventListener('click', toggleSpatialAudio);
+
+// 대역폭 모니터링 토글
+$('bandwidth-toggle')?.addEventListener('click', toggleBandwidthMonitoring);
 
 // 오디오 라우팅 토글 및 제어
 $('routing-toggle')?.addEventListener('click', toggleRouting);

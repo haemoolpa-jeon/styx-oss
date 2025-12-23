@@ -694,6 +694,12 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: 4px;
 }
 
+/* 공간 오디오 */
+.spatial-row { align-items: center; }
+
+/* 대역폭 모니터링 */
+.bandwidth-row { align-items: center; }
+
 /* 오디오 라우팅 매트릭스 */
 .routing-row { flex-direction: column; align-items: flex-start; }
 .routing-matrix {
