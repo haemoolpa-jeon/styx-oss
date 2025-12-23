@@ -474,7 +474,7 @@ pub fn start_recv_loop(
 
 // 릴레이 모드 송수신 루프 (fixed implementation)
 pub fn start_relay_loop(
-    socket: Arc<UdpSocket>,
+    _socket: Arc<UdpSocket>,
     relay_addr: SocketAddr,
     session_id: String,
     is_running: Arc<AtomicBool>,
