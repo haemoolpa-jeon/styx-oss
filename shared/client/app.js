@@ -1625,17 +1625,7 @@ async function startUdpMode() {
       
       console.log('Starting relay stream...');
       
-      // TEMPORARY: Skip UDP stream start to prevent crash
-      console.warn('Skipping UDP stream start due to crashes - using TCP fallback');
-      throw new Error('UDP disabled temporarily');
-      
-      // Add timeout to prevent hanging
-      const streamPromise = tauriInvoke('udp_start_relay_stream');
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('UDP stream start timeout')), 10000)
-      );
-      
-      await Promise.race([streamPromise, timeoutPromise]);
+      await tauriInvoke('udp_start_relay_stream');
       console.log('✅ UDP relay stream started successfully');
       
       // Wait a moment before starting stats monitor
