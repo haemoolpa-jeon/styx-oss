@@ -529,7 +529,7 @@ pub fn start_recv_loop(
                         if let Ok(mut pb) = playback_buffer.lock() {
                             pb.extend(samples);
                             // 버퍼 오버플로우 방지 (200ms 최대)
-                            while pb.len() > 9600 {
+                            while pb.len() > 19200 { // 200ms @ 48kHz stereo = 19,200 samples
                                 pb.pop_front();
                             }
                         }
@@ -746,8 +746,8 @@ pub fn start_relay_loop(
                         
                         if let Ok(mut pb) = playback_buffer.lock() {
                             pb.extend(samples);
-                            // Prevent buffer overflow
-                            while pb.len() > 9600 { pb.pop_front(); }
+                            // Prevent buffer overflow (200ms max)
+                            while pb.len() > 19200 { pb.pop_front(); } // 200ms @ 48kHz stereo = 19,200 samples
                         }
                     }
                 }
