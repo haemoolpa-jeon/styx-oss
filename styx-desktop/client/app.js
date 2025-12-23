@@ -176,19 +176,23 @@ function toggleSpatialAudio() {
   const btn = $('spatial-toggle');
   
   if (spatialAudioEnabled) {
-    if (btn) btn.textContent = '🎧';
+    if (btn) btn.textContent = '🎧✓';
     // Enable spatial audio for all existing peers
     for (const [peerId, peer] of peers) {
-      if (peer.audioElement && peer.audioElement.srcObject) {
-        setupSpatialAudio(peerId, peer.audioElement);
+      if (peer.audioEl && peer.audioEl.srcObject) {
+        setupSpatialAudio(peerId, peer.audioEl);
       }
     }
   } else {
     if (btn) btn.textContent = '🎧';
-    // Disable spatial audio
+    // Disable spatial audio and restore original connections
     for (const [peerId, panner] of spatialPanners) {
-      if (panner && panner.disconnect) {
+      const peer = peers.get(peerId);
+      if (panner && panner.disconnect && peer && peer.audioNodes) {
+        const { gainNode, dest } = peer.audioNodes;
         panner.disconnect();
+        gainNode.disconnect();
+        gainNode.connect(dest); // Restore original connection
       }
     }
     spatialPanners.clear();
@@ -199,8 +203,19 @@ function setupSpatialAudio(peerId, audioElement) {
   if (!spatialAudioEnabled || !audioContext) return;
   
   try {
-    // Create media element source and stereo panner
-    const source = audioContext.createMediaElementSource(audioElement);
+    const peer = peers.get(peerId);
+    if (!peer || !peer.audioNodes) return;
+    
+    // Use existing audio pipeline instead of creating new MediaElementSource
+    const { gainNode, dest } = peer.audioNodes;
+    
+    // Remove existing panner if it exists
+    const existingPanner = spatialPanners.get(peerId);
+    if (existingPanner && existingPanner.disconnect) {
+      existingPanner.disconnect();
+    }
+    
+    // Create stereo panner and insert it into the existing pipeline
     const panner = audioContext.createStereoPanner();
     
     // Position peers in stereo field based on their index
@@ -210,9 +225,10 @@ function setupSpatialAudio(peerId, audioElement) {
     
     panner.pan.value = Math.max(-1, Math.min(1, panValue));
     
-    // Connect: source -> panner -> destination
-    source.connect(panner);
-    panner.connect(audioContext.destination);
+    // Reconnect the pipeline: gainNode -> panner -> destination
+    gainNode.disconnect();
+    gainNode.connect(panner);
+    panner.connect(dest);
     
     spatialPanners.set(peerId, panner);
   } catch (e) {
@@ -225,7 +241,7 @@ function toggleBandwidthMonitoring() {
   const btn = $('bandwidth-toggle');
   
   if (bandwidthMonitoring) {
-    if (btn) btn.textContent = '📊';
+    if (btn) btn.textContent = '📊✓';
     startBandwidthMonitoring();
   } else {
     if (btn) btn.textContent = '📊';
@@ -2604,6 +2620,9 @@ function initStabilitySettings() {
     $('audio-settings-section')?.classList.add('hidden');
     $('web-download-banner')?.classList.remove('hidden');
   }
+  
+  // 관리자 기능 접근 제어 적용
+  hideAdminFeaturesInTauri();
   
   // 지터 버퍼 슬라이더
   const slider = $('jitter-slider');

@@ -346,21 +346,6 @@ app.post('/api/gdpr/delete', async (req, res) => {
   }
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  const uptime = Math.floor(process.uptime());
-  const memUsage = process.memoryUsage();
-  res.json({ 
-    status: 'ok', 
-    uptime,
-    memory: {
-      used: Math.round(memUsage.heapUsed / 1024 / 1024) + 'MB',
-      total: Math.round(memUsage.heapTotal / 1024 / 1024) + 'MB'
-    },
-    connections: io.engine.clientsCount || 0
-  });
-});
-
 // HTTPS 리다이렉트 (프로덕션)
 if (process.env.FORCE_HTTPS === 'true') {
   app.use((req, res, next) => {
