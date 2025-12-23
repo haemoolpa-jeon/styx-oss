@@ -926,23 +926,210 @@ addGlobalListener(window, 'unhandledrejection', (e) => {
   }
 });
 
+// 향상된 키보드 단축키 시스템
+const keyboardShortcuts = {
+  // 기본 제어
+  'KeyM': { action: 'toggleMute', description: 'M - 음소거 토글', global: false },
+  'Space': { action: 'toggleMetronome', description: 'Space - 메트로놈 토글', global: false },
+  'KeyR': { action: 'toggleRecording', description: 'R - 녹음 토글', global: false },
+  'KeyB': { action: 'addMarker', description: 'B - 녹음 마커 추가', global: false, condition: () => isRecording },
+  'KeyI': { action: 'copyInvite', description: 'I - 초대 링크 복사', global: false },
+  'Escape': { action: 'leaveRoom', description: 'Esc - 방 나가기', global: false },
+  
+  // 오디오 제어
+  'KeyV': { action: 'toggleVAD', description: 'V - 음성 감지 토글', global: false },
+  'KeyT': { action: 'toggleTuner', description: 'T - 튜너 토글', global: false },
+  'KeyL': { action: 'toggleLowLatency', description: 'L - 저지연 모드 토글', global: false },
+  'KeyE': { action: 'toggleEchoCancellation', description: 'E - 에코 제거 토글', global: false },
+  'KeyN': { action: 'toggleNoiseSuppression', description: 'N - 노이즈 억제 토글', global: false },
+  
+  // 볼륨 제어
+  'ArrowUp': { action: 'volumeUp', description: '↑ - 마스터 볼륨 증가', global: false },
+  'ArrowDown': { action: 'volumeDown', description: '↓ - 마스터 볼륨 감소', global: false },
+  'ArrowLeft': { action: 'inputVolumeDown', description: '← - 입력 볼륨 감소', global: false },
+  'ArrowRight': { action: 'inputVolumeUp', description: '→ - 입력 볼륨 증가', global: false },
+  
+  // 피어 제어 (숫자 키)
+  'Digit1': { action: 'togglePeerMute', description: '1-8 - 피어 음소거 토글', global: false, peer: 0 },
+  'Digit2': { action: 'togglePeerMute', description: '', global: false, peer: 1 },
+  'Digit3': { action: 'togglePeerMute', description: '', global: false, peer: 2 },
+  'Digit4': { action: 'togglePeerMute', description: '', global: false, peer: 3 },
+  'Digit5': { action: 'togglePeerMute', description: '', global: false, peer: 4 },
+  'Digit6': { action: 'togglePeerMute', description: '', global: false, peer: 5 },
+  'Digit7': { action: 'togglePeerMute', description: '', global: false, peer: 6 },
+  'Digit8': { action: 'togglePeerMute', description: '', global: false, peer: 7 },
+  
+  // 전역 단축키
+  'F1': { action: 'showHelp', description: 'F1 - 단축키 도움말', global: true },
+  'F11': { action: 'toggleFullscreen', description: 'F11 - 전체화면 토글', global: true },
+  'ControlKeyS': { action: 'saveSettings', description: 'Ctrl+S - 설정 저장', global: true },
+  'ControlKeyO': { action: 'openSettings', description: 'Ctrl+O - 설정 열기', global: true }
+};
+
+// 키보드 단축키 액션 실행
+function executeShortcut(action, options = {}) {
+  try {
+    switch (action) {
+      case 'toggleMute':
+        if (!pttMode) $('muteBtn')?.click();
+        break;
+      case 'toggleMetronome':
+        $('metronome-toggle')?.click();
+        break;
+      case 'toggleRecording':
+        $('recordBtn')?.click();
+        break;
+      case 'addMarker':
+        if (isRecording) addRecordingMarker();
+        break;
+      case 'copyInvite':
+        $('inviteBtn')?.click();
+        break;
+      case 'leaveRoom':
+        $('leaveBtn')?.click();
+        break;
+      case 'toggleVAD':
+        $('vad-toggle')?.click();
+        break;
+      case 'toggleTuner':
+        $('tuner-toggle')?.click();
+        break;
+      case 'toggleLowLatency':
+        $('low-latency-toggle')?.click();
+        break;
+      case 'toggleEchoCancellation':
+        const echoEl = $('room-echo-cancel') || $('echo-cancel');
+        if (echoEl) { echoEl.checked = !echoEl.checked; echoEl.onchange?.(); }
+        break;
+      case 'toggleNoiseSuppression':
+        const noiseEl = $('room-noise-suppress') || $('noise-suppress');
+        if (noiseEl) { noiseEl.checked = !noiseEl.checked; noiseEl.onchange?.(); }
+        break;
+      case 'volumeUp':
+        adjustMasterVolume(5);
+        break;
+      case 'volumeDown':
+        adjustMasterVolume(-5);
+        break;
+      case 'inputVolumeUp':
+        adjustInputVolume(5);
+        break;
+      case 'inputVolumeDown':
+        adjustInputVolume(-5);
+        break;
+      case 'togglePeerMute':
+        togglePeerMute(options.peer);
+        break;
+      case 'showHelp':
+        $('shortcuts-overlay')?.classList.remove('hidden');
+        break;
+      case 'toggleFullscreen':
+        toggleFullscreen();
+        break;
+      case 'saveSettings':
+        saveCurrentSettings();
+        break;
+      case 'openSettings':
+        $('settingsBtn')?.click();
+        break;
+    }
+  } catch (e) {
+    console.warn('Shortcut execution failed:', e);
+  }
+}
+
+// 볼륨 조정 함수들
+function adjustMasterVolume(delta) {
+  const slider = $('master-volume');
+  if (slider) {
+    const newValue = Math.max(0, Math.min(100, parseInt(slider.value) + delta));
+    slider.value = newValue;
+    slider.oninput?.();
+    toast(`마스터 볼륨: ${newValue}%`, 'info', 1000);
+  }
+}
+
+function adjustInputVolume(delta) {
+  const slider = $('input-volume-slider');
+  if (slider) {
+    const newValue = Math.max(0, Math.min(200, parseInt(slider.value) + delta));
+    slider.value = newValue;
+    updateInputEffect('inputVolume', newValue);
+    toast(`입력 볼륨: ${newValue}%`, 'info', 1000);
+  }
+}
+
+function togglePeerMute(peerIndex) {
+  const peerIds = [...peers.keys()];
+  if (peerIds[peerIndex]) {
+    const peer = peers.get(peerIds[peerIndex]);
+    if (peer?.audioEl) {
+      peer.audioEl.muted = !peer.audioEl.muted;
+      toast(`${peer.username} ${peer.audioEl.muted ? '음소거' : '음소거 해제'}`, 'info', 1000);
+      renderUsers();
+    }
+  }
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.();
+  } else {
+    document.exitFullscreen?.();
+  }
+}
+
+function saveCurrentSettings() {
+  const settings = {
+    echoCancellation: $('echo-cancel')?.checked,
+    noiseSuppression: $('noise-suppress')?.checked,
+    autoGainControl: $('auto-gain')?.checked,
+    vadEnabled,
+    lowLatencyMode,
+    inputEffects
+  };
+  localStorage.setItem('styx-user-settings', JSON.stringify(settings));
+  toast('설정이 저장되었습니다', 'success', 2000);
+}
+
 // Use addGlobalListener instead of direct addEventListener
 addGlobalListener(document, 'keydown', (e) => {
-  // F1 or ? key: Show shortcuts help
-  if (e.key === 'F1' || (e.key === '?' && !e.target.matches('input, textarea'))) {
+  // 입력 필드에서는 단축키 비활성화 (F1, Esc 제외)
+  const isInputField = e.target.matches('input, textarea, [contenteditable]');
+  
+  // 전역 단축키 처리
+  const globalKey = e.ctrlKey ? `Control${e.code}` : e.code;
+  const globalShortcut = keyboardShortcuts[globalKey];
+  
+  if (globalShortcut?.global) {
     e.preventDefault();
-    $('shortcuts-overlay')?.classList.remove('hidden');
+    executeShortcut(globalShortcut.action);
     return;
   }
   
-  // Esc key: Hide shortcuts help
+  // F1 or ? key: Show shortcuts help
+  if (e.key === 'F1' || (e.key === '?' && !isInputField)) {
+    e.preventDefault();
+    executeShortcut('showHelp');
+    return;
+  }
+  
+  // Esc key: Hide shortcuts help or leave room
   if (e.key === 'Escape') {
     const overlay = $('shortcuts-overlay');
     if (overlay && !overlay.classList.contains('hidden')) {
       overlay.classList.add('hidden');
       return;
     }
+    if (!isInputField && !roomView?.classList.contains('hidden')) {
+      e.preventDefault();
+      executeShortcut('leaveRoom');
+    }
+    return;
   }
+  
+  // 입력 필드에서는 나머지 단축키 비활성화
+  if (isInputField) return;
   
   // PTT 모드
   if (pttMode && !isPttActive && e.code === pttKey && localStream) {
@@ -955,54 +1142,34 @@ addGlobalListener(document, 'keydown', (e) => {
     return;
   }
   
-  // 입력 필드에서는 무시
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  
-  // 방 화면에서만 작동
+  // 방 화면에서만 작동하는 단축키
   if (roomView?.classList.contains('hidden')) return;
   
-  // M: 음소거 토글
-  if (e.key === 'm' || e.key === 'M' || e.key === 'ㅡ') {
+  // 키보드 단축키 시스템 사용
+  const shortcut = keyboardShortcuts[e.code];
+  if (shortcut && !shortcut.global) {
+    // 조건 확인
+    if (shortcut.condition && !shortcut.condition()) return;
+    
     e.preventDefault();
-    if (!pttMode) $('muteBtn')?.click();
-  } 
-  // Space: 메트로놈 토글
-  else if (e.key === ' ' && e.code !== pttKey) {
-    e.preventDefault();
-    $('metronome-toggle')?.click();
-  }
-  // R: 녹음 토글
-  else if (e.key === 'r' || e.key === 'R' || e.key === 'ㄱ') {
-    e.preventDefault();
-    $('recordBtn')?.click();
-  }
-  // B: 녹음 마커 추가
-  else if ((e.key === 'b' || e.key === 'B' || e.key === 'ㅠ') && isRecording) {
-    e.preventDefault();
-    addRecordingMarker();
-  }
-  // I: 초대 링크 복사
-  else if (e.key === 'i' || e.key === 'I' || e.key === 'ㅑ') {
-    e.preventDefault();
-    $('inviteBtn')?.click();
-  }
-  // Escape: 방 나가기 (확인 필요)
-  else if (e.key === 'Escape') {
-    e.preventDefault();
-    $('leaveBtn')?.click();
-  }
-  // 숫자 1-8: 피어 음소거 토글
-  else if (e.key >= '1' && e.key <= '8') {
-    const idx = parseInt(e.key) - 1;
-    const peerIds = [...peers.keys()];
-    if (peerIds[idx]) {
-      const peer = peers.get(peerIds[idx]);
-      if (peer) {
-        peer.muted = !peer.muted;
-        applyMixerState();
-        renderUsers();
-      }
+    
+    // 피어 관련 단축키
+    if (shortcut.action === 'togglePeerMute') {
+      executeShortcut(shortcut.action, { peer: shortcut.peer });
+    } else {
+      executeShortcut(shortcut.action);
     }
+    return;
+  }
+  
+  // 레거시 지원 (한글 키보드)
+  const legacyMappings = {
+    'ㅡ': 'toggleMute', 'ㄱ': 'toggleRecording', 'ㅠ': 'addMarker', 'ㅑ': 'copyInvite'
+  };
+  
+  if (legacyMappings[e.key]) {
+    e.preventDefault();
+    executeShortcut(legacyMappings[e.key]);
   }
 });
 
