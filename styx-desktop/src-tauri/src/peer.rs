@@ -440,6 +440,14 @@ pub fn start_recv_loop(
                         Some(h) => h,
                         None => continue,
                     };
+                    
+                    // Validate payload length matches header declaration
+                    let expected_total_len = AudioPacketHeader::SIZE + header.payload_len as usize;
+                    if len != expected_total_len {
+                        eprintln!("Packet length mismatch: got {}, expected {}", len, expected_total_len);
+                        continue;
+                    }
+                    
                     let payload = &buf[AudioPacketHeader::SIZE..len];
                     
                     packets_received.fetch_add(1, Ordering::Relaxed);
@@ -735,10 +743,18 @@ pub fn start_relay_loop(
                     if sender_id.is_empty() || sender_id.len() < 8 { continue; } // Reject invalid/short IDs
                     if !sender_id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') { continue; } // Only allow safe characters
                     
-                    let _header = match AudioPacketHeader::from_bytes(&buf[SESSION_ID_LEN..SESSION_ID_LEN + AudioPacketHeader::SIZE]) {
+                    let header = match AudioPacketHeader::from_bytes(&buf[SESSION_ID_LEN..SESSION_ID_LEN + AudioPacketHeader::SIZE]) {
                         Some(h) => h,
                         None => continue,
                     };
+                    
+                    // Validate payload length matches header declaration
+                    let expected_total_len = SESSION_ID_LEN + AudioPacketHeader::SIZE + header.payload_len as usize;
+                    if len != expected_total_len {
+                        eprintln!("Relay packet length mismatch: got {}, expected {}", len, expected_total_len);
+                        continue;
+                    }
+                    
                     let payload = &buf[SESSION_ID_LEN + AudioPacketHeader::SIZE..len];
                     
                     if let Ok(samples) = decode_frame(&mut decoder, payload) {
