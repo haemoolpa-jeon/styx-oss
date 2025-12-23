@@ -167,6 +167,7 @@ impl Default for UdpStreamState {
 
 impl UdpStreamState {
     /// Cleanup resources and stop all operations
+    #[allow(dead_code)]
     pub fn cleanup(&mut self) {
         // Stop all operations
         self.is_running.store(false, Ordering::SeqCst);
