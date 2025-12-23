@@ -130,7 +130,8 @@ async function createProcessedInputStream(rawStream) {
     try {
       await inputLimiterContext.audioWorklet.addModule('noise-gate-processor.js');
       noiseGateWorklet = new AudioWorkletNode(inputLimiterContext, 'noise-gate-processor');
-      noiseGateWorklet.parameters.get('threshold').value = -45;
+      const thresholdParam = noiseGateWorklet.parameters.get('threshold');
+      if (thresholdParam) thresholdParam.value = -45;
       eqHigh.connect(noiseGateWorklet);
       lastNode = noiseGateWorklet;
     } catch (e) { log('Noise gate worklet failed:', e); }
@@ -2268,6 +2269,11 @@ function startAudioMeter() {
     const meter = $('audio-meter');
     
     meterInterval = setInterval(() => {
+      if (!analyser || !meter) {
+        clearInterval(meterInterval);
+        meterInterval = null;
+        return;
+      }
       analyser.getByteFrequencyData(dataArray);
       const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
       const level = Math.min(100, avg * 1.5);
@@ -3058,7 +3064,11 @@ function startVAD(peerId, analyser) {
   
   const interval = setInterval(() => {
     const peer = peers.get(peerId);
-    if (!peer) { clearInterval(interval); return; }
+    if (!peer || !peers.has(peerId)) { 
+      clearInterval(interval); 
+      vadIntervals.delete(peerId);
+      return; 
+    }
     
     let avg = 0;
     if (analyser && dataArray) {

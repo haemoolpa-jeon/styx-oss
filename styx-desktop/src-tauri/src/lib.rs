@@ -59,8 +59,18 @@ fn get_sample_rates(device_name: Option<String>, is_input: bool) -> Vec<u32> {
 #[tauri::command]
 async fn udp_bind(port: u16, state: State<'_, AppState>) -> Result<u16, String> {
     let (socket, local_port) = udp::bind_udp_socket(port).await?;
-    *state.udp_port.lock().unwrap() = Some(local_port);
-    state.udp_stream.lock().unwrap().socket = Some(std::sync::Arc::new(socket));
+    
+    // Use proper error handling for mutex locks
+    match state.udp_port.lock() {
+        Ok(mut port_guard) => *port_guard = Some(local_port),
+        Err(_) => return Err("UDP 포트 상태 잠금 실패".to_string()),
+    }
+    
+    match state.udp_stream.lock() {
+        Ok(mut stream_guard) => stream_guard.socket = Some(std::sync::Arc::new(socket)),
+        Err(_) => return Err("UDP 스트림 상태 잠금 실패".to_string()),
+    }
+    
     Ok(local_port)
 }
 

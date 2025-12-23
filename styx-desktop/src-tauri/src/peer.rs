@@ -397,7 +397,14 @@ pub fn start_recv_loop(
                             let lost = header.sequence.wrapping_sub(expected);
                             lost_count = lost;
                             if lost < 10 { // 합리적인 범위 내에서만
-                                let decoder = decoders.entry(addr).or_insert_with(|| create_decoder().unwrap());
+                                let decoder = decoders.entry(addr).or_insert_with(|| {
+                                    create_decoder().unwrap_or_else(|_| {
+                                        eprintln!("Failed to create decoder for PLC");
+                                        Decoder::new(48000, Channels::Mono).unwrap_or_else(|_| {
+                                            panic!("Critical: Cannot create fallback decoder")
+                                        })
+                                    })
+                                });
                                 for _ in 0..lost {
                                     if let Ok(plc_samples) = decode_plc(decoder) {
                                         if let Ok(mut jb) = jitter_buffers.lock() {
@@ -412,7 +419,14 @@ pub fn start_recv_loop(
                     }
                     last_seq.insert(addr, header.sequence);
                     
-                    let decoder = decoders.entry(addr).or_insert_with(|| create_decoder().unwrap());
+                    let decoder = decoders.entry(addr).or_insert_with(|| {
+                        create_decoder().unwrap_or_else(|_| {
+                            eprintln!("Failed to create decoder for audio");
+                            Decoder::new(48000, Channels::Mono).unwrap_or_else(|_| {
+                                panic!("Critical: Cannot create fallback decoder")
+                            })
+                        })
+                    });
                     if let Ok(samples) = decode_frame(decoder, payload) {
                         // Update per-peer stats
                         if let Ok(mut stats) = peer_stats.lock() {
