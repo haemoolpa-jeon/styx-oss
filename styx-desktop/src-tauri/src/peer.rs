@@ -565,7 +565,7 @@ pub fn start_recv_loop(
 
 // 릴레이 모드 송수신 루프 (fixed implementation)
 pub fn start_relay_loop(
-    _socket: Arc<UdpSocket>,
+    _socket: Arc<UdpSocket>, // Not used, we create our own shared socket
     relay_addr: SocketAddr,
     session_id: String,
     is_running: Arc<AtomicBool>,
@@ -584,6 +584,27 @@ pub fn start_relay_loop(
     
     let session_bytes = session_id.as_bytes().to_vec();
     let bitrate_kbps = bitrate.load(Ordering::Relaxed);
+    
+    // Create a single shared socket for both send and receive
+    let std_socket = std::net::UdpSocket::bind("0.0.0.0:0")
+        .map_err(|e| format!("Failed to create UDP socket: {}", e))?;
+    std_socket.set_read_timeout(Some(std::time::Duration::from_millis(10))).ok();
+    std_socket.set_write_timeout(Some(std::time::Duration::from_millis(10))).ok();
+    
+    // Send initial registration packet to relay server
+    let mut reg_packet = vec![0u8; 20 + 1];
+    let copy_len = session_bytes.len().min(20);
+    reg_packet[..copy_len].copy_from_slice(&session_bytes[..copy_len]);
+    reg_packet[20] = 0x50; // 'P' for ping/registration
+    if let Err(e) = std_socket.send_to(&reg_packet, relay_addr) {
+        eprintln!("[UDP] Failed to send registration: {}", e);
+    } else {
+        eprintln!("[UDP] Sent registration to relay: {}", relay_addr);
+    }
+    
+    let std_socket = Arc::new(std_socket);
+    let std_socket_send = std_socket.clone();
+    let std_socket_recv = std_socket.clone();
     
     // Audio input thread with UDP sending
     let is_running_send = is_running.clone();
@@ -635,15 +656,6 @@ pub fn start_relay_loop(
         // Keep stream alive
         let _stream = stream;
         
-        // Create blocking UDP socket for sending
-        let std_socket = match std::net::UdpSocket::bind("0.0.0.0:0") {
-            Ok(s) => {
-                s.set_write_timeout(Some(std::time::Duration::from_millis(10))).ok();
-                s
-            },
-            Err(e) => { eprintln!("[UDP] Failed to create send socket: {}", e); return; }
-        };
-        
         let mut packet_buffer = Vec::with_capacity(1024);
         let mut padded_session = [0u8; 20];
         let copy_len = session_send.len().min(20);
@@ -680,7 +692,7 @@ pub fn start_relay_loop(
                     packet_buffer.extend_from_slice(&header.to_bytes());
                     packet_buffer.extend_from_slice(&encoded);
                     
-                    if let Ok(_) = std_socket.send_to(&packet_buffer, relay_addr) {
+                    if let Ok(_) = std_socket_send.send_to(&packet_buffer, relay_addr) {
                         packets_sent_send.fetch_add(1, Ordering::Relaxed);
                     }
                 }
@@ -691,6 +703,7 @@ pub fn start_relay_loop(
     // Audio output thread with UDP receiving
     let is_running_recv = is_running.clone();
     let packets_received_recv = packets_received.clone();
+    let session_id_recv = session_id.clone();
     
     std::thread::spawn(move || {
         let mut decoder = match create_decoder() {
@@ -739,26 +752,17 @@ pub fn start_relay_loop(
         // Keep stream alive
         let _stream = stream;
         
-        // Create blocking UDP socket for receiving
-        let std_socket = match std::net::UdpSocket::bind("0.0.0.0:0") {
-            Ok(s) => {
-                s.set_read_timeout(Some(std::time::Duration::from_millis(10))).ok();
-                s
-            },
-            Err(e) => { eprintln!("[UDP] Failed to create recv socket: {}", e); return; }
-        };
-        
         let mut buf = vec![0u8; 2000];
         const SESSION_ID_LEN: usize = 20;
         
         while is_running_recv.load(Ordering::SeqCst) {
-            // Use the original socket for receiving (it's bound to the relay)
-            match std_socket.recv_from(&mut buf) {
+            // Use the shared socket for receiving
+            match std_socket_recv.recv_from(&mut buf) {
                 Ok((len, _)) if len > SESSION_ID_LEN + AudioPacketHeader::SIZE && len <= 2000 => {
                     let sender_id = String::from_utf8_lossy(&buf[..SESSION_ID_LEN]).trim_end_matches('\0').to_string();
                     
                     // Enhanced session ID validation
-                    if sender_id == session_id { continue; } // Skip own packets
+                    if sender_id == session_id_recv { continue; } // Skip own packets
                     if sender_id.is_empty() || sender_id.len() < 8 { continue; } // Reject invalid/short IDs
                     if !sender_id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') { continue; } // Only allow safe characters
                     
