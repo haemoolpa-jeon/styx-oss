@@ -247,7 +247,7 @@ document.addEventListener('click', function resumeAudio() {
 }, { once: false });
 
 // 입력 오디오에 리미터/컴프레서 + EQ 적용 (저지연)
-let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0, inputVolume: 120 };
+let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0, inputVolume: 120, compressionRatio: 4 };
 let effectNodes = {};
 let noiseGateWorklet = null;
 
@@ -538,6 +538,13 @@ function updateInputEffect(effect, value) {
     case 'eqHigh': effectNodes.eqHigh.gain.value = value; break;
     case 'inputVolume': 
       if (effectNodes.makeupGain) effectNodes.makeupGain.gain.value = value / 100; 
+      break;
+    case 'compressionRatio':
+      if (effectNodes.compressor) effectNodes.compressor.ratio.value = value;
+      // 모든 피어의 압축비도 업데이트
+      peers.forEach(peer => {
+        if (peer.compressor) peer.compressor.ratio.value = value;
+      });
       break;
   }
 }
@@ -3198,13 +3205,17 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
       
       const source = ctx.createMediaStreamSource(e.streams[0]);
       
-      // 압축기
+      // 다이나믹 레인지 압축 (자동 레벨 매칭)
       const compressor = ctx.createDynamicsCompressor();
-      compressor.threshold.value = -24;
-      compressor.knee.value = 30;
-      compressor.ratio.value = 4;
-      compressor.attack.value = 0.003;
-      compressor.release.value = 0.25;
+      compressor.threshold.value = -24; // dB - 압축 시작점
+      compressor.knee.value = 30; // 부드러운 압축
+      compressor.ratio.value = 4; // 4:1 압축비
+      compressor.attack.value = 0.003; // 3ms 빠른 반응
+      compressor.release.value = 0.25; // 250ms 자연스러운 해제
+      
+      // 메이크업 게인 (압축 손실 보상)
+      const makeupGain = ctx.createGain();
+      makeupGain.gain.value = 2.0; // 압축으로 인한 볼륨 손실 보상
       
       // 팬 노드 (스테레오 위치)
       const panNode = ctx.createStereoPanner();
@@ -3225,7 +3236,8 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
       const dest = ctx.createMediaStreamDestination();
       source.connect(peerAnalyser);
       peerAnalyser.connect(compressor);
-      compressor.connect(panNode);
+      compressor.connect(makeupGain);
+      makeupGain.connect(panNode);
       panNode.connect(delayNode);
       delayNode.connect(gainNode);
       gainNode.connect(dest);
@@ -3233,12 +3245,14 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
       audioEl.srcObject = dest.stream;
       if (peerData) {
         peerData.audioContext = ctx; // 공유 컨텍스트 참조
+        peerData.compressor = compressor;
+        peerData.makeupGain = makeupGain;
         peerData.panNode = panNode;
         peerData.gainNode = gainNode;
         peerData.delayNode = delayNode;
         peerData.analyser = peerAnalyser;
         peerData.isSpeaking = false;
-        peerData.audioNodes = { source, compressor, panNode, gainNode, delayNode, peerAnalyser, dest }; // 정리용
+        peerData.audioNodes = { source, compressor, makeupGain, panNode, gainNode, delayNode, peerAnalyser, dest }; // 정리용
       }
       
       // VAD 시작
@@ -4501,6 +4515,18 @@ $('effects-toggle')?.addEventListener('click', () => {
     updateInputEffect(effect, val);
   };
 });
+
+// 압축비 슬라이더 초기화
+const compressionEl = $('compression-ratio');
+if (compressionEl) {
+  compressionEl.value = inputEffects.compressionRatio || 4;
+  compressionEl.nextElementSibling.textContent = `${compressionEl.value}:1`;
+  compressionEl.oninput = () => {
+    const val = parseFloat(compressionEl.value);
+    compressionEl.nextElementSibling.textContent = `${val}:1`;
+    updateInputEffect('compressionRatio', val);
+  };
+}
 
 // 입력 볼륨 슬라이더 초기화
 const inputVolumeEl = $('input-volume');
