@@ -359,6 +359,28 @@
           
           <h4>👥 사용자 관리</h4>
           <div id="users-list" class="admin-list"></div>
+          
+          <h4>📊 시스템 모니터링</h4>
+          <div class="monitoring-section">
+            <div class="monitoring-tabs">
+              <button id="health-tab" class="tab-btn active">상태</button>
+              <button id="metrics-tab" class="tab-btn">메트릭</button>
+              <button id="logs-tab" class="tab-btn">로그</button>
+            </div>
+            <div id="health-content" class="tab-content">
+              <div id="health-stats" class="stats-grid"></div>
+            </div>
+            <div id="metrics-content" class="tab-content hidden">
+              <div id="metrics-data" class="metrics-display"></div>
+            </div>
+            <div id="logs-content" class="tab-content hidden">
+              <div class="logs-controls">
+                <button id="refresh-logs" class="btn-small">새로고침</button>
+                <button id="clear-logs" class="btn-small">지우기</button>
+              </div>
+              <div id="logs-display" class="logs-display"></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

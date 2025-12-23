@@ -1049,6 +1049,155 @@ const isTauriApp = () => {
 const actuallyTauri = isTauriApp();
 const tauriInvoke = actuallyTauri ? (window.__TAURI__?.core?.invoke || null) : null;
 
+// 관리자 전용 기능 접근 제어
+function checkAdminAccess() {
+  // Tauri 앱에서는 관리자 기능 비활성화
+  if (actuallyTauri) {
+    return false;
+  }
+  
+  // 웹에서만 관리자 기능 허용, 로그인된 관리자만
+  return currentUser && currentUser.isAdmin;
+}
+
+function hideAdminFeaturesInTauri() {
+  if (actuallyTauri) {
+    // Tauri 앱에서는 관리자 관련 UI 숨기기
+    $('admin-panel')?.classList.add('hidden');
+    const adminBtn = document.querySelector('[onclick*="admin"]');
+    if (adminBtn) adminBtn.style.display = 'none';
+  }
+}
+
+// 모니터링 시스템
+let monitoringInterval = null;
+const systemLogs = [];
+
+function initMonitoring() {
+  if (!checkAdminAccess()) return;
+  
+  // 탭 전환
+  $('health-tab')?.addEventListener('click', () => switchTab('health'));
+  $('metrics-tab')?.addEventListener('click', () => switchTab('metrics'));
+  $('logs-tab')?.addEventListener('click', () => switchTab('logs'));
+  
+  // 로그 제어
+  $('refresh-logs')?.addEventListener('click', refreshLogs);
+  $('clear-logs')?.addEventListener('click', clearLogs);
+  
+  // 자동 새로고침 시작
+  startMonitoring();
+}
+
+function switchTab(tab) {
+  // 탭 버튼 활성화
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  $(`${tab}-tab`)?.classList.add('active');
+  
+  // 콘텐츠 표시
+  document.querySelectorAll('.tab-content').forEach(content => content.classList.add('hidden'));
+  $(`${tab}-content`)?.classList.remove('hidden');
+  
+  // 데이터 로드
+  if (tab === 'health') loadHealthData();
+  else if (tab === 'metrics') loadMetricsData();
+  else if (tab === 'logs') refreshLogs();
+}
+
+function startMonitoring() {
+  if (monitoringInterval) return;
+  
+  monitoringInterval = setInterval(() => {
+    const activeTab = document.querySelector('.tab-btn.active')?.id.replace('-tab', '');
+    if (activeTab === 'health') loadHealthData();
+    else if (activeTab === 'metrics') loadMetricsData();
+  }, 5000); // 5초마다 새로고침
+}
+
+function stopMonitoring() {
+  if (monitoringInterval) {
+    clearInterval(monitoringInterval);
+    monitoringInterval = null;
+  }
+}
+
+async function loadHealthData() {
+  try {
+    const response = await fetch('/health');
+    const data = await response.json();
+    
+    const statsGrid = $('health-stats');
+    if (!statsGrid) return;
+    
+    statsGrid.innerHTML = `
+      <div class="stat-card">
+        <div class="stat-value">${data.status}</div>
+        <div class="stat-label">상태</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${Math.floor(data.uptime / 60)}분</div>
+        <div class="stat-label">가동시간</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${data.stats?.activeConnections || 0}</div>
+        <div class="stat-label">활성 연결</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${data.stats?.activeRooms || 0}</div>
+        <div class="stat-label">활성 방</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${data.stats?.totalMessages || 0}</div>
+        <div class="stat-label">총 메시지</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${data.stats?.errors || 0}</div>
+        <div class="stat-label">오류</div>
+      </div>
+    `;
+  } catch (e) {
+    console.error('Health data load failed:', e);
+  }
+}
+
+async function loadMetricsData() {
+  try {
+    const response = await fetch('/metrics');
+    const data = await response.text();
+    
+    const metricsDisplay = $('metrics-data');
+    if (metricsDisplay) {
+      metricsDisplay.textContent = data;
+    }
+  } catch (e) {
+    console.error('Metrics data load failed:', e);
+  }
+}
+
+function refreshLogs() {
+  const logsDisplay = $('logs-display');
+  if (!logsDisplay) return;
+  
+  // 최근 로그 표시 (실제로는 서버에서 가져와야 하지만 여기서는 클라이언트 로그 표시)
+  const recentLogs = systemLogs.slice(-50).reverse();
+  logsDisplay.textContent = recentLogs.join('\n') || '로그가 없습니다.';
+}
+
+function clearLogs() {
+  systemLogs.length = 0;
+  refreshLogs();
+}
+
+function addSystemLog(message) {
+  const timestamp = new Date().toISOString();
+  systemLogs.push(`[${timestamp}] ${message}`);
+  
+  // 최대 1000개 로그만 유지
+  if (systemLogs.length > 1000) {
+    systemLogs.splice(0, systemLogs.length - 1000);
+  }
+}
+
 // Debug: Tauri 감지 상태 확인
 console.log('Tauri detection:', {
   __TAURI__: typeof window.__TAURI__,
@@ -2378,6 +2527,7 @@ $('loginBtn').onclick = () => {
     currentUser = res.user;
     localStorage.setItem('styx-user', username);
     localStorage.setItem('styx-token', res.token);
+    addSystemLog(`User login: ${username} (Admin: ${res.user.isAdmin})`);
     showLobby();
   });
 };
@@ -2419,9 +2569,12 @@ async function showLobby() {
   const avatarEl = $('my-avatar');
   if (avatarEl) avatarEl.style.backgroundImage = currentUser.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
   if (currentUser.isAdmin) {
-    $('adminBtn').classList.remove('hidden');
-    // 관리자 알림 시작
-    setTimeout(updateAdminNotifications, 1000);
+    // 웹에서만 관리자 버튼 표시
+    if (!actuallyTauri) {
+      $('adminBtn').classList.remove('hidden');
+      // 관리자 알림 시작
+      setTimeout(updateAdminNotifications, 1000);
+    }
   }
   
   // 서버에서 설정 로드
@@ -3054,7 +3207,13 @@ $('changePasswordBtn').onclick = () => {
 
 // 관리자 패널
 $('adminBtn').onclick = () => {
+  if (!checkAdminAccess()) {
+    toast('관리자 권한이 필요합니다', 'error');
+    return;
+  }
+  
   loadAdminData();
+  initMonitoring(); // 모니터링 시스템 초기화
   adminPanel.classList.remove('hidden');
   lobby.classList.add('hidden');
 };
@@ -3201,6 +3360,7 @@ window.deleteUser = (username) => {
 };
 
 $('closeAdminBtn').onclick = () => {
+  stopMonitoring(); // 모니터링 중지
   adminPanel.classList.add('hidden');
   lobby.classList.remove('hidden');
 };

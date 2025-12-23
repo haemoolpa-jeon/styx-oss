@@ -671,6 +671,38 @@ input[type="range"]::-webkit-slider-thumb {
   font-style: italic; display: block; text-align: center; padding: 20px;
 }
 
+/* 모니터링 섹션 */
+.monitoring-section { margin-top: 16px; }
+.monitoring-tabs {
+  display: flex; gap: 8px; margin-bottom: 12px;
+  border-bottom: 1px solid var(--border); padding-bottom: 8px;
+}
+.tab-btn {
+  padding: 8px 16px; border: none; background: var(--bg-input);
+  color: var(--text-secondary); border-radius: 4px; cursor: pointer;
+  transition: all 0.2s;
+}
+.tab-btn.active, .tab-btn:hover {
+  background: var(--primary); color: white;
+}
+.tab-content { min-height: 200px; }
+.stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.stat-card {
+  background: var(--bg-input); padding: 12px; border-radius: 6px;
+  text-align: center;
+}
+.stat-value { font-size: 24px; font-weight: bold; color: var(--primary); }
+.stat-label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.metrics-display, .logs-display {
+  background: var(--bg-input); padding: 12px; border-radius: 6px;
+  font-family: monospace; font-size: 12px; max-height: 300px;
+  overflow-y: auto; white-space: pre-wrap;
+}
+.logs-controls { margin-bottom: 8px; display: flex; gap: 8px; }
+
 /* Notification badge */
 #adminBtn { position: relative; }
 .notification-badge {
