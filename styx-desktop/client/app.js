@@ -304,6 +304,151 @@ function applyRoutingToStream() {
   effectNodes.routingNode = routedNode;
 }
 
+// 노이즈 프로파일링 시스템
+let noiseProfile = {
+  enabled: false,
+  baselineLevel: -60, // dB
+  adaptiveThreshold: -45, // dB
+  learningData: [],
+  isLearning: false
+};
+
+function toggleNoiseProfile() {
+  noiseProfile.enabled = !noiseProfile.enabled;
+  const panel = $('noise-profile-panel');
+  const btn = $('noise-profile-toggle');
+  
+  if (noiseProfile.enabled) {
+    panel?.classList.remove('hidden');
+    if (btn) btn.textContent = '🎯';
+    updateNoiseDisplay();
+  } else {
+    panel?.classList.add('hidden');
+    if (btn) btn.textContent = '🎯';
+  }
+}
+
+function startNoiseLearning() {
+  if (!localStream) return;
+  
+  noiseProfile.isLearning = true;
+  noiseProfile.learningData = [];
+  
+  const btn = $('learn-noise');
+  if (btn) {
+    btn.textContent = '학습중...';
+    btn.disabled = true;
+  }
+  
+  // 3초간 노이즈 레벨 수집
+  const ctx = getSharedAudioContext();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 256;
+  analyser.smoothingTimeConstant = 0.3;
+  
+  const source = ctx.createMediaStreamSource(localStream);
+  source.connect(analyser);
+  
+  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+  let sampleCount = 0;
+  const maxSamples = 30; // 3초 @ 10Hz
+  
+  const collectSample = () => {
+    if (!noiseProfile.isLearning) return;
+    
+    analyser.getByteFrequencyData(dataArray);
+    
+    // RMS 계산
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      sum += dataArray[i] * dataArray[i];
+    }
+    const rms = Math.sqrt(sum / dataArray.length);
+    const dbLevel = 20 * Math.log10(rms / 255) + 0; // 대략적인 dB 변환
+    
+    noiseProfile.learningData.push(dbLevel);
+    sampleCount++;
+    
+    if (sampleCount < maxSamples) {
+      setTimeout(collectSample, 100);
+    } else {
+      finishLearning(analyser);
+    }
+  };
+  
+  collectSample();
+}
+
+function finishLearning(analyser) {
+  noiseProfile.isLearning = false;
+  
+  // 학습 데이터 분석
+  if (noiseProfile.learningData.length > 0) {
+    const sorted = noiseProfile.learningData.sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const q75 = sorted[Math.floor(sorted.length * 0.75)];
+    
+    noiseProfile.baselineLevel = median;
+    noiseProfile.adaptiveThreshold = Math.max(median + 10, q75 + 5);
+    
+    // 설정 저장
+    localStorage.setItem('styx-noise-profile', JSON.stringify({
+      baselineLevel: noiseProfile.baselineLevel,
+      adaptiveThreshold: noiseProfile.adaptiveThreshold
+    }));
+    
+    toast(`노이즈 프로파일 학습 완료 (기준: ${Math.round(noiseProfile.baselineLevel)}dB)`, 'success');
+  }
+  
+  // UI 복원
+  const btn = $('learn-noise');
+  if (btn) {
+    btn.textContent = '학습';
+    btn.disabled = false;
+  }
+  
+  // 분석기 정리
+  try { analyser.disconnect(); } catch {}
+  
+  updateNoiseDisplay();
+}
+
+function resetNoiseProfile() {
+  noiseProfile.baselineLevel = -60;
+  noiseProfile.adaptiveThreshold = -45;
+  noiseProfile.learningData = [];
+  
+  localStorage.removeItem('styx-noise-profile');
+  updateNoiseDisplay();
+  toast('노이즈 프로파일이 리셋되었습니다', 'info');
+}
+
+function updateNoiseDisplay() {
+  const levelEl = $('noise-level');
+  if (levelEl) {
+    if (noiseProfile.baselineLevel > -60) {
+      levelEl.textContent = `${Math.round(noiseProfile.baselineLevel)}dB`;
+      levelEl.style.color = 'var(--accent)';
+    } else {
+      levelEl.textContent = '-';
+      levelEl.style.color = 'var(--text-secondary)';
+    }
+  }
+}
+
+function loadNoiseProfile() {
+  try {
+    const saved = localStorage.getItem('styx-noise-profile');
+    if (saved) {
+      const data = JSON.parse(saved);
+      noiseProfile.baselineLevel = data.baselineLevel || -60;
+      noiseProfile.adaptiveThreshold = data.adaptiveThreshold || -45;
+    }
+  } catch (e) {
+    console.warn('Noise profile load failed:', e);
+  }
+}
+
 // 키보드 네비게이션 개선
 function enhanceKeyboardNavigation() {
   // 포커스 가능한 요소들에 포커스 표시 개선
@@ -512,6 +657,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadAccessibilitySettings();
   enhanceKeyboardNavigation();
   initSpectrum();
+  loadNoiseProfile();
   setTimeout(autoDetectOptimalSettings, 1000);
 });
 
@@ -671,7 +817,10 @@ async function createProcessedInputStream(rawStream) {
       await ctx.audioWorklet.addModule('noise-gate-processor.js');
       noiseGateWorklet = new AudioWorkletNode(ctx, 'noise-gate-processor');
       const thresholdParam = noiseGateWorklet.parameters.get('threshold');
-      if (thresholdParam) thresholdParam.value = -45;
+      // 적응형 임계값 사용 (노이즈 프로파일 기반)
+      const adaptiveThreshold = noiseProfile.adaptiveThreshold > -60 ? 
+        noiseProfile.adaptiveThreshold : -45;
+      if (thresholdParam) thresholdParam.value = adaptiveThreshold;
       eqHigh.connect(noiseGateWorklet);
       lastNode = noiseGateWorklet;
     } catch (e) { log('Noise gate worklet failed:', e); }
@@ -4712,6 +4861,11 @@ $('routing-toggle')?.addEventListener('click', toggleRouting);
 $('input-routing')?.addEventListener('change', (e) => {
   updateRouting(e.target.value);
 });
+
+// 노이즈 프로파일링 제어
+$('noise-profile-toggle')?.addEventListener('click', toggleNoiseProfile);
+$('learn-noise')?.addEventListener('click', startNoiseLearning);
+$('reset-profile')?.addEventListener('click', resetNoiseProfile);
 
 // 입력 볼륨 슬라이더 초기화
 const inputVolumeEl = $('input-volume');
