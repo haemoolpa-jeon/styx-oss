@@ -2353,12 +2353,35 @@ socket.on('screen-share-start', ({ userId, username }) => {
   const screenUser = $('screen-share-user');
   if (screenUser) screenUser.textContent = `${username}님의 화면`;
   $('screen-share-container')?.classList.remove('hidden');
+  
+  // Tauri 앱에서는 화면 공유 수신 불가 안내
+  if (actuallyTauri) {
+    const screenVideo = $('screen-share-video');
+    if (screenVideo) {
+      // Show placeholder message
+      screenVideo.style.display = 'none';
+      let placeholder = $('screen-share-placeholder');
+      if (!placeholder) {
+        placeholder = document.createElement('div');
+        placeholder.id = 'screen-share-placeholder';
+        placeholder.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#1a1a2e;color:#888;font-size:14px;text-align:center;padding:20px;';
+        placeholder.textContent = '화면 공유는 웹 브라우저에서만 볼 수 있습니다.\n데스크톱 앱에서는 지원되지 않습니다.';
+        screenVideo.parentNode.insertBefore(placeholder, screenVideo);
+      }
+      placeholder.style.display = 'flex';
+    }
+  }
 });
 
 socket.on('screen-share-stop', () => {
   if (!isScreenSharing) {
     $('screen-share-container').classList.add('hidden');
     $('screen-share-video').srcObject = null;
+    // Hide placeholder if exists
+    const placeholder = $('screen-share-placeholder');
+    if (placeholder) placeholder.style.display = 'none';
+    const screenVideo = $('screen-share-video');
+    if (screenVideo) screenVideo.style.display = '';
   }
 });
 
@@ -4048,6 +4071,19 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
 
   pc.ontrack = (e) => {
     const peerData = peers.get(peerId);
+    
+    // Handle video track (screen share)
+    if (e.track.kind === 'video') {
+      const screenVideo = $('screen-share-video');
+      if (screenVideo) {
+        screenVideo.srcObject = e.streams[0];
+        screenVideo.style.display = '';
+        // Hide placeholder if exists
+        const placeholder = $('screen-share-placeholder');
+        if (placeholder) placeholder.style.display = 'none';
+      }
+      return;
+    }
     
     // 지터 버퍼 적용 (WebRTC playoutDelayHint)
     if (e.receiver && e.receiver.playoutDelayHint !== undefined) {
