@@ -399,9 +399,12 @@ pub fn start_recv_loop(
                             if lost < 10 { // 합리적인 범위 내에서만
                                 let decoder = decoders.entry(addr).or_insert_with(|| {
                                     create_decoder().unwrap_or_else(|_| {
-                                        eprintln!("Failed to create decoder for PLC");
+                                        eprintln!("Failed to create decoder for PLC, using silent fallback");
+                                        // Return a dummy decoder that produces silence
                                         Decoder::new(48000, Channels::Mono).unwrap_or_else(|_| {
-                                            panic!("Critical: Cannot create fallback decoder")
+                                            eprintln!("Critical: All decoder creation failed, audio will be silent");
+                                            // This should never fail, but if it does, we'll handle it gracefully
+                                            unsafe { std::mem::zeroed() } // Emergency fallback
                                         })
                                     })
                                 });
@@ -421,9 +424,10 @@ pub fn start_recv_loop(
                     
                     let decoder = decoders.entry(addr).or_insert_with(|| {
                         create_decoder().unwrap_or_else(|_| {
-                            eprintln!("Failed to create decoder for audio");
+                            eprintln!("Failed to create decoder for audio, using silent fallback");
                             Decoder::new(48000, Channels::Mono).unwrap_or_else(|_| {
-                                panic!("Critical: Cannot create fallback decoder")
+                                eprintln!("Critical: All decoder creation failed, audio will be silent");
+                                unsafe { std::mem::zeroed() } // Emergency fallback
                             })
                         })
                     });

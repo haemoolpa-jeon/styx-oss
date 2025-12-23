@@ -81,15 +81,9 @@ let isRecording = false;
 let inputLimiterContext = null; // 입력 리미터용 AudioContext
 let processedStream = null; // 리미터 적용된 스트림
 
-// 피어 오디오용 공유 AudioContext 가져오기
+// 피어 오디오용 공유 AudioContext 가져오기 (통합된 컨텍스트 사용)
 function getPeerAudioContext() {
-  if (!peerAudioContext || peerAudioContext.state === 'closed') {
-    peerAudioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
-  }
-  if (peerAudioContext.state === 'suspended') {
-    peerAudioContext.resume();
-  }
-  return peerAudioContext;
+  return getSharedAudioContext();
 }
 
 // Resume audio contexts on user interaction (browser autoplay policy)
@@ -104,32 +98,248 @@ let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0, inputVolume: 120 };
 let effectNodes = {};
 let noiseGateWorklet = null;
 
-async function createProcessedInputStream(rawStream) {
-  inputLimiterContext = new AudioContext({ sampleRate: 48000 });
+// 사용자 경험 개선 - 자동 설정 감지
+async function autoDetectOptimalSettings() {
+  try {
+    // 1. 오디오 장치 자동 선택
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter(d => d.kind === 'audioinput' && d.deviceId !== 'default');
+    const audioOutputs = devices.filter(d => d.kind === 'audiooutput' && d.deviceId !== 'default');
+    
+    // 기본 장치가 아닌 첫 번째 장치 선택 (보통 더 좋은 품질)
+    if (audioInputs.length > 0 && !selectedDeviceId) {
+      selectedDeviceId = audioInputs[0].deviceId;
+      if ($('audio-device')) $('audio-device').value = selectedDeviceId;
+    }
+    
+    if (audioOutputs.length > 0 && !selectedOutputId) {
+      selectedOutputId = audioOutputs[0].deviceId;
+      if ($('audio-output')) $('audio-output').value = selectedOutputId;
+    }
+    
+    // 2. 네트워크 기반 설정 자동 조정
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (connection) {
+      let recommendedBitrate = 96;
+      let recommendedJitter = 40;
+      
+      if (connection.effectiveType === '4g') {
+        recommendedBitrate = 128;
+        recommendedJitter = 30;
+      } else if (connection.effectiveType === '3g') {
+        recommendedBitrate = 64;
+        recommendedJitter = 60;
+      } else if (connection.effectiveType === 'slow-2g' || connection.effectiveType === '2g') {
+        recommendedBitrate = 32;
+        recommendedJitter = 100;
+      }
+      
+      // UI 업데이트
+      if ($('bitrate-slider')) {
+        $('bitrate-slider').value = recommendedBitrate;
+        updateBitrate(recommendedBitrate);
+      }
+      if ($('jitter-slider')) {
+        $('jitter-slider').value = recommendedJitter;
+        updateJitterBuffer(recommendedJitter);
+      }
+    }
+    
+    // 3. 브라우저 최적화 설정
+    if (navigator.userAgent.includes('Chrome')) {
+      // Chrome 최적화
+      echoCancellation = true;
+      noiseSuppression = true;
+    } else if (navigator.userAgent.includes('Firefox')) {
+      // Firefox 최적화
+      echoCancellation = false; // Firefox의 에코 제거가 때로 문제가 됨
+      noiseSuppression = true;
+    }
+    
+    toast('최적 설정이 자동으로 적용되었습니다', 'success', 3000);
+  } catch (e) {
+    console.warn('Auto-detect settings failed:', e);
+  }
+}
+
+// 개선된 에러 메시지
+function showUserFriendlyError(error, context) {
+  const errorMessages = {
+    'NotAllowedError': '마이크 권한이 거부되었습니다. 브라우저 설정에서 마이크 권한을 허용해주세요.',
+    'NotFoundError': '마이크를 찾을 수 없습니다. 마이크가 연결되어 있는지 확인해주세요.',
+    'NotReadableError': '마이크에 접근할 수 없습니다. 다른 앱에서 마이크를 사용 중일 수 있습니다.',
+    'OverconstrainedError': '마이크 설정이 지원되지 않습니다. 다른 마이크를 선택해보세요.',
+    'SecurityError': '보안 오류가 발생했습니다. HTTPS 연결을 사용해주세요.',
+    'AbortError': '마이크 접근이 중단되었습니다.',
+    'TypeError': '설정 오류가 발생했습니다. 페이지를 새로고침해주세요.',
+    'NetworkError': '네트워크 연결에 문제가 있습니다. 인터넷 연결을 확인해주세요.',
+    'timeout': '연결 시간이 초과되었습니다. 네트워크 상태를 확인해주세요.'
+  };
   
-  // Resume if suspended
-  if (inputLimiterContext.state === 'suspended') {
-    inputLimiterContext.resume();
+  const message = errorMessages[error.name] || errorMessages[error] || `알 수 없는 오류가 발생했습니다: ${error.message || error}`;
+  toast(message, 'error', 8000);
+}
+
+// 페이지 로드 시 자동 설정 감지 실행
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(autoDetectOptimalSettings, 1000);
+});
+
+// 네트워크 품질 모니터링 및 적응형 설정
+let networkQuality = 'good'; // 'good', 'fair', 'poor'
+let adaptiveSettingsEnabled = true;
+let lastQualityCheck = 0;
+
+function monitorNetworkQuality() {
+  const now = Date.now();
+  if (now - lastQualityCheck < 5000) return; // 5초마다 체크
+  lastQualityCheck = now;
+  
+  // RTCPeerConnection 통계 기반 품질 평가
+  peers.forEach(async (peer, peerId) => {
+    if (!peer.connection) return;
+    
+    try {
+      const stats = await peer.connection.getStats();
+      let totalLoss = 0, totalRtt = 0, count = 0;
+      
+      stats.forEach(report => {
+        if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
+          if (report.packetsLost !== undefined && report.packetsReceived !== undefined) {
+            const lossRate = report.packetsLost / (report.packetsLost + report.packetsReceived) * 100;
+            totalLoss += lossRate;
+            count++;
+          }
+        }
+        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          if (report.currentRoundTripTime !== undefined) {
+            totalRtt += report.currentRoundTripTime * 1000; // ms로 변환
+          }
+        }
+      });
+      
+      if (count > 0) {
+        const avgLoss = totalLoss / count;
+        const rtt = totalRtt;
+        
+        // 품질 등급 결정
+        let quality = 'good';
+        if (avgLoss > 5 || rtt > 150) quality = 'poor';
+        else if (avgLoss > 2 || rtt > 80) quality = 'fair';
+        
+        if (quality !== networkQuality) {
+          networkQuality = quality;
+          if (adaptiveSettingsEnabled) {
+            adaptToNetworkQuality(quality);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Network quality check failed:', e);
+    }
+  });
+}
+
+function adaptToNetworkQuality(quality) {
+  const settings = {
+    good: { bitrate: 96, jitterBuffer: 40, sampleRate: 48000 },
+    fair: { bitrate: 64, jitterBuffer: 60, sampleRate: 44100 },
+    poor: { bitrate: 32, jitterBuffer: 100, sampleRate: 22050 }
+  };
+  
+  const config = settings[quality];
+  if (!config) return;
+  
+  // 비트레이트 조정
+  if (tauriInvoke) {
+    tauriInvoke('set_bitrate', { bitrate: config.bitrate }).catch(() => {});
+    tauriInvoke('set_jitter_buffer', { size: Math.round(config.jitterBuffer / 10) }).catch(() => {});
   }
   
-  const source = inputLimiterContext.createMediaStreamSource(rawStream);
+  toast(`네트워크 품질: ${quality} - 설정 자동 조정됨`, 'info', 3000);
+}
+
+// 5초마다 네트워크 품질 모니터링
+setInterval(monitorNetworkQuality, 5000);
+
+// 자동 크래시 복구 및 에러 경계
+let crashRecoveryAttempts = 0;
+const MAX_RECOVERY_ATTEMPTS = 3;
+
+function handleCriticalError(error, context) {
+  console.error(`Critical error in ${context}:`, error);
+  
+  if (crashRecoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
+    crashRecoveryAttempts++;
+    toast(`오류 발생 - 자동 복구 시도 중... (${crashRecoveryAttempts}/${MAX_RECOVERY_ATTEMPTS})`, 'warning');
+    
+    setTimeout(() => {
+      try {
+        // 리소스 정리 후 재시작
+        leaveRoom();
+        setTimeout(() => {
+          if (lastRoom) {
+            joinRoom(lastRoom, !!lastRoomPassword, lastRoomPassword);
+          }
+        }, 1000);
+      } catch (e) {
+        console.error('Recovery failed:', e);
+        toast('자동 복구 실패 - 페이지를 새로고침해주세요', 'error');
+      }
+    }, 2000);
+  } else {
+    toast('복구 시도 한계 초과 - 페이지를 새로고침해주세요', 'error');
+  }
+}
+
+// 전역 에러 핸들러
+window.addEventListener('error', (e) => {
+  handleCriticalError(e.error, 'Global');
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  handleCriticalError(e.reason, 'Promise');
+});
+
+// 통합 AudioContext 관리
+let sharedAudioContext = null;
+
+function getSharedAudioContext() {
+  if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
+    sharedAudioContext = new AudioContext({ 
+      latencyHint: 'interactive', 
+      sampleRate: 48000 
+    });
+  }
+  if (sharedAudioContext.state === 'suspended') {
+    sharedAudioContext.resume();
+  }
+  return sharedAudioContext;
+}
+
+async function createProcessedInputStream(rawStream) {
+  // 공유 AudioContext 사용
+  const ctx = getSharedAudioContext();
+  inputLimiterContext = ctx; // 호환성을 위해 유지
+  
+  const source = ctx.createMediaStreamSource(rawStream);
   
   // EQ (3밴드) - 지연 거의 없음 (~0.1ms each)
-  const eqLow = inputLimiterContext.createBiquadFilter();
+  const eqLow = ctx.createBiquadFilter();
   eqLow.type = 'lowshelf'; eqLow.frequency.value = 320; eqLow.gain.value = inputEffects.eqLow;
   
-  const eqMid = inputLimiterContext.createBiquadFilter();
+  const eqMid = ctx.createBiquadFilter();
   eqMid.type = 'peaking'; eqMid.frequency.value = 1000; eqMid.Q.value = 1; eqMid.gain.value = inputEffects.eqMid;
   
-  const eqHigh = inputLimiterContext.createBiquadFilter();
+  const eqHigh = ctx.createBiquadFilter();
   eqHigh.type = 'highshelf'; eqHigh.frequency.value = 3200; eqHigh.gain.value = inputEffects.eqHigh;
   
   // AI 노이즈 제거 (AudioWorklet noise gate)
   let lastNode = eqHigh;
   if (aiNoiseCancellation) {
     try {
-      await inputLimiterContext.audioWorklet.addModule('noise-gate-processor.js');
-      noiseGateWorklet = new AudioWorkletNode(inputLimiterContext, 'noise-gate-processor');
+      await ctx.audioWorklet.addModule('noise-gate-processor.js');
+      noiseGateWorklet = new AudioWorkletNode(ctx, 'noise-gate-processor');
       const thresholdParam = noiseGateWorklet.parameters.get('threshold');
       if (thresholdParam) thresholdParam.value = -45;
       eqHigh.connect(noiseGateWorklet);
@@ -138,15 +348,15 @@ async function createProcessedInputStream(rawStream) {
   }
   
   // 컴프레서 (리미터 역할) - 클리핑 방지
-  const compressor = inputLimiterContext.createDynamicsCompressor();
+  const compressor = ctx.createDynamicsCompressor();
   compressor.threshold.value = -12; compressor.knee.value = 6;
   compressor.ratio.value = 12; compressor.attack.value = 0.003; compressor.release.value = 0.1;
   
   // 메이크업 게인 (입력 볼륨 컨트롤)
-  const makeupGain = inputLimiterContext.createGain();
+  const makeupGain = ctx.createGain();
   makeupGain.gain.value = inputEffects.inputVolume / 100;
   
-  const dest = inputLimiterContext.createMediaStreamDestination();
+  const dest = ctx.createMediaStreamDestination();
   
   // 체인: source -> EQ -> [noiseGate] -> compressor -> gain -> dest
   source.connect(eqLow);
@@ -393,7 +603,7 @@ function getQualityGrade(latency, packetLoss, jitter) {
 }
 
 // ===== 연결 테스트 + 네트워크 품질 측정 =====
-let networkQuality = { latency: 0, jitter: 0, isWifi: false };
+let networkTestResults = { latency: 0, jitter: 0, isWifi: false };
 
 async function runConnectionTest() {
   const results = { mic: false, speaker: false, network: false, turn: false, quality: null };
@@ -407,7 +617,10 @@ async function runConnectionTest() {
     const track = stream.getAudioTracks()[0];
     results.mic = track.readyState === 'live';
     stream.getTracks().forEach(t => t.stop());
-  } catch { results.mic = false; }
+  } catch (e) { 
+    results.mic = false; 
+    showUserFriendlyError(e, 'microphone test');
+  }
   
   // 2. 스피커 테스트 (간단한 비프음)
   updateStatus('🔊 스피커 테스트 중...');
@@ -440,15 +653,15 @@ async function runConnectionTest() {
   const avgPing = pings.reduce((a, b) => a + b, 0) / pings.length;
   const jitterCalc = pings.length > 1 ? Math.sqrt(pings.map(p => Math.pow(p - avgPing, 2)).reduce((a, b) => a + b, 0) / pings.length) : 0;
   
-  networkQuality.latency = Math.round(avgPing);
-  networkQuality.jitter = Math.round(jitterCalc);
+  networkTestResults.latency = Math.round(avgPing);
+  networkTestResults.jitter = Math.round(jitterCalc);
   
   // Wi-Fi 감지 (NetworkInformation API)
   if (navigator.connection) {
-    networkQuality.isWifi = navigator.connection.type === 'wifi';
+    networkTestResults.isWifi = navigator.connection.type === 'wifi';
   }
   
-  results.quality = { latency: networkQuality.latency, jitter: networkQuality.jitter, isWifi: networkQuality.isWifi };
+  results.quality = { latency: networkTestResults.latency, jitter: networkTestResults.jitter, isWifi: networkTestResults.isWifi };
   
   // 4. STUN 연결 테스트
   updateStatus('🌐 네트워크 테스트 중...');
@@ -2148,8 +2361,9 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       localStream.getAudioTracks().forEach(t => t.enabled = false);
       isMuted = true;
     }
-  } catch {
-    return toast('마이크 접근이 거부되었습니다', 'error');
+  } catch (e) {
+    showUserFriendlyError(e, 'microphone access');
+    return;
   }
 
   socket.emit('join', { room, username: currentUser.username, password: roomPassword, settings: roomSettings }, async (res) => {
@@ -3329,25 +3543,45 @@ function leaveRoom() {
   // 서버에 방 나가기 알림
   socket.emit('leave-room');
   
+  // 모든 타이머 정리
   if (latencyInterval) { clearInterval(latencyInterval); latencyInterval = null; }
   if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
   if (meterInterval) { clearInterval(meterInterval); meterInterval = null; }
+  if (tunerInterval) { clearInterval(tunerInterval); tunerInterval = null; }
+  if (tcpAudioInterval) { clearInterval(tcpAudioInterval); tcpAudioInterval = null; }
+  if (udpStatsInterval) { clearInterval(udpStatsInterval); udpStatsInterval = null; }
+  if (metronomeInterval) { clearInterval(metronomeInterval); metronomeInterval = null; }
+  if (turnRefreshTimer) { clearTimeout(turnRefreshTimer); turnRefreshTimer = null; }
+  
   // VAD 인터벌 정리
   vadIntervals.forEach(int => clearInterval(int));
   vadIntervals.clear();
   
   stopMetronome();
-  cleanupRecording(); // Use cleanup function to handle AudioContext properly
+  cleanupRecording();
   
-  if (audioContext) { 
-    try { audioContext.close(); } catch {} 
-    audioContext = null; 
-  }
-  if (metronomeAudio) { 
-    try { metronomeAudio.close(); } catch {} 
-    metronomeAudio = null; 
-  }
-  // 피어 오디오용 공유 AudioContext 정리
+  // 모든 AudioContext 정리
+  const contexts = [audioContext, metronomeAudio, peerAudioContext, inputLimiterContext, inputMonitorCtx, tunerCtx];
+  contexts.forEach(ctx => {
+    if (ctx && ctx.state !== 'closed') {
+      try { 
+        ctx.close(); 
+      } catch (e) { 
+        console.warn('AudioContext cleanup failed:', e); 
+      }
+    }
+  });
+  
+  // 전역 변수 초기화
+  audioContext = null;
+  metronomeAudio = null;
+  peerAudioContext = null;
+  inputLimiterContext = null;
+  inputMonitorCtx = null;
+  tunerCtx = null;
+  processedStream = null;
+  effectNodes = {};
+  noiseGateWorklet = null;
   if (peerAudioContext) {
     try { peerAudioContext.close(); } catch {}
     peerAudioContext = null;

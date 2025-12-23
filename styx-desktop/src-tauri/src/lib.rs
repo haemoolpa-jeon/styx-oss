@@ -81,13 +81,13 @@ fn get_packet_header_size() -> usize {
 
 #[tauri::command]
 fn get_udp_port(state: State<'_, AppState>) -> Option<u16> {
-    *state.udp_port.lock().unwrap()
+    state.udp_port.lock().map(|port| *port).unwrap_or(None)
 }
 
 #[tauri::command]
 async fn get_public_ip(state: State<'_, AppState>) -> Result<String, String> {
     let socket = {
-        let stream_state = state.udp_stream.lock().unwrap();
+        let stream_state = state.udp_stream.lock().map_err(|_| "스트림 상태 잠금 실패".to_string())?;
         stream_state.socket.clone().ok_or("소켓 없음".to_string())?
     };
     
@@ -98,35 +98,46 @@ async fn get_public_ip(state: State<'_, AppState>) -> Result<String, String> {
 #[tauri::command]
 fn udp_add_peer(addr: String, state: State<'_, AppState>) -> Result<(), String> {
     let socket_addr: std::net::SocketAddr = addr.parse().map_err(|e| format!("주소 파싱 실패: {}", e))?;
-    state.udp_stream.lock().unwrap().peers.push(socket_addr);
+    state.udp_stream.lock()
+        .map_err(|_| "스트림 상태 잠금 실패".to_string())?
+        .peers.push(socket_addr);
     Ok(())
 }
 
 #[tauri::command]
-fn udp_set_muted(muted: bool, state: State<'_, AppState>) {
-    state.udp_stream.lock().unwrap().is_muted.store(muted, Ordering::SeqCst);
+fn udp_set_muted(muted: bool, state: State<'_, AppState>) -> Result<(), String> {
+    state.udp_stream.lock()
+        .map_err(|_| "스트림 상태 잠금 실패".to_string())?
+        .is_muted.store(muted, Ordering::SeqCst);
+    Ok(())
 }
 
 #[tauri::command]
 fn udp_is_running(state: State<'_, AppState>) -> bool {
-    state.udp_stream.lock().unwrap().is_running.load(Ordering::SeqCst)
+    state.udp_stream.lock()
+        .map(|s| s.is_running.load(Ordering::SeqCst))
+        .unwrap_or(false)
 }
 
 #[tauri::command]
-fn set_audio_devices(input: Option<String>, output: Option<String>, state: State<'_, AppState>) {
-    let mut stream_state = state.udp_stream.lock().unwrap();
+fn set_audio_devices(input: Option<String>, output: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    let mut stream_state = state.udp_stream.lock().map_err(|_| "스트림 상태 잠금 실패".to_string())?;
     stream_state.input_device = input;
     stream_state.output_device = output;
+    Ok(())
 }
 
 #[tauri::command]
-fn udp_clear_peers(state: State<'_, AppState>) {
-    state.udp_stream.lock().unwrap().peers.clear();
+fn udp_clear_peers(state: State<'_, AppState>) -> Result<(), String> {
+    state.udp_stream.lock()
+        .map_err(|_| "스트림 상태 잠금 실패".to_string())?
+        .peers.clear();
+    Ok(())
 }
 
 #[tauri::command]
-fn set_jitter_buffer(state: State<'_, AppState>, size: usize) {
-    let stream_state = state.udp_stream.lock().unwrap();
+fn set_jitter_buffer(state: State<'_, AppState>, size: usize) -> Result<(), String> {
+    let stream_state = state.udp_stream.lock().map_err(|_| "스트림 상태 잠금 실패".to_string())?;
     let jitter_buffers = stream_state.jitter_buffers.clone();
     drop(stream_state);
     
@@ -134,12 +145,13 @@ fn set_jitter_buffer(state: State<'_, AppState>, size: usize) {
         for buffer in jb.values_mut() {
             buffer.set_target(size.max(2).min(15)); // 20ms - 150ms
         }
-    };
+    }
+    Ok(())
 }
 
 #[tauri::command]
 fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
-    let stream_state = state.udp_stream.lock().unwrap();
+    let stream_state = state.udp_stream.lock().map_err(|_| "스트림 상태 잠금 실패".to_string())?;
     
     if stream_state.is_running.load(Ordering::SeqCst) {
         return Err("이미 실행 중".to_string());
@@ -182,9 +194,10 @@ fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn udp_stop_stream(state: State<'_, AppState>) {
-    let stream_state = state.udp_stream.lock().unwrap();
+fn udp_stop_stream(state: State<'_, AppState>) -> Result<(), String> {
+    let stream_state = state.udp_stream.lock().map_err(|_| "스트림 상태 잠금 실패".to_string())?;
     stream_state.is_running.store(false, Ordering::SeqCst);
+    Ok(())
 }
 
 #[tauri::command]
@@ -251,11 +264,14 @@ fn get_bitrate(state: State<'_, AppState>) -> u32 {
 // ===== TCP Fallback Commands =====
 
 #[tauri::command]
-fn tcp_receive_audio(_sender_id: String, data: Vec<u8>, state: State<'_, AppState>) {
+fn tcp_receive_audio(_sender_id: String, data: Vec<u8>, state: State<'_, AppState>) -> Result<(), String> {
     if let Ok(mut buf) = state.tcp_recv_buffer.lock() {
         buf.push_back(data);
-        // Limit buffer size
+        // Limit buffer size to prevent memory growth
         while buf.len() > 100 { buf.pop_front(); }
+        Ok(())
+    } else {
+        Err("TCP 수신 버퍼 잠금 실패".to_string())
     }
 }
 
