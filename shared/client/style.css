@@ -627,6 +627,65 @@ input[type="range"]::-webkit-slider-thumb {
 .btn-small { padding: 6px 12px; border-radius: 4px; border: none; background: var(--primary); color: white; cursor: pointer; }
 .btn-small.btn-danger { background: #e94560; }
 
+/* User management */
+.pending-user, .user-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px; background: var(--bg-input); border-radius: 6px; margin-bottom: 8px;
+  border-left: 4px solid var(--accent);
+}
+.pending-user {
+  border-left-color: #ffa502; /* Orange for pending */
+  background: rgba(255, 165, 2, 0.1);
+}
+.user-item {
+  border-left-color: #2ed573; /* Green for approved */
+  background: rgba(46, 213, 115, 0.1);
+}
+.pending-user span, .user-item span {
+  font-weight: 500; flex: 1;
+}
+.pending-user button, .user-item button {
+  margin-left: 8px; padding: 6px 10px; border: none; border-radius: 4px;
+  cursor: pointer; font-size: 14px; font-weight: bold;
+}
+.pending-user button:first-of-type {
+  background: #2ed573; color: white; /* Approve button */
+}
+.pending-user button:last-of-type {
+  background: #e94560; color: white; /* Reject button */
+}
+.user-item button {
+  background: #e94560; color: white; /* Delete button */
+}
+.pending-user button:hover, .user-item button:hover {
+  opacity: 0.8; transform: translateY(-1px);
+}
+
+/* Admin panel improvements */
+.admin-list h5 {
+  margin: 0 0 8px 0; color: var(--text-secondary); font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.admin-list:empty::after {
+  content: "항목이 없습니다"; color: var(--text-secondary);
+  font-style: italic; display: block; text-align: center; padding: 20px;
+}
+
+/* Notification badge */
+#adminBtn { position: relative; }
+.notification-badge {
+  position: absolute; top: -8px; right: -8px;
+  background: #e94560; color: white; border-radius: 50%;
+  width: 20px; height: 20px; font-size: 12px; font-weight: bold;
+  display: flex; align-items: center; justify-content: center;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
 /* 브라우저 관전 모드 배너 */
 .spectator-banner {
   background: linear-gradient(90deg, #667eea, #764ba2);

@@ -1765,7 +1765,11 @@ async function showLobby() {
   
   const avatarEl = $('my-avatar');
   if (avatarEl) avatarEl.style.backgroundImage = currentUser.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
-  if (currentUser.isAdmin) $('adminBtn').classList.remove('hidden');
+  if (currentUser.isAdmin) {
+    $('adminBtn').classList.remove('hidden');
+    // 관리자 알림 시작
+    setTimeout(updateAdminNotifications, 1000);
+  }
   
   // 서버에서 설정 로드
   socket.emit('get-settings', null, res => {
@@ -2402,7 +2406,43 @@ $('adminBtn').onclick = () => {
   lobby.classList.add('hidden');
 };
 
+// 관리자 알림 시스템
+let pendingUserCount = 0;
+
+function updateAdminNotifications() {
+  if (!currentUser?.isAdmin) return;
+  
+  socket.emit('get-pending', null, res => {
+    const newCount = res.pending?.length || 0;
+    if (newCount > pendingUserCount) {
+      toast(`새로운 가입 요청이 있습니다 (${newCount}개)`, 'info', 5000);
+    }
+    pendingUserCount = newCount;
+    
+    // 관리자 버튼에 알림 배지 표시
+    const adminBtn = $('adminBtn');
+    if (adminBtn) {
+      const badge = adminBtn.querySelector('.notification-badge') || document.createElement('span');
+      badge.className = 'notification-badge';
+      badge.textContent = newCount;
+      badge.style.display = newCount > 0 ? 'block' : 'none';
+      if (!adminBtn.querySelector('.notification-badge')) {
+        adminBtn.appendChild(badge);
+      }
+    }
+  });
+}
+
+// 주기적으로 관리자 알림 확인 (30초마다)
+setInterval(() => {
+  if (currentUser?.isAdmin) updateAdminNotifications();
+}, 30000);
+
 function loadAdminData() {
+  // 관리자 패널 열 때 알림 배지 숨기기
+  const badge = $('adminBtn')?.querySelector('.notification-badge');
+  if (badge) badge.style.display = 'none';
+  
   // Load whitelist
   socket.emit('admin-whitelist-status', res => {
     if (res?.error) return;
@@ -2470,11 +2510,40 @@ window.removeWhitelistIp = (ip) => {
   });
 };
 
-window.approveUser = (username) => socket.emit('approve-user', { username }, () => loadAdminData());
-window.rejectUser = (username) => socket.emit('reject-user', { username }, () => loadAdminData());
+window.approveUser = (username) => {
+  socket.emit('approve-user', { username }, (res) => {
+    if (res?.error) {
+      toast(res.error, 'error');
+    } else {
+      toast(`${username} 사용자가 승인되었습니다`, 'success');
+      loadAdminData();
+    }
+  });
+};
+
+window.rejectUser = (username) => {
+  if (confirm(`${username} 사용자의 가입 요청을 거부하시겠습니까?`)) {
+    socket.emit('reject-user', { username }, (res) => {
+      if (res?.error) {
+        toast(res.error, 'error');
+      } else {
+        toast(`${username} 사용자의 요청이 거부되었습니다`, 'info');
+        loadAdminData();
+      }
+    });
+  }
+};
+
 window.deleteUser = (username) => {
-  if (confirm(`${username} 사용자를 삭제하시겠습니까?`)) {
-    socket.emit('delete-user', { username }, () => loadAdminData());
+  if (confirm(`${username} 사용자를 영구적으로 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) {
+    socket.emit('delete-user', { username }, (res) => {
+      if (res?.error) {
+        toast(res.error, 'error');
+      } else {
+        toast(`${username} 사용자가 삭제되었습니다`, 'info');
+        loadAdminData();
+      }
+    });
   }
 };
 
