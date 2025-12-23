@@ -88,6 +88,44 @@ function trackError(operation, error) {
   console.error(`[ERROR] ${operation}:`, error.message);
 }
 
+// 보안 감사 로깅 시스템
+const auditLog = [];
+const MAX_AUDIT_LOGS = 1000;
+
+function logSecurityEvent(event, details) {
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    event,
+    ...details
+  };
+  
+  auditLog.push(logEntry);
+  
+  // 로그 크기 제한
+  if (auditLog.length > MAX_AUDIT_LOGS) {
+    auditLog.shift();
+  }
+  
+  console.log(`[AUDIT] ${event}:`, JSON.stringify(details));
+}
+
+// 감사 로그 조회 엔드포인트 (관리자만)
+app.get('/audit', (req, res) => {
+  // 간단한 인증 (실제 환경에서는 더 강화 필요)
+  const auth = req.headers.authorization;
+  if (!auth || auth !== `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  const limit = parseInt(req.query.limit) || 100;
+  const offset = parseInt(req.query.offset) || 0;
+  
+  res.json({
+    total: auditLog.length,
+    logs: auditLog.slice(-limit - offset, -offset || undefined).reverse()
+  });
+});
+
 // 모니터링 및 헬스체크 시스템
 let serverStats = {
   startTime: Date.now(),
@@ -214,6 +252,100 @@ app.use((req, res, next) => {
   })(req, res, next);
 });
 
+// GDPR Compliance Features
+app.get('/privacy-policy', (req, res) => {
+  res.json({
+    lastUpdated: '2024-01-01',
+    dataCollection: {
+      personal: ['username', 'password_hash', 'ip_address', 'user_agent'],
+      technical: ['session_tokens', 'audio_settings', 'connection_logs'],
+      retention: '30 days for logs, indefinite for user accounts until deletion'
+    },
+    rights: {
+      access: 'Request your data via /api/gdpr/export',
+      rectification: 'Update via user settings',
+      erasure: 'Request deletion via /api/gdpr/delete',
+      portability: 'Export via /api/gdpr/export'
+    },
+    contact: 'admin@styx-audio.com'
+  });
+});
+
+app.post('/api/gdpr/export', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    
+    const data = await loadUsers();
+    const user = data.users[username];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    
+    // Export user data (excluding password hash)
+    const exportData = {
+      username: user.username,
+      isAdmin: user.isAdmin,
+      approved: user.approved,
+      avatar: user.avatar,
+      createdAt: user.createdAt,
+      settings: user.settings,
+      exportedAt: new Date().toISOString()
+    };
+    
+    res.json({ data: exportData });
+  } catch (e) {
+    console.error('[GDPR_EXPORT_ERROR]', e.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/gdpr/delete', async (req, res) => {
+  try {
+    const { username, password, confirmation } = req.body;
+    if (!username || !password || confirmation !== 'DELETE_MY_ACCOUNT') {
+      return res.status(400).json({ error: 'Username, password, and confirmation required' });
+    }
+    
+    await withLock(async () => {
+      const data = await loadUsers();
+      const user = data.users[username];
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      
+      const valid = await bcrypt.compare(password, user.password);
+      if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+      
+      // Delete user data
+      delete data.users[username];
+      delete data.pending[username];
+      await saveUsers(data);
+      
+      // Delete sessions
+      const sessions = await loadSessions();
+      for (const [token, session] of sessions) {
+        if (session.username === username) sessions.delete(token);
+      }
+      await saveSessions(sessions);
+      
+      // Delete avatar if exists
+      try {
+        const files = await fs.readdir(AVATARS_DIR);
+        const avatarFile = files.find(f => f.startsWith(username + '.'));
+        if (avatarFile) await fs.unlink(path.join(AVATARS_DIR, avatarFile));
+      } catch (e) {
+        console.error('[AVATAR_DELETE_ERROR]', e.message);
+      }
+      
+      logSecurityEvent('GDPR_ACCOUNT_DELETED', { username, ip: req.ip });
+      res.json({ success: true, message: 'Account deleted successfully' });
+    });
+  } catch (e) {
+    console.error('[GDPR_DELETE_ERROR]', e.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   const uptime = Math.floor(process.uptime());
@@ -289,15 +421,24 @@ function isIpWhitelisted(ip) {
 // Load whitelist on startup
 loadWhitelist();
 
-// Enhanced Rate Limiting with per-user tracking
+// Enhanced Rate Limiting with per-user tracking and progressive penalties
 const rateLimits = new Map(); // IP-based
 const userRateLimits = new Map(); // User session-based
+const suspiciousIPs = new Map(); // Track repeated violations
 const RATE_LIMIT_WINDOW = 60000;
 const RATE_LIMIT_MAX = 100; // Per IP
 const USER_RATE_LIMIT_MAX = 50; // Per user session
+const SUSPICIOUS_THRESHOLD = 3; // Violations before marking as suspicious
+const SUSPICIOUS_PENALTY = 300000; // 5 minutes penalty for suspicious IPs
 
 function checkRateLimit(ip, userId = null) {
   const now = Date.now();
+  
+  // Check if IP is under suspicious penalty
+  const suspicious = suspiciousIPs.get(ip);
+  if (suspicious && now - suspicious.penaltyStart < SUSPICIOUS_PENALTY) {
+    return false;
+  }
   
   // Cleanup expired entries
   let cleaned = 0;
@@ -322,7 +463,17 @@ function checkRateLimit(ip, userId = null) {
     rateLimits.set(ip, { start: now, count: 1 });
   } else {
     ipRecord.count++;
-    if (ipRecord.count > RATE_LIMIT_MAX) return false;
+    if (ipRecord.count > RATE_LIMIT_MAX) {
+      // Track suspicious behavior
+      const suspiciousRecord = suspiciousIPs.get(ip) || { violations: 0 };
+      suspiciousRecord.violations++;
+      if (suspiciousRecord.violations >= SUSPICIOUS_THRESHOLD) {
+        suspiciousRecord.penaltyStart = now;
+        logSecurityEvent('IP_MARKED_SUSPICIOUS', { ip, violations: suspiciousRecord.violations });
+      }
+      suspiciousIPs.set(ip, suspiciousRecord);
+      return false;
+    }
   }
   
   // Check user-based rate limit if userId provided
@@ -520,6 +671,7 @@ io.on('connection', (socket) => {
   
   // IP Whitelist Check
   if (!isIpWhitelisted(clientIp)) {
+    logSecurityEvent('IP_BLOCKED', { ip: clientIp, userAgent });
     console.log(`[WHITELIST_BLOCK] ${clientIp}`);
     socket.emit('error', { message: 'Access denied from this IP address' });
     socket.disconnect(true);
@@ -527,6 +679,7 @@ io.on('connection', (socket) => {
   }
   
   if (!checkRateLimit(clientIp)) {
+    logSecurityEvent('RATE_LIMIT_EXCEEDED', { ip: clientIp, userAgent });
     console.log(`[RATE_LIMIT] ${clientIp}`);
     socket.emit('error', { message: 'Too many requests' });
     socket.disconnect(true);
@@ -539,10 +692,12 @@ io.on('connection', (socket) => {
     try {
       await sessionsReady;
       if (!checkRateLimit(clientIp, username)) {
+        logSecurityEvent('LOGIN_RATE_LIMIT', { ip: clientIp, username, userAgent });
         console.log(`[RATE_LIMIT] ${clientIp} user:${username}`);
         return cb({ error: 'Too many requests' });
       }
       if (!validateUsername(username)) {
+        logSecurityEvent('LOGIN_INVALID_USERNAME', { ip: clientIp, username, userAgent });
         console.log(`[LOGIN_FAIL] invalid username format from ${clientIp}`);
         return cb({ error: 'Invalid credentials' });
       }
@@ -555,10 +710,12 @@ io.on('connection', (socket) => {
       }
       const valid = await bcrypt.compare(password, user.password);
       if (!valid) {
+        logSecurityEvent('LOGIN_WRONG_PASSWORD', { ip: clientIp, username, userAgent });
         console.log(`[LOGIN_FAIL] ${username} wrong password from ${clientIp}`);
         return cb({ error: 'Invalid credentials' });
       }
       if (!user.approved) {
+        logSecurityEvent('LOGIN_NOT_APPROVED', { ip: clientIp, username, userAgent });
         console.log(`[LOGIN_FAIL] ${username} not approved from ${clientIp}`);
         return cb({ error: 'Account pending approval' });
       }
@@ -575,6 +732,7 @@ io.on('connection', (socket) => {
         lastActivity: Date.now()
       });
       await saveSessions(sessions);
+      logSecurityEvent('LOGIN_SUCCESS', { ip: clientIp, username, userAgent });
       console.log(`[LOGIN] ${username} from ${clientIp}`);
       cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar }, token });
     } catch (e) {
@@ -694,6 +852,7 @@ io.on('connection', (socket) => {
         };
         delete data.pending[username];
         await saveUsers(data);
+        logSecurityEvent('USER_APPROVED', { ip: clientIp, username, adminUser: socket.username, userAgent });
         return { success: true };
       });
       cb(result);
@@ -710,6 +869,7 @@ io.on('connection', (socket) => {
         const data = await loadUsers();
         delete data.pending[username];
         await saveUsers(data);
+        logSecurityEvent('USER_REJECTED', { ip: clientIp, username, adminUser: socket.username, userAgent });
       });
       cb({ success: true });
     } catch (e) {
@@ -1083,6 +1243,7 @@ io.on('connection', (socket) => {
     
     ipWhitelist.add(ip);
     saveWhitelist();
+    logSecurityEvent('WHITELIST_IP_ADDED', { ip: clientIp, targetIp: ip, adminUser: socket.username, userAgent });
     console.log(`[ADMIN] ${socket.username} added IP to whitelist: ${ip}`);
     cb?.({ success: true, ips: Array.from(ipWhitelist) });
   });
@@ -1091,6 +1252,7 @@ io.on('connection', (socket) => {
     if (!socket.isAdmin) return cb?.({ error: 'Not authorized' });
     ipWhitelist.delete(ip);
     saveWhitelist();
+    logSecurityEvent('WHITELIST_IP_REMOVED', { ip: clientIp, targetIp: ip, adminUser: socket.username, userAgent });
     console.log(`[ADMIN] ${socket.username} removed IP from whitelist: ${ip}`);
     cb?.({ success: true, ips: Array.from(ipWhitelist) });
   });
