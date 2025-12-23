@@ -822,7 +822,7 @@ document.addEventListener('DOMContentLoaded', () => {
   enhanceKeyboardNavigation();
   initSpectrum();
   loadNoiseProfile();
-  setTimeout(autoDetectOptimalSettings, 1000);
+  // Auto-optimization moved to after login
 });
 
 // 네트워크 품질 모니터링 및 적응형 설정
@@ -2677,6 +2677,9 @@ function showAuthMsg(msg, isError) {
 async function showLobby() {
   authPanel.classList.add('hidden');
   lobby.classList.remove('hidden');
+  
+  // Auto-optimize settings after successful login
+  setTimeout(autoDetectOptimalSettings, 1000);
   const usernameEl = $('my-username');
   if (usernameEl) usernameEl.textContent = currentUser.username;
   
