@@ -2344,7 +2344,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       noiseSuppression: $('noise-suppress')?.checked ?? true,
       autoGainControl: $('auto-gain')?.checked ?? true,
       sampleRate: 48000,
-      channelCount: 1,
+      channelCount: 2, // Stereo support
       latency: { ideal: 0.01 }
     }
   };
@@ -3492,7 +3492,7 @@ async function restartAudioStream() {
         noiseSuppression: $('room-noise-suppress')?.checked ?? $('noise-suppress')?.checked ?? true,
         autoGainControl: $('auto-gain')?.checked ?? true,
         sampleRate: 48000,
-        channelCount: 1,
+        channelCount: 2, // Stereo support
         latency: { ideal: 0.01 }
       }
     });
@@ -3652,7 +3652,8 @@ $('test-audio-btn').onclick = async () => {
       audio: {
         deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
         echoCancellation: $('echo-cancel').checked,
-        noiseSuppression: $('noise-suppress').checked
+        noiseSuppression: $('noise-suppress').checked,
+        channelCount: 2 // Stereo support
       }
     });
     

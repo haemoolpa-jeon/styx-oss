@@ -10,7 +10,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::udp::AudioPacketHeader;
 
-const FRAME_SIZE: usize = 480; // 10ms @ 48kHz
+const FRAME_SIZE: usize = 960; // 10ms @ 48kHz stereo (480 samples per channel)
 const MAX_PACKET_SIZE: usize = 1500;
 const MIN_JITTER_BUFFER: usize = 2;  // 20ms minimum (aggressive, for good networks)
 const MAX_JITTER_BUFFER: usize = 10; // 100ms maximum
@@ -167,7 +167,7 @@ impl Default for UdpStreamState {
 
 // Opus 인코더/디코더 생성
 pub fn create_encoder_with_bitrate(bitrate_kbps: u32) -> Result<Encoder, String> {
-    let mut encoder = Encoder::new(48000, Channels::Mono, Application::LowDelay)
+    let mut encoder = Encoder::new(48000, Channels::Stereo, Application::LowDelay)
         .map_err(|e| format!("Opus 인코더 생성 실패: {:?}", e))?;
     encoder.set_bitrate(opus::Bitrate::Bits(bitrate_kbps as i32 * 1000)).ok();
     encoder.set_inband_fec(true).ok();
@@ -181,7 +181,7 @@ pub fn create_encoder() -> Result<Encoder, String> {
 }
 
 pub fn create_decoder() -> Result<Decoder, String> {
-    Decoder::new(48000, Channels::Mono)
+    Decoder::new(48000, Channels::Stereo)
         .map_err(|e| format!("Opus 디코더 생성 실패: {:?}", e))
 }
 
@@ -195,7 +195,7 @@ pub fn encode_frame(encoder: &mut Encoder, samples: &[f32]) -> Result<Vec<u8>, S
 }
 
 pub fn decode_frame(decoder: &mut Decoder, data: &[u8]) -> Result<Vec<f32>, String> {
-    let mut pcm = vec![0f32; FRAME_SIZE];
+    let mut pcm = vec![0f32; FRAME_SIZE]; // 960 samples for stereo
     let len = decoder.decode_float(data, &mut pcm, true) // true = FEC 활성화
         .map_err(|e| format!("디코딩 실패: {:?}", e))?;
     pcm.truncate(len);
@@ -300,7 +300,7 @@ pub fn start_send_loop(
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap().as_micros() as u64,
                         sample_rate: 48000,
-                        channels: 1,
+                        channels: 2,
                         payload_len: opus_data.len() as u16,
                     };
                     let mut packet = header.to_bytes();
@@ -401,7 +401,7 @@ pub fn start_recv_loop(
                                     create_decoder().unwrap_or_else(|_| {
                                         eprintln!("Failed to create decoder for PLC, using silent fallback");
                                         // Return a dummy decoder that produces silence
-                                        Decoder::new(48000, Channels::Mono).unwrap_or_else(|_| {
+                                        Decoder::new(48000, Channels::Stereo).unwrap_or_else(|_| {
                                             eprintln!("Critical: All decoder creation failed, audio will be silent");
                                             // This should never fail, but if it does, we'll handle it gracefully
                                             unsafe { std::mem::zeroed() } // Emergency fallback
@@ -425,7 +425,7 @@ pub fn start_recv_loop(
                     let decoder = decoders.entry(addr).or_insert_with(|| {
                         create_decoder().unwrap_or_else(|_| {
                             eprintln!("Failed to create decoder for audio, using silent fallback");
-                            Decoder::new(48000, Channels::Mono).unwrap_or_else(|_| {
+                            Decoder::new(48000, Channels::Stereo).unwrap_or_else(|_| {
                                 eprintln!("Critical: All decoder creation failed, audio will be silent");
                                 unsafe { std::mem::zeroed() } // Emergency fallback
                             })
@@ -519,9 +519,9 @@ pub fn start_relay_loop(
         };
         
         let config = cpal::StreamConfig {
-            channels: 1,
+            channels: 2, // Stereo input
             sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
+            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 960 samples for stereo
         };
         
         let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
@@ -570,7 +570,7 @@ pub fn start_relay_loop(
                         sequence: seq,
                         timestamp: 0,
                         sample_rate: 48000,
-                        channels: 1,
+                        channels: 2,
                         payload_len: encoded.len() as u16,
                     };
                     
@@ -608,9 +608,9 @@ pub fn start_relay_loop(
         };
         
         let config = cpal::StreamConfig {
-            channels: 1,
+            channels: 2, // Stereo output
             sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
+            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 960 samples for stereo
         };
         
         let pb = playback_buffer.clone();
