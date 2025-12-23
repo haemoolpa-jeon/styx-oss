@@ -4325,85 +4325,96 @@ function startLatencyPing() {
     let avgLatency = 0, count = 0;
     let totalBandwidth = 0, totalPacketLoss = 0, peerCount = 0;
     
-    for (const [id, peer] of peers) {
-      if (peer.pc.connectionState !== 'connected') continue;
-      
-      try {
-        const stats = await peer.pc.getStats();
-        let packetsLost = 0, packetsReceived = 0, jitter = 0, rtt = 0;
-        let bytesReceived = 0, bytesSent = 0;
+    // Tauri 앱에서는 UDP 통계 사용, 웹에서는 WebRTC 통계 사용
+    if (actuallyTauri) {
+      // Tauri UDP 모드: 간단한 추정치 사용
+      if (peers.size > 0) {
+        selfStats.bandwidth = Math.round(audioModes[audioMode].bitrate / 8); // kbps
+        selfStats.packetsLost = 0; // UDP는 패킷 손실 추적이 복잡함
+        updateSelfStatsUI();
+      }
+    } else {
+      // 웹 WebRTC 모드: 실제 WebRTC 통계 수집
+      for (const [id, peer] of peers) {
+        if (!peer.pc || peer.pc.connectionState !== 'connected') continue;
         
-        stats.forEach(report => {
-          if (report.type === 'inbound-rtp' && report.kind === 'audio') {
-            packetsLost = report.packetsLost || 0;
-            packetsReceived = report.packetsReceived || 0;
-            jitter = (report.jitter || 0) * 1000;
-            bytesReceived = report.bytesReceived || 0;
+        try {
+          const stats = await peer.pc.getStats();
+          let packetsLost = 0, packetsReceived = 0, jitter = 0, rtt = 0;
+          let bytesReceived = 0, bytesSent = 0;
+          
+          stats.forEach(report => {
+            if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+              packetsLost = report.packetsLost || 0;
+              packetsReceived = report.packetsReceived || 0;
+              jitter = (report.jitter || 0) * 1000;
+              bytesReceived = report.bytesReceived || 0;
+            }
+            if (report.type === 'outbound-rtp' && report.kind === 'audio') {
+              bytesSent = report.bytesSent || 0;
+            }
+            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+              rtt = (report.currentRoundTripTime || 0) * 1000;
+            }
+          });
+          
+          const totalPackets = packetsLost + packetsReceived;
+          const lossRate = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
+          const bandwidth = Math.round((bytesReceived + bytesSent) * 8 / 1000 / 2); // kbps estimate
+          
+          peer.latency = Math.round(rtt);
+          peer.packetLoss = lossRate;
+          peer.jitter = jitter;
+          const prevQuality = peer.quality?.grade;
+          peer.quality = getQualityGrade(rtt, lossRate, jitter);
+          
+          // Accumulate for self stats
+          totalBandwidth += bandwidth;
+          totalPacketLoss += lossRate;
+          peerCount++;
+          
+          // 품질 저하 경고
+          if (prevQuality === 'good' && peer.quality.grade === 'poor') {
+            toast(`${peer.username} 연결 불안정`, 'warning', 3000);
           }
-          if (report.type === 'outbound-rtp' && report.kind === 'audio') {
-            bytesSent = report.bytesSent || 0;
-          }
-          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-            rtt = (report.currentRoundTripTime || 0) * 1000;
-          }
-        });
-        
-        const totalPackets = packetsLost + packetsReceived;
-        const lossRate = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
-        const bandwidth = Math.round((bytesReceived + bytesSent) * 8 / 1000 / 2); // kbps estimate
-        
-        peer.latency = Math.round(rtt);
-        peer.packetLoss = lossRate;
-        peer.jitter = jitter;
-        const prevQuality = peer.quality?.grade;
-        peer.quality = getQualityGrade(rtt, lossRate, jitter);
-        
-        // Accumulate for self stats
-        totalBandwidth += bandwidth;
-        totalPacketLoss += lossRate;
-        peerCount++;
-        
-        // 품질 저하 경고
-        if (prevQuality === 'good' && peer.quality.grade === 'poor') {
-          toast(`${peer.username} 연결 불안정`, 'warning', 3000);
-        }
-        
-        if (rtt > 0) { avgLatency += rtt; count++; }
-        
-        // 자동 적응: 네트워크 상태에 따라 비트레이트 조절
-        if (autoAdapt) {
-          const sender = peer.pc.getSenders().find(s => s.track?.kind === 'audio');
-          if (sender) {
-            const params = sender.getParameters();
-            if (params.encodings?.[0]) {
-              const targetBitrate = audioModes[audioMode].bitrate;
-              const currentBitrate = params.encodings[0].maxBitrate || targetBitrate;
-              let newBitrate = currentBitrate;
-              
-              // 품질 저하 시 비트레이트 감소
-              if (lossRate > 3 || jitter > 40) {
-                newBitrate = Math.max(16000, currentBitrate * 0.8);
-              } 
-              // 품질 좋으면 점진적 복구
-              else if (lossRate < 1 && jitter < 20 && currentBitrate < targetBitrate) {
-                newBitrate = Math.min(targetBitrate, currentBitrate * 1.1);
-              }
-              
-              if (newBitrate !== currentBitrate) {
-                params.encodings[0].maxBitrate = Math.round(newBitrate);
-                sender.setParameters(params).catch(() => {});
+          
+          if (rtt > 0) { avgLatency += rtt; count++; }
+          
+          // 자동 적응: 네트워크 상태에 따라 비트레이트 조절
+          if (autoAdapt) {
+            const sender = peer.pc.getSenders().find(s => s.track?.kind === 'audio');
+            if (sender) {
+              const params = sender.getParameters();
+              if (params.encodings?.[0]) {
+                const targetBitrate = audioModes[audioMode].bitrate;
+                const currentBitrate = params.encodings[0].maxBitrate || targetBitrate;
+                let newBitrate = currentBitrate;
+                
+                // 품질 저하 시 비트레이트 감소
+                if (lossRate > 3 || jitter > 40) {
+                  newBitrate = Math.max(16000, currentBitrate * 0.8);
+                } 
+                // 품질 좋으면 점진적 복구
+                else if (lossRate < 1 && jitter < 20 && currentBitrate < targetBitrate) {
+                  newBitrate = Math.min(targetBitrate, currentBitrate * 1.1);
+                }
+                
+                if (newBitrate !== currentBitrate) {
+                  params.encodings[0].maxBitrate = Math.round(newBitrate);
+                  sender.setParameters(params).catch(() => {});
+                }
               }
             }
           }
-        }
-      } catch (e) {}
-    }
-    
-    // Update self stats with aggregated data
-    if (peerCount > 0) {
-      selfStats.bandwidth = Math.round(totalBandwidth / peerCount);
-      selfStats.packetsLost = Math.round(totalPacketLoss / peerCount);
-      updateSelfStatsUI();
+        } catch (e) {}
+      }
+      
+      // Update self stats with aggregated WebRTC data
+      if (peerCount > 0) {
+        selfStats.bandwidth = Math.round(totalBandwidth / peerCount);
+        selfStats.packetsLost = Math.round(totalPacketLoss / peerCount);
+        updateSelfStatsUI();
+      }
     }
     
     // 지연 보상 적용
