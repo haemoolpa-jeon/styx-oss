@@ -1087,10 +1087,11 @@ function hideAdminFeaturesInTauri() {
 
 // 모니터링 시스템
 let monitoringInterval = null;
+let monitoringInitialized = false;
 const systemLogs = [];
 
 function initMonitoring() {
-  if (!checkAdminAccess()) return;
+  if (!checkAdminAccess() || monitoringInitialized) return;
   
   // 탭 전환
   $('health-tab')?.addEventListener('click', () => switchTab('health'));
@@ -1100,6 +1101,8 @@ function initMonitoring() {
   // 로그 제어
   $('refresh-logs')?.addEventListener('click', refreshLogs);
   $('clear-logs')?.addEventListener('click', clearLogs);
+  
+  monitoringInitialized = true;
   
   // 자동 새로고침 시작
   startMonitoring();
@@ -4496,6 +4499,10 @@ socket.on('ice-candidate', async ({ from, candidate }) => {
 });
 
 socket.on('user-left', ({ id }) => {
+  // Cleanup spatial audio and bandwidth monitoring for this peer
+  spatialPanners.delete(id);
+  connectionStats.delete(id);
+  
   playSound('leave');
   toast(`사용자 퇴장`, 'info', 2000);
   renderUsers();
@@ -4690,6 +4697,11 @@ function leaveRoom() {
   });
   peers.clear();
   volumeStates.clear();
+  
+  // Cleanup spatial audio and bandwidth monitoring
+  spatialPanners.clear();
+  connectionStats.clear();
+  
   latencyHistory = [];
   
   // 원본 스트림도 정리
