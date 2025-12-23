@@ -287,10 +287,20 @@ pub fn start_send_loop(
             |e| eprintln!("입력 오류: {}", e),
             None,
         );
-        if let Ok(s) = stream {
-            let _ = s.play();
-            while is_running_stream.load(Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+        match stream {
+            Ok(s) => {
+                if let Err(e) = s.play() {
+                    eprintln!("CRITICAL: Failed to start audio input stream: {}", e);
+                    is_running_stream.store(false, Ordering::SeqCst); // Signal failure
+                    return;
+                }
+                while is_running_stream.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+            Err(e) => {
+                eprintln!("CRITICAL: Failed to create audio input stream: {}", e);
+                is_running_stream.store(false, Ordering::SeqCst); // Signal failure
             }
         }
     });
@@ -320,6 +330,11 @@ pub fn start_send_loop(
         
         while let Some(samples) = rx.recv().await {
             frame_buffer.extend(samples);
+            
+            // Prevent frame buffer from growing too large (max 10 frames)
+            if frame_buffer.len() > FRAME_SIZE * 10 {
+                frame_buffer.drain(..FRAME_SIZE); // Drop oldest frame
+            }
             
             while frame_buffer.len() >= FRAME_SIZE {
                 let frame: Vec<f32> = frame_buffer.drain(..FRAME_SIZE).collect();
@@ -386,10 +401,20 @@ pub fn start_recv_loop(
             |e| eprintln!("출력 오류: {}", e),
             None,
         );
-        if let Ok(s) = stream {
-            let _ = s.play();
-            while is_running_clone.load(Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+        match stream {
+            Ok(s) => {
+                if let Err(e) = s.play() {
+                    eprintln!("CRITICAL: Failed to start audio output stream: {}", e);
+                    is_running_clone.store(false, Ordering::SeqCst); // Signal failure
+                    return;
+                }
+                while is_running_clone.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+            Err(e) => {
+                eprintln!("CRITICAL: Failed to create audio output stream: {}", e);
+                is_running_clone.store(false, Ordering::SeqCst); // Signal failure
             }
         }
     });
@@ -428,25 +453,26 @@ pub fn start_recv_loop(
                             let lost = header.sequence.wrapping_sub(expected);
                             lost_count = lost;
                             if lost < 10 { // 합리적인 범위 내에서만
-                                let decoder = decoders.entry(addr).or_insert_with(|| {
-                                    create_decoder().unwrap_or_else(|_| {
-                                        eprintln!("Failed to create decoder for PLC, using silent fallback");
-                                        // Return a decoder that will fail gracefully
-                                        match Decoder::new(48000, Channels::Stereo) {
-                                            Ok(d) => d,
-                                            Err(_) => {
-                                                eprintln!("Critical: All decoder creation failed, skipping PLC");
-                                                panic!("Cannot create Opus decoder - system audio failure");
-                                            }
+                                // Try to create decoder if needed
+                                if !decoders.contains_key(&addr) {
+                                    match create_decoder() {
+                                        Ok(decoder) => {
+                                            decoders.insert(addr, decoder);
                                         }
-                                    })
-                                });
-                                for _ in 0..lost {
-                                    if let Ok(plc_samples) = decode_plc(decoder) {
-                                        if let Ok(mut jb) = jitter_buffers.lock() {
-                                            jb.entry(addr)
-                                                .or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER))
-                                                .push(expected, plc_samples);
+                                        Err(_) => {
+                                            eprintln!("Failed to create decoder for PLC, skipping");
+                                        }
+                                    }
+                                }
+                                
+                                if let Some(decoder) = decoders.get_mut(&addr) {
+                                    for _ in 0..lost {
+                                        if let Ok(plc_samples) = decode_plc(decoder) {
+                                            if let Ok(mut jb) = jitter_buffers.lock() {
+                                                jb.entry(addr)
+                                                    .or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER))
+                                                    .push(expected, plc_samples);
+                                            }
                                         }
                                     }
                                 }
@@ -487,7 +513,13 @@ pub fn start_recv_loop(
                         }
                     }
                 }
-                _ => {}
+                Ok(Err(e)) => {
+                    eprintln!("Network error in UDP receive: {}", e);
+                    // Continue operation but log the error
+                }
+                Err(_) => {
+                    // Timeout - normal, continue
+                }
             }
             
             // 지터 버퍼에서 재생 버퍼로 이동
