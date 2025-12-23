@@ -1217,6 +1217,74 @@ function addSystemLog(message) {
   }
 }
 
+// Professional UI Enhancements
+function initUIEnhancements() {
+  // Add fade-in animation to main elements
+  document.querySelectorAll('.modal-box, .card, .room-item').forEach(el => {
+    el.classList.add('fade-in');
+  });
+  
+  // Add loading states to buttons during actions
+  document.querySelectorAll('button').forEach(btn => {
+    const originalClick = btn.onclick;
+    if (originalClick) {
+      btn.onclick = function(e) {
+        btn.classList.add('loading');
+        setTimeout(() => btn.classList.remove('loading'), 1000);
+        return originalClick.call(this, e);
+      };
+    }
+  });
+  
+  // Enhanced form validation feedback
+  document.querySelectorAll('input, select, textarea').forEach(input => {
+    input.addEventListener('invalid', (e) => {
+      e.target.style.borderColor = 'var(--error)';
+      e.target.style.boxShadow = '0 0 0 3px rgba(255, 71, 87, 0.1)';
+    });
+    
+    input.addEventListener('input', (e) => {
+      if (e.target.checkValidity()) {
+        e.target.style.borderColor = 'var(--success)';
+        e.target.style.boxShadow = '0 0 0 3px rgba(0, 210, 106, 0.1)';
+      }
+    });
+  });
+  
+  // Add slide-in animation to new elements
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === 1 && (node.classList.contains('user-card') || node.classList.contains('room-item'))) {
+          node.classList.add('slide-in');
+        }
+      });
+    });
+  });
+  
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+// Enhanced toast notifications with better styling
+function showEnhancedToast(message, type = 'info', duration = 3000) {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type} fade-in`;
+  toast.textContent = message;
+  
+  // Add status indicator
+  const indicator = document.createElement('div');
+  indicator.className = `status-indicator status-${type === 'error' ? 'offline' : type === 'success' ? 'online' : 'away'}`;
+  toast.prepend(indicator);
+  
+  document.body.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-20px)';
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
 // Debug: Tauri 감지 상태 확인
 console.log('Tauri detection:', {
   __TAURI__: typeof window.__TAURI__,
@@ -2626,6 +2694,9 @@ function initStabilitySettings() {
   
   // 관리자 기능 접근 제어 적용
   hideAdminFeaturesInTauri();
+  
+  // Professional UI enhancements 초기화
+  initUIEnhancements();
   
   // 지터 버퍼 슬라이더
   const slider = $('jitter-slider');
