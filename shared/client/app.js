@@ -4323,6 +4323,7 @@ function startLatencyPing() {
   // 상세 통계 수집 (2초마다)
   statsInterval = setInterval(async () => {
     let avgLatency = 0, count = 0;
+    let totalBandwidth = 0, totalPacketLoss = 0, peerCount = 0;
     
     for (const [id, peer] of peers) {
       if (peer.pc.connectionState !== 'connected') continue;
@@ -4330,12 +4331,17 @@ function startLatencyPing() {
       try {
         const stats = await peer.pc.getStats();
         let packetsLost = 0, packetsReceived = 0, jitter = 0, rtt = 0;
+        let bytesReceived = 0, bytesSent = 0;
         
         stats.forEach(report => {
           if (report.type === 'inbound-rtp' && report.kind === 'audio') {
             packetsLost = report.packetsLost || 0;
             packetsReceived = report.packetsReceived || 0;
             jitter = (report.jitter || 0) * 1000;
+            bytesReceived = report.bytesReceived || 0;
+          }
+          if (report.type === 'outbound-rtp' && report.kind === 'audio') {
+            bytesSent = report.bytesSent || 0;
           }
           if (report.type === 'candidate-pair' && report.state === 'succeeded') {
             rtt = (report.currentRoundTripTime || 0) * 1000;
@@ -4344,12 +4350,18 @@ function startLatencyPing() {
         
         const totalPackets = packetsLost + packetsReceived;
         const lossRate = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
+        const bandwidth = Math.round((bytesReceived + bytesSent) * 8 / 1000 / 2); // kbps estimate
         
         peer.latency = Math.round(rtt);
         peer.packetLoss = lossRate;
         peer.jitter = jitter;
         const prevQuality = peer.quality?.grade;
         peer.quality = getQualityGrade(rtt, lossRate, jitter);
+        
+        // Accumulate for self stats
+        totalBandwidth += bandwidth;
+        totalPacketLoss += lossRate;
+        peerCount++;
         
         // 품질 저하 경고
         if (prevQuality === 'good' && peer.quality.grade === 'poor') {
@@ -4387,6 +4399,13 @@ function startLatencyPing() {
       } catch (e) {}
     }
     
+    // Update self stats with aggregated data
+    if (peerCount > 0) {
+      selfStats.bandwidth = Math.round(totalBandwidth / peerCount);
+      selfStats.packetsLost = Math.round(totalPacketLoss / peerCount);
+      updateSelfStatsUI();
+    }
+    
     // 지연 보상 적용
     if (delayCompensation) applyDelayCompensation();
     
@@ -4406,8 +4425,8 @@ function startLatencyPing() {
 
 function updateSelfStatsUI() {
   if ($('self-latency')) $('self-latency').textContent = selfStats.latency ? selfStats.latency + 'ms' : '-';
-  if ($('self-bandwidth')) $('self-bandwidth').textContent = selfStats.bandwidth || '-';
-  if ($('self-loss')) $('self-loss').textContent = selfStats.packetsLost || '0';
+  if ($('self-bandwidth')) $('self-bandwidth').textContent = selfStats.bandwidth ? selfStats.bandwidth + 'kbps' : '-';
+  if ($('self-loss')) $('self-loss').textContent = selfStats.packetsLost ? selfStats.packetsLost.toFixed(1) + '%' : '0%';
 }
 
 // 지연 보상: 가장 느린 피어에 맞춰 다른 피어들에게 딜레이 추가
