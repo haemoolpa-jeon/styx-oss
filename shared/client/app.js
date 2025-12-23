@@ -2469,14 +2469,21 @@ socket.on('connect', () => {
     
     if (savedUser && savedToken) {
       socket.emit('restore-session', { username: savedUser, token: savedToken }, res => {
-        if (res.success) {
+        if (res && res.success) {
           currentUser = res.user;
           showLobby();
           // URL에서 방 정보 확인
           checkInviteLink();
         } else {
-          localStorage.removeItem('styx-user');
-          localStorage.removeItem('styx-token');
+          // Only clear if server explicitly rejected (not on timeout/error)
+          if (res && res.error) {
+            console.log('Session restore failed:', res.error);
+            localStorage.removeItem('styx-user');
+            localStorage.removeItem('styx-token');
+          } else {
+            // Retry on next connect if no response
+            sessionRestored = false;
+          }
         }
       });
     }
@@ -3676,6 +3683,32 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       updateMuteUI();
     }
 
+    // Tauri앱: 기존 사용자들을 peers Map에 추가
+    if (actuallyTauri && res.users) {
+      res.users.forEach(({ id, username, avatar, role }) => {
+        if (!peers.has(id)) {
+          peers.set(id, {
+            pc: { connectionState: 'connected' }, // Fake PC for UI compatibility
+            username,
+            avatar,
+            role: role || 'performer',
+            audioEl: null,
+            latency: null,
+            volume: 100,
+            packetLoss: 0,
+            jitter: 0,
+            bitrate: 0,
+            quality: { grade: 'good', label: 'UDP', color: '#2ed573' },
+            pan: 0,
+            muted: false,
+            solo: false,
+            isSpeaking: false
+          });
+        }
+      });
+      renderUsers();
+    }
+
     // Tauri앱: UDP 릴레이로 오디오, 브라우저: 관전 모드 (오디오 없음)
     if (actuallyTauri) {
       try {
@@ -4707,9 +4740,30 @@ function renderPingGraph() {
 // 소켓 이벤트
 socket.on('user-joined', ({ id, username, avatar, role }) => {
   log(`새 사용자 입장: ${username} (${id}), role=${role}`);
-  // 브라우저는 관전 모드 - WebRTC 피어 연결 안함
   playSound('join');
   toast(`${username} 입장`, 'info', 2000);
+  
+  // Tauri 앱에서는 UDP 모드로 피어 추가 (WebRTC 없이)
+  if (actuallyTauri && !peers.has(id)) {
+    peers.set(id, {
+      pc: { connectionState: 'connected' }, // Fake PC for UI compatibility
+      username,
+      avatar,
+      role,
+      audioEl: null,
+      latency: null,
+      volume: 100,
+      packetLoss: 0,
+      jitter: 0,
+      bitrate: 0,
+      quality: { grade: 'good', label: 'UDP', color: '#2ed573' },
+      pan: 0,
+      muted: false,
+      solo: false,
+      isSpeaking: false
+    });
+    renderUsers();
+  }
 });
 
 socket.on('offer', async ({ from, offer }) => {
@@ -4730,6 +4784,20 @@ socket.on('user-left', ({ id }) => {
   // Cleanup spatial audio and bandwidth monitoring for this peer
   spatialPanners.delete(id);
   connectionStats.delete(id);
+  
+  // Remove peer from peers Map
+  const peer = peers.get(id);
+  if (peer) {
+    // Cleanup audio elements and connections
+    if (peer.audioEl) {
+      peer.audioEl.srcObject = null;
+      peer.audioEl.remove();
+    }
+    if (peer.pc && peer.pc.close) {
+      try { peer.pc.close(); } catch {}
+    }
+    peers.delete(id);
+  }
   
   playSound('leave');
   toast(`사용자 퇴장`, 'info', 2000);
@@ -5468,11 +5536,14 @@ if (inputVolumeEl) {
 
 // ===== Inline 이벤트 핸들러 대체 =====
 $('themeBtn').onclick = toggleTheme;
+
+// Modal backdrop click handlers - close only the parent modal
 document.querySelectorAll('.modal-backdrop').forEach(el => {
-  el.onclick = () => {
-    closeCreateRoomModal();
-    $('settings-panel')?.classList.add('hidden');
-    $('admin-panel')?.classList.add('hidden');
+  el.onclick = (e) => {
+    const modal = e.target.closest('.modal');
+    if (modal) {
+      modal.classList.add('hidden');
+    }
   };
 });
 $('create-room-modal')?.querySelector('.modal-close')?.addEventListener('click', closeCreateRoomModal);
