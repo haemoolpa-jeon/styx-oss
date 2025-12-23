@@ -2257,6 +2257,17 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
 
 // 오디오 레벨 미터
 function startAudioMeter() {
+  // Clean up existing meter
+  if (meterInterval) {
+    clearInterval(meterInterval);
+    meterInterval = null;
+  }
+  
+  // Close existing audio context
+  if (audioContext && audioContext.state !== 'closed') {
+    try { audioContext.close(); } catch {}
+  }
+  
   try {
     audioContext = new AudioContext();
     analyser = audioContext.createAnalyser();
@@ -3655,11 +3666,19 @@ if ($('room-audio-output')) {
 }
 
 if ($('room-echo-cancel')) {
-  $('room-echo-cancel').onchange = async () => { if (localStream) await restartAudioStream(); };
+  $('room-echo-cancel').onchange = async () => { 
+    echoCancellation = $('room-echo-cancel').checked;
+    localStorage.setItem('styx-echo', echoCancellation);
+    if (localStream) await restartAudioStream(); 
+  };
 }
 
 if ($('room-noise-suppress')) {
-  $('room-noise-suppress').onchange = async () => { if (localStream) await restartAudioStream(); };
+  $('room-noise-suppress').onchange = async () => { 
+    noiseSuppression = $('room-noise-suppress').checked;
+    localStorage.setItem('styx-noise', noiseSuppression);
+    if (localStream) await restartAudioStream(); 
+  };
 }
 
 if ($('room-ai-noise')) {
