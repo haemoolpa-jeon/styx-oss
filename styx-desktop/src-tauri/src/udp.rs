@@ -125,7 +125,7 @@ pub async fn send_audio_packet(
             .unwrap()
             .as_micros() as u64,
         sample_rate: 48000,
-        channels: 1,
+        channels: 2,
         payload_len: audio_data.len() as u16,
     };
     

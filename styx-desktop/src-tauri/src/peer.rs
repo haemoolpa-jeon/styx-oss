@@ -165,6 +165,37 @@ impl Default for UdpStreamState {
     }
 }
 
+impl UdpStreamState {
+    /// Cleanup resources and stop all operations
+    pub fn cleanup(&mut self) {
+        // Stop all operations
+        self.is_running.store(false, Ordering::SeqCst);
+        
+        // Clear buffers
+        if let Ok(mut jb) = self.jitter_buffers.lock() {
+            jb.clear();
+        }
+        if let Ok(mut pb) = self.playback_buffer.lock() {
+            pb.clear();
+        }
+        if let Ok(mut stats) = self.peer_stats.lock() {
+            stats.clear();
+        }
+        
+        // Reset counters
+        self.packets_sent.store(0, Ordering::Relaxed);
+        self.packets_received.store(0, Ordering::Relaxed);
+        self.packets_lost.store(0, Ordering::Relaxed);
+        self.input_level.store(0, Ordering::Relaxed);
+        
+        // Clear peer list
+        self.peers.clear();
+        
+        // Reset socket
+        self.socket = None;
+    }
+}
+
 // Opus 인코더/디코더 생성
 pub fn create_encoder_with_bitrate(bitrate_kbps: u32) -> Result<Encoder, String> {
     let mut encoder = Encoder::new(48000, Channels::Stereo, Application::LowDelay)
@@ -400,12 +431,14 @@ pub fn start_recv_loop(
                                 let decoder = decoders.entry(addr).or_insert_with(|| {
                                     create_decoder().unwrap_or_else(|_| {
                                         eprintln!("Failed to create decoder for PLC, using silent fallback");
-                                        // Return a dummy decoder that produces silence
-                                        Decoder::new(48000, Channels::Stereo).unwrap_or_else(|_| {
-                                            eprintln!("Critical: All decoder creation failed, audio will be silent");
-                                            // This should never fail, but if it does, we'll handle it gracefully
-                                            unsafe { std::mem::zeroed() } // Emergency fallback
-                                        })
+                                        // Return a decoder that will fail gracefully
+                                        match Decoder::new(48000, Channels::Stereo) {
+                                            Ok(d) => d,
+                                            Err(_) => {
+                                                eprintln!("Critical: All decoder creation failed, skipping PLC");
+                                                panic!("Cannot create Opus decoder - system audio failure");
+                                            }
+                                        }
                                     })
                                 });
                                 for _ in 0..lost {
@@ -422,29 +455,35 @@ pub fn start_recv_loop(
                     }
                     last_seq.insert(addr, header.sequence);
                     
-                    let decoder = decoders.entry(addr).or_insert_with(|| {
-                        create_decoder().unwrap_or_else(|_| {
-                            eprintln!("Failed to create decoder for audio, using silent fallback");
-                            Decoder::new(48000, Channels::Stereo).unwrap_or_else(|_| {
-                                eprintln!("Critical: All decoder creation failed, audio will be silent");
-                                unsafe { std::mem::zeroed() } // Emergency fallback
-                            })
-                        })
-                    });
-                    if let Ok(samples) = decode_frame(decoder, payload) {
-                        // Update per-peer stats
-                        if let Ok(mut stats) = peer_stats.lock() {
-                            let s = stats.entry(addr).or_default();
-                            s.packets_received += 1;
-                            s.packets_lost += lost_count;
-                            s.last_seq = header.sequence;
-                            s.audio_level = calculate_audio_level(&samples);
+                    // Try to get existing decoder or create new one
+                    if !decoders.contains_key(&addr) {
+                        match create_decoder() {
+                            Ok(decoder) => {
+                                decoders.insert(addr, decoder);
+                            }
+                            Err(_) => {
+                                eprintln!("Failed to create decoder for audio, skipping packet");
+                                continue;
+                            }
                         }
-                        
-                        if let Ok(mut jb) = jitter_buffers.lock() {
-                            jb.entry(addr)
-                                .or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER))
-                                .push(header.sequence, samples);
+                    }
+                    
+                    if let Some(decoder) = decoders.get_mut(&addr) {
+                        if let Ok(samples) = decode_frame(decoder, payload) {
+                            // Update per-peer stats
+                            if let Ok(mut stats) = peer_stats.lock() {
+                                let s = stats.entry(addr).or_default();
+                                s.packets_received += 1;
+                                s.packets_lost += lost_count;
+                                s.last_seq = header.sequence;
+                                s.audio_level = calculate_audio_level(&samples);
+                            }
+                            
+                            if let Ok(mut jb) = jitter_buffers.lock() {
+                                jb.entry(addr)
+                                    .or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER))
+                                    .push(header.sequence, samples);
+                            }
                         }
                     }
                 }
@@ -546,7 +585,10 @@ pub fn start_relay_loop(
         
         // Create blocking UDP socket for sending
         let std_socket = match std::net::UdpSocket::bind("0.0.0.0:0") {
-            Ok(s) => s,
+            Ok(s) => {
+                s.set_write_timeout(Some(std::time::Duration::from_millis(10))).ok();
+                s
+            },
             Err(e) => { eprintln!("[UDP] Failed to create send socket: {}", e); return; }
         };
         
@@ -655,7 +697,11 @@ pub fn start_relay_loop(
             match std_socket.recv_from(&mut buf) {
                 Ok((len, _)) if len > SESSION_ID_LEN + AudioPacketHeader::SIZE => {
                     let sender_id = String::from_utf8_lossy(&buf[..SESSION_ID_LEN]).trim_end_matches('\0').to_string();
+                    
+                    // Enhanced session ID validation
                     if sender_id == session_id { continue; } // Skip own packets
+                    if sender_id.is_empty() || sender_id.len() < 8 { continue; } // Reject invalid/short IDs
+                    if !sender_id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') { continue; } // Only allow safe characters
                     
                     let _header = match AudioPacketHeader::from_bytes(&buf[SESSION_ID_LEN..SESSION_ID_LEN + AudioPacketHeader::SIZE]) {
                         Some(h) => h,
