@@ -1515,9 +1515,17 @@ async function runConnectionTest() {
   for (let i = 0; i < 5; i++) {
     const start = performance.now();
     try {
-      await fetch(serverUrl + '/health', { method: 'HEAD', cache: 'no-store' });
-      pings.push(performance.now() - start);
-    } catch { pings.push(999); }
+      // Use current origin if serverUrl is empty
+      const testUrl = serverUrl ? serverUrl + '/health' : window.location.origin + '/health';
+      console.log('Testing network to:', testUrl);
+      await fetch(testUrl, { method: 'HEAD', cache: 'no-store' });
+      const ping = performance.now() - start;
+      console.log(`Ping ${i + 1}: ${ping}ms`);
+      pings.push(ping);
+    } catch (e) { 
+      console.log(`Ping ${i + 1} failed:`, e);
+      pings.push(999); 
+    }
     await new Promise(r => setTimeout(r, 100));
   }
   const avgPing = pings.reduce((a, b) => a + b, 0) / pings.length;
