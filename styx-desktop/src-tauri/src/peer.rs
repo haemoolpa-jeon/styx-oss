@@ -347,7 +347,14 @@ pub fn start_send_loop(
                             .unwrap().as_micros() as u64,
                         sample_rate: 48000,
                         channels: 2,
-                        payload_len: opus_data.len() as u16,
+                        payload_len: {
+                            let len = opus_data.len();
+                            if len > u16::MAX as usize {
+                                eprintln!("CRITICAL: Opus data too large: {} bytes", len);
+                                continue;
+                            }
+                            len as u16
+                        },
                     };
                     let mut packet = header.to_bytes();
                     packet.extend(&opus_data);
@@ -435,6 +442,10 @@ pub fn start_recv_loop(
                     // Keepalive 패킷 무시
                     if len <= 1 { continue; }
                     if len < AudioPacketHeader::SIZE { continue; }
+                    if len > MAX_PACKET_SIZE {
+                        eprintln!("Packet too large: {} bytes, max: {}", len, MAX_PACKET_SIZE);
+                        continue;
+                    }
                     
                     let header = match AudioPacketHeader::from_bytes(&buf[..AudioPacketHeader::SIZE]) {
                         Some(h) => h,
@@ -653,7 +664,14 @@ pub fn start_relay_loop(
                         timestamp: 0,
                         sample_rate: 48000,
                         channels: 2,
-                        payload_len: encoded.len() as u16,
+                        payload_len: {
+                            let len = encoded.len();
+                            if len > u16::MAX as usize {
+                                eprintln!("CRITICAL: Encoded data too large: {} bytes", len);
+                                continue;
+                            }
+                            len as u16
+                        },
                     };
                     
                     packet_buffer.clear();
@@ -735,7 +753,7 @@ pub fn start_relay_loop(
         while is_running_recv.load(Ordering::SeqCst) {
             // Use the original socket for receiving (it's bound to the relay)
             match std_socket.recv_from(&mut buf) {
-                Ok((len, _)) if len > SESSION_ID_LEN + AudioPacketHeader::SIZE => {
+                Ok((len, _)) if len > SESSION_ID_LEN + AudioPacketHeader::SIZE && len <= 2000 => {
                     let sender_id = String::from_utf8_lossy(&buf[..SESSION_ID_LEN]).trim_end_matches('\0').to_string();
                     
                     // Enhanced session ID validation
