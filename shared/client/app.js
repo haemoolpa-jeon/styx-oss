@@ -216,6 +216,94 @@ function drawSpectrum() {
   spectrumAnimationId = requestAnimationFrame(drawSpectrum);
 }
 
+// 오디오 라우팅 매트릭스
+let routingMode = 'stereo'; // 'stereo', 'left', 'right', 'mono'
+let routingEnabled = false;
+
+function toggleRouting() {
+  routingEnabled = !routingEnabled;
+  const matrix = $('routing-matrix');
+  const btn = $('routing-toggle');
+  
+  if (routingEnabled) {
+    matrix?.classList.remove('hidden');
+    if (btn) btn.textContent = '🔀';
+  } else {
+    matrix?.classList.add('hidden');
+    if (btn) btn.textContent = '🔀';
+  }
+}
+
+function updateRouting(mode) {
+  routingMode = mode;
+  
+  // 현재 스트림에 라우팅 적용
+  if (localStream && inputLimiterContext) {
+    applyRoutingToStream();
+  }
+}
+
+function applyRoutingToStream() {
+  if (!localStream || !inputLimiterContext) return;
+  
+  // 기존 라우팅 노드가 있으면 제거
+  if (effectNodes.routingNode) {
+    try { effectNodes.routingNode.disconnect(); } catch {}
+  }
+  
+  const ctx = inputLimiterContext;
+  const source = ctx.createMediaStreamSource(localStream._rawStream);
+  
+  let routedNode;
+  
+  switch (routingMode) {
+    case 'left':
+      // 왼쪽 채널만 사용
+      routedNode = ctx.createChannelSplitter(2);
+      const leftMerger = ctx.createChannelMerger(2);
+      source.connect(routedNode);
+      routedNode.connect(leftMerger, 0, 0); // 왼쪽 → 왼쪽
+      routedNode.connect(leftMerger, 0, 1); // 왼쪽 → 오른쪽
+      routedNode = leftMerger;
+      break;
+      
+    case 'right':
+      // 오른쪽 채널만 사용
+      routedNode = ctx.createChannelSplitter(2);
+      const rightMerger = ctx.createChannelMerger(2);
+      source.connect(routedNode);
+      routedNode.connect(rightMerger, 1, 0); // 오른쪽 → 왼쪽
+      routedNode.connect(rightMerger, 1, 1); // 오른쪽 → 오른쪽
+      routedNode = rightMerger;
+      break;
+      
+    case 'mono':
+      // 모노 믹스 (L+R)/2
+      const splitter = ctx.createChannelSplitter(2);
+      const merger = ctx.createChannelMerger(2);
+      const leftGain = ctx.createGain();
+      const rightGain = ctx.createGain();
+      leftGain.gain.value = 0.5;
+      rightGain.gain.value = 0.5;
+      
+      source.connect(splitter);
+      splitter.connect(leftGain, 0);
+      splitter.connect(rightGain, 1);
+      leftGain.connect(merger, 0, 0);
+      rightGain.connect(merger, 0, 0);
+      leftGain.connect(merger, 0, 1);
+      rightGain.connect(merger, 0, 1);
+      routedNode = merger;
+      break;
+      
+    default: // 'stereo'
+      routedNode = source;
+      break;
+  }
+  
+  effectNodes.routingNode = routedNode;
+}
+
 // 키보드 네비게이션 개선
 function enhanceKeyboardNavigation() {
   // 포커스 가능한 요소들에 포커스 표시 개선
@@ -4618,6 +4706,12 @@ if (compressionEl) {
 
 // 스펙트럼 분석기 토글
 $('spectrum-toggle')?.addEventListener('click', toggleSpectrum);
+
+// 오디오 라우팅 토글 및 제어
+$('routing-toggle')?.addEventListener('click', toggleRouting);
+$('input-routing')?.addEventListener('change', (e) => {
+  updateRouting(e.target.value);
+});
 
 // 입력 볼륨 슬라이더 초기화
 const inputVolumeEl = $('input-volume');

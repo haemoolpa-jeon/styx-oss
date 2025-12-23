@@ -693,6 +693,23 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--bg-primary); border: 1px solid var(--border);
   border-radius: 4px;
 }
+
+/* 오디오 라우팅 매트릭스 */
+.routing-row { flex-direction: column; align-items: flex-start; }
+.routing-matrix {
+  width: 100%; margin-top: 8px; padding: 8px;
+  background: var(--bg-primary); border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.routing-control {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 4px;
+}
+.routing-control select {
+  background: var(--bg-input); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 4px 8px; font-size: 12px;
+}
 /* 고대비 모드 */
 body.high-contrast {
   --bg-primary: #000000;
