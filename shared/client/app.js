@@ -710,6 +710,7 @@ let analyser = null;
 let meterInterval = null;
 let metronomeInterval = null;
 let metronomeAudio = null;
+let metronomeLocalStop = false; // Track if user locally stopped metronome
 let sessionRestored = false;
 let mediaRecorder = null;
 let recordedChunks = [];
@@ -3785,8 +3786,10 @@ $('metronome-toggle').onclick = () => {
   const countIn = $('count-in')?.checked || false;
   
   if (playing) {
+    metronomeLocalStop = false;
     startMetronome(bpm, null, countIn);
   } else {
+    metronomeLocalStop = true;
     stopMetronome();
   }
   
@@ -3805,6 +3808,12 @@ $('bpm-input').onchange = () => {
 socket.on('metronome-sync', ({ bpm, playing, startTime }) => {
   $('bpm-input').value = bpm;
   if (playing) {
+    // Don't restart if user just stopped it locally (debounce)
+    if (metronomeLocalStop) {
+      // Reset flag after a short delay to allow future syncs
+      setTimeout(() => { metronomeLocalStop = false; }, 500);
+      return;
+    }
     startMetronome(bpm, startTime);
   } else {
     stopMetronome();
