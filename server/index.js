@@ -139,6 +139,11 @@ let serverStats = {
 
 // 헬스체크 엔드포인트
 app.get('/health', (req, res) => {
+  // Add CORS headers for cross-origin requests
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  
   const uptime = Date.now() - serverStats.startTime;
   res.json({
     status: 'healthy',
