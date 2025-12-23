@@ -39,12 +39,47 @@
         <button class="close-btn" onclick="$('shortcuts-overlay').classList.add('hidden')">×</button>
       </div>
       <div class="shortcuts-list">
-        <div class="shortcut-item"><kbd>M</kbd> 음소거 토글</div>
-        <div class="shortcut-item"><kbd>Space</kbd> 메트로놈 토글</div>
-        <div class="shortcut-item"><kbd>R</kbd> 녹음 토글</div>
-        <div class="shortcut-item"><kbd>I</kbd> 초대 링크 복사</div>
-        <div class="shortcut-item"><kbd>F1</kbd> 또는 <kbd>?</kbd> 이 도움말</div>
-        <div class="shortcut-item"><kbd>Esc</kbd> 도움말 닫기</div>
+        <div class="shortcuts-section">
+          <h4>기본 제어</h4>
+          <div class="shortcut-item"><kbd>M</kbd> 음소거 토글</div>
+          <div class="shortcut-item"><kbd>Space</kbd> 메트로놈 토글</div>
+          <div class="shortcut-item"><kbd>R</kbd> 녹음 토글</div>
+          <div class="shortcut-item"><kbd>B</kbd> 녹음 마커 추가</div>
+          <div class="shortcut-item"><kbd>I</kbd> 초대 링크 복사</div>
+          <div class="shortcut-item"><kbd>Esc</kbd> 방 나가기</div>
+        </div>
+        <div class="shortcuts-section">
+          <h4>오디오 제어</h4>
+          <div class="shortcut-item"><kbd>V</kbd> 음성 감지 토글</div>
+          <div class="shortcut-item"><kbd>T</kbd> 튜너 토글</div>
+          <div class="shortcut-item"><kbd>L</kbd> 저지연 모드 토글</div>
+          <div class="shortcut-item"><kbd>E</kbd> 에코 제거 토글</div>
+          <div class="shortcut-item"><kbd>N</kbd> 노이즈 억제 토글</div>
+        </div>
+        <div class="shortcuts-section">
+          <h4>볼륨 제어</h4>
+          <div class="shortcut-item"><kbd>↑</kbd> 마스터 볼륨 증가</div>
+          <div class="shortcut-item"><kbd>↓</kbd> 마스터 볼륨 감소</div>
+          <div class="shortcut-item"><kbd>←</kbd> 입력 볼륨 감소</div>
+          <div class="shortcut-item"><kbd>→</kbd> 입력 볼륨 증가</div>
+        </div>
+        <div class="shortcuts-section">
+          <h4>피어 제어</h4>
+          <div class="shortcut-item"><kbd>1-8</kbd> 피어 음소거 토글</div>
+        </div>
+        <div class="shortcuts-section">
+          <h4>전역 단축키</h4>
+          <div class="shortcut-item"><kbd>F1</kbd> 또는 <kbd>?</kbd> 이 도움말</div>
+          <div class="shortcut-item"><kbd>F11</kbd> 전체화면 토글</div>
+          <div class="shortcut-item"><kbd>Ctrl+S</kbd> 설정 저장</div>
+          <div class="shortcut-item"><kbd>Ctrl+O</kbd> 설정 열기</div>
+        </div>
+        <div class="shortcuts-section">
+          <h4>접근성</h4>
+          <div class="shortcut-item"><kbd>Ctrl+Alt+H</kbd> 고대비 모드</div>
+          <div class="shortcut-item"><kbd>Ctrl+Alt+S</kbd> 스크린 리더 모드</div>
+          <div class="shortcut-item"><kbd>Ctrl+Alt+M</kbd> 애니메이션 감소</div>
+        </div>
       </div>
     </div>
   </div>
@@ -125,6 +160,7 @@
               <div class="checkbox-group">
                 <label><input type="checkbox" id="echo-cancel" checked> 에코 제거</label>
                 <label><input type="checkbox" id="noise-suppress" checked> 잡음 제거</label>
+                <label><input type="checkbox" id="ai-noise"> 🤖 AI 노이즈 제거 <small>(+지연)</small></label>
                 <label><input type="checkbox" id="auto-gain" checked> 자동 음량</label>
                 <label><input type="checkbox" id="ptt-mode"> 눌러서 말하기 (Space)</label>
                 <label><input type="checkbox" id="vad-mode" checked> 말할 때 표시</label>
@@ -322,7 +358,33 @@
           <div id="pending-list" class="admin-list"></div>
           
           <h4>👥 사용자 관리</h4>
+          <div class="user-management-controls">
+            <input type="text" id="user-search" placeholder="사용자 검색..." class="search-input">
+            <button id="refresh-users" class="btn-small">새로고침</button>
+          </div>
           <div id="users-list" class="admin-list"></div>
+          
+          <h4>📊 시스템 모니터링</h4>
+          <div class="monitoring-section">
+            <div class="monitoring-tabs">
+              <button id="health-tab" class="tab-btn active">상태</button>
+              <button id="metrics-tab" class="tab-btn">메트릭</button>
+              <button id="logs-tab" class="tab-btn">로그</button>
+            </div>
+            <div id="health-content" class="tab-content">
+              <div id="health-stats" class="stats-grid"></div>
+            </div>
+            <div id="metrics-content" class="tab-content hidden">
+              <div id="metrics-data" class="metrics-display"></div>
+            </div>
+            <div id="logs-content" class="tab-content hidden">
+              <div class="logs-controls">
+                <button id="refresh-logs" class="btn-small">새로고침</button>
+                <button id="clear-logs" class="btn-small">지우기</button>
+              </div>
+              <div id="logs-display" class="logs-display"></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -339,6 +401,11 @@
         <div class="room-title">
           <h2>🎸 <span id="roomName"></span><span id="my-role-badge" class="role-badge"></span></h2>
           <div id="room-settings-display" class="room-settings-display"></div>
+          <div id="self-stats" class="self-stats">
+            <span class="self-stat">📡 <span id="self-latency">-</span>ms</span>
+            <span class="self-stat">📊 <span id="self-bandwidth">-</span>kbps</span>
+            <span class="self-stat">📉 <span id="self-loss">-</span>loss</span>
+          </div>
         </div>
         <div class="room-controls">
           <select id="room-audio-device" title="입력 장치"></select>
@@ -365,6 +432,7 @@
         <div class="toolbar-section">
           <label class="toolbar-check"><input type="checkbox" id="room-echo-cancel" checked> 에코 제거</label>
           <label class="toolbar-check"><input type="checkbox" id="room-noise-suppress" checked> 잡음 제거</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-ai-noise"> 🤖 AI 노이즈</label>
           <label class="toolbar-check"><input type="checkbox" id="room-ptt-mode"> 눌러서 말하기</label>
           <label class="toolbar-check"><input type="checkbox" id="room-vad-mode" checked> 말할 때 표시</label>
           <label class="toolbar-check"><input type="checkbox" id="room-auto-adapt" checked> 자동 품질</label>
@@ -408,9 +476,50 @@
         <div class="toolbar-section effects-section">
           <button id="effects-toggle" class="btn-icon" title="EQ">🎛️</button>
           <div id="effects-panel" class="effects-panel hidden">
+            <div class="effect-row"><span>입력</span><input type="range" id="input-volume" min="0" max="200" value="120"><span class="effect-val">120%</span></div>
             <div class="effect-row"><span>저음</span><input type="range" id="eq-low" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
             <div class="effect-row"><span>중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
             <div class="effect-row"><span>고음</span><input type="range" id="eq-high" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span>압축</span><input type="range" id="compression-ratio" min="1" max="8" value="4" step="0.5"><span class="effect-val">4:1</span></div>
+            <div class="effect-row spectrum-row">
+              <span>스펙트럼</span>
+              <button id="spectrum-toggle" class="btn-small">📊</button>
+              <canvas id="spectrum-canvas" width="200" height="60" class="spectrum-canvas hidden"></canvas>
+            </div>
+            <div class="effect-row spatial-row">
+              <span>공간음향</span>
+              <button id="spatial-toggle" class="btn-small">🎧</button>
+            </div>
+            <div class="effect-row bandwidth-row">
+              <span>대역폭</span>
+              <button id="bandwidth-toggle" class="btn-small">📊</button>
+            </div>
+            <div class="effect-row routing-row">
+              <span>라우팅</span>
+              <button id="routing-toggle" class="btn-small">🔀</button>
+              <div id="routing-matrix" class="routing-matrix hidden">
+                <div class="routing-control">
+                  <span>입력 → 출력</span>
+                  <select id="input-routing">
+                    <option value="stereo">스테레오</option>
+                    <option value="left">왼쪽만</option>
+                    <option value="right">오른쪽만</option>
+                    <option value="mono">모노 믹스</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="effect-row noise-profile-row">
+              <span>노이즈 프로파일</span>
+              <button id="noise-profile-toggle" class="btn-small">🎯</button>
+              <div id="noise-profile-panel" class="noise-profile-panel hidden">
+                <div class="profile-control">
+                  <button id="learn-noise" class="btn-small">학습</button>
+                  <span id="noise-level">-</span>
+                  <button id="reset-profile" class="btn-small">리셋</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

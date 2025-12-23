@@ -78,7 +78,10 @@ pub async fn bind_udp_socket(port: u16) -> Result<(UdpSocket, u16), String> {
     }
     
     // Bind to address
-    let addr: StdSocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+    let addr: StdSocketAddr = match format!("0.0.0.0:{}", port).parse() {
+        Ok(a) => a,
+        Err(e) => return Err(format!("주소 파싱 실패: {}", e)),
+    };
     socket2.bind(&addr.into())
         .map_err(|e| format!("UDP 바인딩 실패: {}", e))?;
     socket2.set_nonblocking(true)

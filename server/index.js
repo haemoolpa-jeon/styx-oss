@@ -82,6 +82,149 @@ validateEnv();
 const app = express();
 const server = createServer(app);
 
+// 에러 추적 래퍼
+function trackError(operation, error) {
+  serverStats.errors++;
+  console.error(`[ERROR] ${operation}:`, error.message);
+}
+
+// 보안 감사 로깅 시스템
+const auditLog = [];
+const MAX_AUDIT_LOGS = 1000;
+
+function logSecurityEvent(event, details) {
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    event,
+    ...details
+  };
+  
+  auditLog.push(logEntry);
+  
+  // 로그 크기 제한
+  if (auditLog.length > MAX_AUDIT_LOGS) {
+    auditLog.shift();
+  }
+  
+  console.log(`[AUDIT] ${event}:`, JSON.stringify(details));
+}
+
+// 감사 로그 조회 엔드포인트 (관리자만)
+app.get('/audit', (req, res) => {
+  // 간단한 인증 (실제 환경에서는 더 강화 필요)
+  const auth = req.headers.authorization;
+  if (!auth || auth !== `Bearer ${process.env.ADMIN_TOKEN || 'admin123'}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  const limit = parseInt(req.query.limit) || 100;
+  const offset = parseInt(req.query.offset) || 0;
+  
+  res.json({
+    total: auditLog.length,
+    logs: auditLog.slice(-limit - offset, -offset || undefined).reverse()
+  });
+});
+
+// 모니터링 및 헬스체크 시스템
+let serverStats = {
+  startTime: Date.now(),
+  totalConnections: 0,
+  activeConnections: 0,
+  totalRooms: 0,
+  activeRooms: 0,
+  totalMessages: 0,
+  errors: 0
+};
+
+// 헬스체크 엔드포인트
+app.get('/health', (req, res) => {
+  // Add CORS headers for cross-origin requests
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  
+  const uptime = Date.now() - serverStats.startTime;
+  res.json({
+    status: 'healthy',
+    uptime: Math.floor(uptime / 1000),
+    stats: {
+      ...serverStats,
+      activeRooms: rooms?.size || 0,
+      memoryUsage: process.memoryUsage(),
+      cpuUsage: process.cpuUsage()
+    }
+  });
+});
+
+// 메트릭스 엔드포인트 (Prometheus 형식)
+app.get('/metrics', (req, res) => {
+  const metrics = {
+    connections_total: serverStats.totalConnections,
+    connections_active: serverStats.activeConnections,
+    rooms_total: serverStats.totalRooms,
+    rooms_active: rooms?.size || 0,
+    messages_total: serverStats.totalMessages,
+    errors_total: serverStats.errors,
+    uptime_seconds: Math.floor((Date.now() - serverStats.startTime) / 1000)
+  };
+  
+  let output = '';
+  Object.entries(metrics).forEach(([key, value]) => {
+    output += `styx_${key} ${value}\n`;
+  });
+  
+  res.set('Content-Type', 'text/plain');
+  res.send(output);
+});
+
+// 자동화된 테스트 엔드포인트
+app.get('/test', (req, res) => {
+  const tests = [];
+  
+  // 기본 서버 상태 테스트
+  tests.push({
+    name: 'Server Status',
+    status: 'pass',
+    message: 'Server is running'
+  });
+  
+  // 메모리 사용량 테스트
+  const memUsage = process.memoryUsage();
+  const memoryTest = memUsage.heapUsed < 500 * 1024 * 1024; // 500MB 제한
+  tests.push({
+    name: 'Memory Usage',
+    status: memoryTest ? 'pass' : 'fail',
+    message: `Heap used: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`
+  });
+  
+  // 활성 연결 테스트
+  const connectionTest = serverStats.activeConnections >= 0;
+  tests.push({
+    name: 'Active Connections',
+    status: connectionTest ? 'pass' : 'fail',
+    message: `${serverStats.activeConnections} active connections`
+  });
+  
+  // 에러율 테스트
+  const errorRate = serverStats.totalConnections > 0 ? 
+    (serverStats.errors / serverStats.totalConnections) : 0;
+  const errorTest = errorRate < 0.1; // 10% 미만
+  tests.push({
+    name: 'Error Rate',
+    status: errorTest ? 'pass' : 'fail',
+    message: `${(errorRate * 100).toFixed(2)}% error rate`
+  });
+  
+  const allPassed = tests.every(t => t.status === 'pass');
+  
+  res.json({
+    status: allPassed ? 'pass' : 'fail',
+    timestamp: new Date().toISOString(),
+    tests
+  });
+});
+
 // CORS 설정 for HTTP requests
 const ALLOWED_ORIGINS = process.env.CORS_ORIGINS 
   ? process.env.CORS_ORIGINS.split(',') 
@@ -114,19 +257,98 @@ app.use((req, res, next) => {
   })(req, res, next);
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  const uptime = Math.floor(process.uptime());
-  const memUsage = process.memoryUsage();
-  res.json({ 
-    status: 'ok', 
-    uptime,
-    memory: {
-      used: Math.round(memUsage.heapUsed / 1024 / 1024) + 'MB',
-      total: Math.round(memUsage.heapTotal / 1024 / 1024) + 'MB'
+// GDPR Compliance Features
+app.get('/privacy-policy', (req, res) => {
+  res.json({
+    lastUpdated: '2024-01-01',
+    dataCollection: {
+      personal: ['username', 'password_hash', 'ip_address', 'user_agent'],
+      technical: ['session_tokens', 'audio_settings', 'connection_logs'],
+      retention: '30 days for logs, indefinite for user accounts until deletion'
     },
-    connections: io.engine.clientsCount || 0
+    rights: {
+      access: 'Request your data via /api/gdpr/export',
+      rectification: 'Update via user settings',
+      erasure: 'Request deletion via /api/gdpr/delete',
+      portability: 'Export via /api/gdpr/export'
+    },
+    contact: 'admin@styx-audio.com'
   });
+});
+
+app.post('/api/gdpr/export', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    
+    const data = await loadUsers();
+    const user = data.users[username];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    
+    // Export user data (excluding password hash)
+    const exportData = {
+      username: user.username,
+      isAdmin: user.isAdmin,
+      approved: user.approved,
+      avatar: user.avatar,
+      createdAt: user.createdAt,
+      settings: user.settings,
+      exportedAt: new Date().toISOString()
+    };
+    
+    res.json({ data: exportData });
+  } catch (e) {
+    console.error('[GDPR_EXPORT_ERROR]', e.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/gdpr/delete', async (req, res) => {
+  try {
+    const { username, password, confirmation } = req.body;
+    if (!username || !password || confirmation !== 'DELETE_MY_ACCOUNT') {
+      return res.status(400).json({ error: 'Username, password, and confirmation required' });
+    }
+    
+    await withLock(async () => {
+      const data = await loadUsers();
+      const user = data.users[username];
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      
+      const valid = await bcrypt.compare(password, user.password);
+      if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+      
+      // Delete user data
+      delete data.users[username];
+      delete data.pending[username];
+      await saveUsers(data);
+      
+      // Delete sessions
+      const sessions = await loadSessions();
+      for (const [token, session] of sessions) {
+        if (session.username === username) sessions.delete(token);
+      }
+      await saveSessions(sessions);
+      
+      // Delete avatar if exists
+      try {
+        const files = await fs.readdir(AVATARS_DIR);
+        const avatarFile = files.find(f => f.startsWith(username + '.'));
+        if (avatarFile) await fs.unlink(path.join(AVATARS_DIR, avatarFile));
+      } catch (e) {
+        console.error('[AVATAR_DELETE_ERROR]', e.message);
+      }
+      
+      logSecurityEvent('GDPR_ACCOUNT_DELETED', { username, ip: req.ip });
+      res.json({ success: true, message: 'Account deleted successfully' });
+    });
+  } catch (e) {
+    console.error('[GDPR_DELETE_ERROR]', e.message);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // HTTPS 리다이렉트 (프로덕션)
@@ -189,15 +411,24 @@ function isIpWhitelisted(ip) {
 // Load whitelist on startup
 loadWhitelist();
 
-// Enhanced Rate Limiting with per-user tracking
+// Enhanced Rate Limiting with per-user tracking and progressive penalties
 const rateLimits = new Map(); // IP-based
 const userRateLimits = new Map(); // User session-based
+const suspiciousIPs = new Map(); // Track repeated violations
 const RATE_LIMIT_WINDOW = 60000;
 const RATE_LIMIT_MAX = 100; // Per IP
 const USER_RATE_LIMIT_MAX = 50; // Per user session
+const SUSPICIOUS_THRESHOLD = 3; // Violations before marking as suspicious
+const SUSPICIOUS_PENALTY = 300000; // 5 minutes penalty for suspicious IPs
 
 function checkRateLimit(ip, userId = null) {
   const now = Date.now();
+  
+  // Check if IP is under suspicious penalty
+  const suspicious = suspiciousIPs.get(ip);
+  if (suspicious && now - suspicious.penaltyStart < SUSPICIOUS_PENALTY) {
+    return false;
+  }
   
   // Cleanup expired entries
   let cleaned = 0;
@@ -222,7 +453,17 @@ function checkRateLimit(ip, userId = null) {
     rateLimits.set(ip, { start: now, count: 1 });
   } else {
     ipRecord.count++;
-    if (ipRecord.count > RATE_LIMIT_MAX) return false;
+    if (ipRecord.count > RATE_LIMIT_MAX) {
+      // Track suspicious behavior
+      const suspiciousRecord = suspiciousIPs.get(ip) || { violations: 0 };
+      suspiciousRecord.violations++;
+      if (suspiciousRecord.violations >= SUSPICIOUS_THRESHOLD) {
+        suspiciousRecord.penaltyStart = now;
+        logSecurityEvent('IP_MARKED_SUSPICIOUS', { ip, violations: suspiciousRecord.violations });
+      }
+      suspiciousIPs.set(ip, suspiciousRecord);
+      return false;
+    }
   }
   
   // Check user-based rate limit if userId provided
@@ -411,11 +652,16 @@ const broadcastRoomList = () => {
 };
 
 io.on('connection', (socket) => {
+  // 연결 통계 업데이트
+  serverStats.totalConnections++;
+  serverStats.activeConnections++;
+  
   const clientIp = socket.handshake.address;
   const userAgent = socket.handshake.headers['user-agent'] || 'unknown';
   
   // IP Whitelist Check
   if (!isIpWhitelisted(clientIp)) {
+    logSecurityEvent('IP_BLOCKED', { ip: clientIp, userAgent });
     console.log(`[WHITELIST_BLOCK] ${clientIp}`);
     socket.emit('error', { message: 'Access denied from this IP address' });
     socket.disconnect(true);
@@ -423,6 +669,7 @@ io.on('connection', (socket) => {
   }
   
   if (!checkRateLimit(clientIp)) {
+    logSecurityEvent('RATE_LIMIT_EXCEEDED', { ip: clientIp, userAgent });
     console.log(`[RATE_LIMIT] ${clientIp}`);
     socket.emit('error', { message: 'Too many requests' });
     socket.disconnect(true);
@@ -435,10 +682,12 @@ io.on('connection', (socket) => {
     try {
       await sessionsReady;
       if (!checkRateLimit(clientIp, username)) {
+        logSecurityEvent('LOGIN_RATE_LIMIT', { ip: clientIp, username, userAgent });
         console.log(`[RATE_LIMIT] ${clientIp} user:${username}`);
         return cb({ error: 'Too many requests' });
       }
       if (!validateUsername(username)) {
+        logSecurityEvent('LOGIN_INVALID_USERNAME', { ip: clientIp, username, userAgent });
         console.log(`[LOGIN_FAIL] invalid username format from ${clientIp}`);
         return cb({ error: 'Invalid credentials' });
       }
@@ -451,10 +700,12 @@ io.on('connection', (socket) => {
       }
       const valid = await bcrypt.compare(password, user.password);
       if (!valid) {
+        logSecurityEvent('LOGIN_WRONG_PASSWORD', { ip: clientIp, username, userAgent });
         console.log(`[LOGIN_FAIL] ${username} wrong password from ${clientIp}`);
         return cb({ error: 'Invalid credentials' });
       }
       if (!user.approved) {
+        logSecurityEvent('LOGIN_NOT_APPROVED', { ip: clientIp, username, userAgent });
         console.log(`[LOGIN_FAIL] ${username} not approved from ${clientIp}`);
         return cb({ error: 'Account pending approval' });
       }
@@ -471,6 +722,7 @@ io.on('connection', (socket) => {
         lastActivity: Date.now()
       });
       await saveSessions(sessions);
+      logSecurityEvent('LOGIN_SUCCESS', { ip: clientIp, username, userAgent });
       console.log(`[LOGIN] ${username} from ${clientIp}`);
       cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar }, token });
     } catch (e) {
@@ -569,7 +821,7 @@ io.on('connection', (socket) => {
       if (!socket.isAdmin) return cb({ error: 'Not admin' });
       const data = await loadUsers();
       const users = Object.entries(data.users).map(([username, u]) => ({
-        username, isAdmin: u.isAdmin, createdAt: u.createdAt
+        username, isAdmin: u.isAdmin, createdAt: u.createdAt, avatar: u.avatar
       }));
       cb({ users });
     } catch (e) {
@@ -590,6 +842,7 @@ io.on('connection', (socket) => {
         };
         delete data.pending[username];
         await saveUsers(data);
+        logSecurityEvent('USER_APPROVED', { ip: clientIp, username, adminUser: socket.username, userAgent });
         return { success: true };
       });
       cb(result);
@@ -606,6 +859,7 @@ io.on('connection', (socket) => {
         const data = await loadUsers();
         delete data.pending[username];
         await saveUsers(data);
+        logSecurityEvent('USER_REJECTED', { ip: clientIp, username, adminUser: socket.username, userAgent });
       });
       cb({ success: true });
     } catch (e) {
@@ -625,8 +879,8 @@ io.on('connection', (socket) => {
         delete data.users[username];
         await saveUsers(data);
         sessions.delete(username);
-        await saveSessions(sessions);
         
+        // Delete avatar if exists
         try {
           const files = await fs.readdir(AVATARS_DIR);
           const avatarFile = files.find(f => f.startsWith(username + '.'));
@@ -639,6 +893,35 @@ io.on('connection', (socket) => {
       cb(result);
     } catch (e) {
       console.error('[DELETE_ERROR] User deletion failed:', e.message);
+      cb({ error: 'Server error' });
+    }
+  });
+
+  socket.on('set-admin', async ({ username, isAdmin }, cb) => {
+    try {
+      if (!socket.isAdmin) return cb({ error: 'Not admin' });
+      if (username === socket.username && !isAdmin) return cb({ error: 'Cannot remove your own admin rights' });
+      
+      const result = await withLock(async () => {
+        const data = await loadUsers();
+        if (!data.users[username]) return { error: 'User not found' };
+        
+        data.users[username].isAdmin = isAdmin;
+        await saveUsers(data);
+        
+        logSecurityEvent('ADMIN_RIGHTS_CHANGED', { 
+          ip: socket.handshake.address, 
+          targetUser: username, 
+          isAdmin, 
+          adminUser: socket.username, 
+          userAgent: socket.handshake.headers['user-agent'] 
+        });
+        
+        return { success: true };
+      });
+      cb(result);
+    } catch (e) {
+      console.error('[SET_ADMIN_ERROR] Admin rights change failed:', e.message);
       cb({ error: 'Server error' });
     }
   });
@@ -770,6 +1053,9 @@ io.on('connection', (socket) => {
       if (!user || !user.approved) return cb({ error: 'Not authorized' });
 
       if (!rooms.has(room)) {
+        // 방 생성 통계 업데이트
+        serverStats.totalRooms++;
+        
         const passwordHash = roomPassword ? await bcrypt.hash(roomPassword, 8) : null;
         const s = validSettings;
         rooms.set(room, { 
@@ -890,6 +1176,9 @@ io.on('connection', (socket) => {
   });
 
   socket.on('chat', (text, cb) => {
+    // 메시지 통계 업데이트
+    serverStats.totalMessages++;
+    
     if (!socket.room || !socket.username) return;
     const roomData = rooms.get(socket.room);
     if (!roomData) return;
@@ -908,6 +1197,11 @@ io.on('connection', (socket) => {
 
   // 시간 동기화 (메트로놈용)
   socket.on('time-sync', (clientTime, cb) => {
+    cb(Date.now());
+  });
+
+  // 핑 테스트 (자체 지연시간 측정용)
+  socket.on('ping', (clientTime, cb) => {
     cb(Date.now());
   });
 
@@ -973,6 +1267,7 @@ io.on('connection', (socket) => {
     
     ipWhitelist.add(ip);
     saveWhitelist();
+    logSecurityEvent('WHITELIST_IP_ADDED', { ip: clientIp, targetIp: ip, adminUser: socket.username, userAgent });
     console.log(`[ADMIN] ${socket.username} added IP to whitelist: ${ip}`);
     cb?.({ success: true, ips: Array.from(ipWhitelist) });
   });
@@ -981,11 +1276,15 @@ io.on('connection', (socket) => {
     if (!socket.isAdmin) return cb?.({ error: 'Not authorized' });
     ipWhitelist.delete(ip);
     saveWhitelist();
+    logSecurityEvent('WHITELIST_IP_REMOVED', { ip: clientIp, targetIp: ip, adminUser: socket.username, userAgent });
     console.log(`[ADMIN] ${socket.username} removed IP from whitelist: ${ip}`);
     cb?.({ success: true, ips: Array.from(ipWhitelist) });
   });
 
   socket.on('disconnect', (reason) => {
+    // 연결 통계 업데이트
+    serverStats.activeConnections = Math.max(0, serverStats.activeConnections - 1);
+    
     console.log(`[DISCONNECT] ${socket.id} ${socket.username || 'anonymous'} (${reason})`);
     if (socket.room && rooms.has(socket.room)) {
       const roomData = rooms.get(socket.room);

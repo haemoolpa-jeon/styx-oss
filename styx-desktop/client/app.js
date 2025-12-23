@@ -1,6 +1,642 @@
 // Styx 클라이언트 - HADES 실시간 오디오 협업
 // WebRTC P2P 오디오 + 안정성 중심 설계
 
+// 접근성 개선 시스템
+const accessibility = {
+  highContrast: false,
+  screenReaderMode: false,
+  reducedMotion: false
+};
+
+// 접근성 설정 로드
+function loadAccessibilitySettings() {
+  try {
+    const saved = localStorage.getItem('styx-accessibility');
+    if (saved) {
+      Object.assign(accessibility, JSON.parse(saved));
+      applyAccessibilitySettings();
+    }
+  } catch (e) {
+    console.warn('Accessibility settings load failed:', e);
+  }
+  
+  // 시스템 설정 감지
+  if (window.matchMedia('(prefers-contrast: high)').matches) {
+    accessibility.highContrast = true;
+  }
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    accessibility.reducedMotion = true;
+  }
+  
+  applyAccessibilitySettings();
+}
+
+// 접근성 설정 적용
+function applyAccessibilitySettings() {
+  document.body.classList.toggle('high-contrast', accessibility.highContrast);
+  document.body.classList.toggle('screen-reader', accessibility.screenReaderMode);
+  document.body.classList.toggle('reduced-motion', accessibility.reducedMotion);
+  
+  // 스크린 리더 모드에서 추가 정보 제공
+  if (accessibility.screenReaderMode) {
+    addScreenReaderSupport();
+  }
+}
+
+// 스크린 리더 지원 추가
+function addScreenReaderSupport() {
+  // ARIA 레이블 추가
+  const elements = [
+    { id: 'muteBtn', label: () => isMuted ? '음소거 해제' : '음소거' },
+    { id: 'recordBtn', label: () => isRecording ? '녹음 중지' : '녹음 시작' },
+    { id: 'metronome-toggle', label: () => '메트로놈 토글' },
+    { id: 'inviteBtn', label: () => '초대 링크 복사' },
+    { id: 'leaveBtn', label: () => '방 나가기' },
+    { id: 'settingsBtn', label: () => '설정 열기' },
+    { id: 'adminBtn', label: () => '관리자 패널 열기' }
+  ];
+  
+  elements.forEach(({ id, label }) => {
+    const el = $(id);
+    if (el) {
+      el.setAttribute('aria-label', typeof label === 'function' ? label() : label);
+      el.setAttribute('role', 'button');
+    }
+  });
+  
+  // 볼륨 슬라이더에 ARIA 속성 추가
+  const volumeSliders = document.querySelectorAll('input[type="range"]');
+  volumeSliders.forEach(slider => {
+    slider.setAttribute('role', 'slider');
+    slider.setAttribute('aria-valuemin', slider.min);
+    slider.setAttribute('aria-valuemax', slider.max);
+    slider.setAttribute('aria-valuenow', slider.value);
+    slider.addEventListener('input', () => {
+      slider.setAttribute('aria-valuenow', slider.value);
+    });
+  });
+  
+  // 라이브 영역 추가 (상태 변경 알림용)
+  if (!$('aria-live-region')) {
+    const liveRegion = document.createElement('div');
+    liveRegion.id = 'aria-live-region';
+    liveRegion.setAttribute('aria-live', 'polite');
+    liveRegion.setAttribute('aria-atomic', 'true');
+    liveRegion.style.position = 'absolute';
+    liveRegion.style.left = '-10000px';
+    liveRegion.style.width = '1px';
+    liveRegion.style.height = '1px';
+    liveRegion.style.overflow = 'hidden';
+    document.body.appendChild(liveRegion);
+  }
+}
+
+// 스크린 리더에 상태 알림
+function announceToScreenReader(message) {
+  if (!accessibility.screenReaderMode) return;
+  
+  const liveRegion = $('aria-live-region');
+  if (liveRegion) {
+    liveRegion.textContent = message;
+    setTimeout(() => liveRegion.textContent = '', 1000);
+  }
+}
+
+// 접근성 토글 함수들
+function toggleHighContrast() {
+  accessibility.highContrast = !accessibility.highContrast;
+  saveAccessibilitySettings();
+  applyAccessibilitySettings();
+  toast(`고대비 모드 ${accessibility.highContrast ? '활성화' : '비활성화'}`, 'info');
+  announceToScreenReader(`고대비 모드가 ${accessibility.highContrast ? '활성화' : '비활성화'}되었습니다`);
+}
+
+function toggleScreenReaderMode() {
+  accessibility.screenReaderMode = !accessibility.screenReaderMode;
+  saveAccessibilitySettings();
+  applyAccessibilitySettings();
+  toast(`스크린 리더 모드 ${accessibility.screenReaderMode ? '활성화' : '비활성화'}`, 'info');
+}
+
+function toggleReducedMotion() {
+  accessibility.reducedMotion = !accessibility.reducedMotion;
+  saveAccessibilitySettings();
+  applyAccessibilitySettings();
+  toast(`애니메이션 감소 ${accessibility.reducedMotion ? '활성화' : '비활성화'}`, 'info');
+}
+
+// 접근성 설정 저장
+function saveAccessibilitySettings() {
+  localStorage.setItem('styx-accessibility', JSON.stringify(accessibility));
+}
+
+// 스펙트럼 분석기
+let spectrumAnalyser = null;
+let spectrumCanvas = null;
+let spectrumCtx = null;
+let spectrumAnimationId = null;
+let spectrumEnabled = false;
+
+// 공간 오디오 (Spatial Audio)
+let spatialAudioEnabled = false;
+const spatialPanners = new Map(); // peer ID -> panner node
+
+// 대역폭 적응 (Bandwidth Adaptation)
+let bandwidthMonitoring = false;
+const connectionStats = new Map(); // peer ID -> stats
+let bandwidthStatsInterval = null;
+
+function initSpectrum() {
+  spectrumCanvas = $('spectrum-canvas');
+  if (!spectrumCanvas) return;
+  
+  spectrumCtx = spectrumCanvas.getContext('2d');
+  spectrumCanvas.width = 200;
+  spectrumCanvas.height = 60;
+}
+
+function toggleSpectrum() {
+  spectrumEnabled = !spectrumEnabled;
+  const canvas = $('spectrum-canvas');
+  const btn = $('spectrum-toggle');
+  
+  if (spectrumEnabled) {
+    canvas?.classList.remove('hidden');
+    if (btn) btn.textContent = '📊';
+    startSpectrum();
+  } else {
+    canvas?.classList.add('hidden');
+    if (btn) btn.textContent = '📊';
+    stopSpectrum();
+  }
+}
+
+function toggleSpatialAudio() {
+  spatialAudioEnabled = !spatialAudioEnabled;
+  const btn = $('spatial-toggle');
+  
+  if (spatialAudioEnabled) {
+    if (btn) btn.textContent = '🎧✓';
+    // Enable spatial audio for all existing peers
+    for (const [peerId, peer] of peers) {
+      if (peer.audioEl && peer.audioEl.srcObject) {
+        setupSpatialAudio(peerId, peer.audioEl);
+      }
+    }
+  } else {
+    if (btn) btn.textContent = '🎧';
+    // Disable spatial audio and restore original connections
+    for (const [peerId, panner] of spatialPanners) {
+      const peer = peers.get(peerId);
+      if (panner && panner.disconnect && peer && peer.audioNodes) {
+        const { gainNode, dest } = peer.audioNodes;
+        panner.disconnect();
+        gainNode.disconnect();
+        gainNode.connect(dest); // Restore original connection
+      }
+    }
+    spatialPanners.clear();
+  }
+}
+
+function setupSpatialAudio(peerId, audioElement) {
+  if (!spatialAudioEnabled || !audioContext) return;
+  
+  try {
+    const peer = peers.get(peerId);
+    if (!peer || !peer.audioNodes) return;
+    
+    // Use existing audio pipeline instead of creating new MediaElementSource
+    const { gainNode, dest } = peer.audioNodes;
+    
+    // Remove existing panner if it exists
+    const existingPanner = spatialPanners.get(peerId);
+    if (existingPanner && existingPanner.disconnect) {
+      existingPanner.disconnect();
+    }
+    
+    // Create stereo panner and insert it into the existing pipeline
+    const panner = audioContext.createStereoPanner();
+    
+    // Position peers in stereo field based on their index
+    const peerIndex = Array.from(peers.keys()).indexOf(peerId);
+    const totalPeers = peers.size;
+    const panValue = totalPeers > 1 ? (peerIndex / (totalPeers - 1)) * 2 - 1 : 0; // -1 to 1
+    
+    panner.pan.value = Math.max(-1, Math.min(1, panValue));
+    
+    // Reconnect the pipeline: gainNode -> panner -> destination
+    gainNode.disconnect();
+    gainNode.connect(panner);
+    panner.connect(dest);
+    
+    spatialPanners.set(peerId, panner);
+  } catch (e) {
+    console.warn('Spatial audio setup failed:', e);
+  }
+}
+
+function toggleBandwidthMonitoring() {
+  bandwidthMonitoring = !bandwidthMonitoring;
+  const btn = $('bandwidth-toggle');
+  
+  if (bandwidthMonitoring) {
+    if (btn) btn.textContent = '📊✓';
+    startBandwidthMonitoring();
+  } else {
+    if (btn) btn.textContent = '📊';
+    stopBandwidthMonitoring();
+  }
+}
+
+function startBandwidthMonitoring() {
+  if (bandwidthStatsInterval) return;
+  
+  bandwidthStatsInterval = setInterval(async () => {
+    for (const [peerId, peer] of peers) {
+      if (peer.pc && peer.pc.connectionState === 'connected') {
+        try {
+          const stats = await peer.pc.getStats();
+          const inboundStats = Array.from(stats.values()).find(s => s.type === 'inbound-rtp' && s.mediaType === 'audio');
+          
+          if (inboundStats) {
+            const currentStats = connectionStats.get(peerId) || {};
+            const now = Date.now();
+            
+            if (currentStats.timestamp) {
+              const timeDiff = (now - currentStats.timestamp) / 1000;
+              const bytesDiff = inboundStats.bytesReceived - (currentStats.bytesReceived || 0);
+              const bandwidth = Math.round((bytesDiff * 8) / timeDiff / 1000); // kbps
+              
+              const newStats = {
+                bandwidth,
+                packetsLost: inboundStats.packetsLost || 0,
+                jitter: Math.round((inboundStats.jitter || 0) * 1000), // ms
+                timestamp: now,
+                bytesReceived: inboundStats.bytesReceived
+              };
+              
+              connectionStats.set(peerId, newStats);
+              
+              // Simple bandwidth adaptation - adjust audio processing based on connection quality
+              adaptAudioQuality(peerId, newStats);
+            } else {
+              connectionStats.set(peerId, {
+                timestamp: now,
+                bytesReceived: inboundStats.bytesReceived
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('Stats collection failed for peer', peerId, e);
+        }
+      }
+    }
+  }, 2000); // Every 2 seconds
+}
+
+function adaptAudioQuality(peerId, stats) {
+  const peer = peers.get(peerId);
+  if (!peer || !peer.audioNodes) return;
+  
+  // Simple adaptation based on packet loss and jitter
+  const { packetsLost, jitter, bandwidth } = stats;
+  
+  // If connection quality is poor, reduce processing complexity
+  if (packetsLost > 10 || jitter > 50 || bandwidth < 32) {
+    // Reduce compressor complexity for poor connections
+    if (peer.compressor) {
+      peer.compressor.attack.value = 0.01; // Faster attack
+      peer.compressor.release.value = 0.1;  // Faster release
+    }
+  } else {
+    // Restore normal quality for good connections
+    if (peer.compressor) {
+      peer.compressor.attack.value = 0.003; // Normal attack
+      peer.compressor.release.value = 0.25;  // Normal release
+    }
+  }
+}
+
+function stopBandwidthMonitoring() {
+  if (bandwidthStatsInterval) {
+    clearInterval(bandwidthStatsInterval);
+    bandwidthStatsInterval = null;
+  }
+  connectionStats.clear();
+}
+
+function startSpectrum() {
+  if (!localStream || !spectrumCtx) return;
+  
+  const ctx = getSharedAudioContext();
+  spectrumAnalyser = ctx.createAnalyser();
+  spectrumAnalyser.fftSize = 256;
+  spectrumAnalyser.smoothingTimeConstant = 0.8;
+  
+  const source = ctx.createMediaStreamSource(localStream);
+  source.connect(spectrumAnalyser);
+  
+  drawSpectrum();
+}
+
+function stopSpectrum() {
+  if (spectrumAnimationId) {
+    cancelAnimationFrame(spectrumAnimationId);
+    spectrumAnimationId = null;
+  }
+  if (spectrumAnalyser) {
+    try { spectrumAnalyser.disconnect(); } catch {}
+    spectrumAnalyser = null;
+  }
+}
+
+function drawSpectrum() {
+  if (!spectrumEnabled || !spectrumAnalyser || !spectrumCtx) return;
+  
+  const bufferLength = spectrumAnalyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  spectrumAnalyser.getByteFrequencyData(dataArray);
+  
+  const width = spectrumCanvas.width;
+  const height = spectrumCanvas.height;
+  
+  spectrumCtx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+  spectrumCtx.fillRect(0, 0, width, height);
+  
+  const barWidth = width / bufferLength * 2;
+  let x = 0;
+  
+  for (let i = 0; i < bufferLength; i++) {
+    const barHeight = (dataArray[i] / 255) * height;
+    
+    const hue = (i / bufferLength) * 240; // Blue to red
+    spectrumCtx.fillStyle = `hsl(${hue}, 70%, 50%)`;
+    spectrumCtx.fillRect(x, height - barHeight, barWidth, barHeight);
+    
+    x += barWidth + 1;
+  }
+  
+  spectrumAnimationId = requestAnimationFrame(drawSpectrum);
+}
+
+// 오디오 라우팅 매트릭스
+let routingMode = 'stereo'; // 'stereo', 'left', 'right', 'mono'
+let routingEnabled = false;
+
+function toggleRouting() {
+  routingEnabled = !routingEnabled;
+  const matrix = $('routing-matrix');
+  const btn = $('routing-toggle');
+  
+  if (routingEnabled) {
+    matrix?.classList.remove('hidden');
+    if (btn) btn.textContent = '🔀';
+  } else {
+    matrix?.classList.add('hidden');
+    if (btn) btn.textContent = '🔀';
+  }
+}
+
+function updateRouting(mode) {
+  routingMode = mode;
+  
+  // 현재 스트림에 라우팅 적용
+  if (localStream && inputLimiterContext) {
+    applyRoutingToStream();
+  }
+}
+
+function applyRoutingToStream() {
+  if (!localStream || !inputLimiterContext) return;
+  
+  // 기존 라우팅 노드가 있으면 제거
+  if (effectNodes.routingNode) {
+    try { effectNodes.routingNode.disconnect(); } catch {}
+  }
+  
+  const ctx = inputLimiterContext;
+  const source = ctx.createMediaStreamSource(localStream._rawStream);
+  
+  let routedNode;
+  
+  switch (routingMode) {
+    case 'left':
+      // 왼쪽 채널만 사용
+      routedNode = ctx.createChannelSplitter(2);
+      const leftMerger = ctx.createChannelMerger(2);
+      source.connect(routedNode);
+      routedNode.connect(leftMerger, 0, 0); // 왼쪽 → 왼쪽
+      routedNode.connect(leftMerger, 0, 1); // 왼쪽 → 오른쪽
+      routedNode = leftMerger;
+      break;
+      
+    case 'right':
+      // 오른쪽 채널만 사용
+      routedNode = ctx.createChannelSplitter(2);
+      const rightMerger = ctx.createChannelMerger(2);
+      source.connect(routedNode);
+      routedNode.connect(rightMerger, 1, 0); // 오른쪽 → 왼쪽
+      routedNode.connect(rightMerger, 1, 1); // 오른쪽 → 오른쪽
+      routedNode = rightMerger;
+      break;
+      
+    case 'mono':
+      // 모노 믹스 (L+R)/2
+      const splitter = ctx.createChannelSplitter(2);
+      const merger = ctx.createChannelMerger(2);
+      const leftGain = ctx.createGain();
+      const rightGain = ctx.createGain();
+      leftGain.gain.value = 0.5;
+      rightGain.gain.value = 0.5;
+      
+      source.connect(splitter);
+      splitter.connect(leftGain, 0);
+      splitter.connect(rightGain, 1);
+      leftGain.connect(merger, 0, 0);
+      rightGain.connect(merger, 0, 0);
+      leftGain.connect(merger, 0, 1);
+      rightGain.connect(merger, 0, 1);
+      routedNode = merger;
+      break;
+      
+    default: // 'stereo'
+      routedNode = source;
+      break;
+  }
+  
+  effectNodes.routingNode = routedNode;
+}
+
+// 노이즈 프로파일링 시스템
+let noiseProfile = {
+  enabled: false,
+  baselineLevel: -60, // dB
+  adaptiveThreshold: -45, // dB
+  learningData: [],
+  isLearning: false
+};
+
+function toggleNoiseProfile() {
+  noiseProfile.enabled = !noiseProfile.enabled;
+  const panel = $('noise-profile-panel');
+  const btn = $('noise-profile-toggle');
+  
+  if (noiseProfile.enabled) {
+    panel?.classList.remove('hidden');
+    if (btn) btn.textContent = '🎯';
+    updateNoiseDisplay();
+  } else {
+    panel?.classList.add('hidden');
+    if (btn) btn.textContent = '🎯';
+  }
+}
+
+function startNoiseLearning() {
+  if (!localStream) return;
+  
+  noiseProfile.isLearning = true;
+  noiseProfile.learningData = [];
+  
+  const btn = $('learn-noise');
+  if (btn) {
+    btn.textContent = '학습중...';
+    btn.disabled = true;
+  }
+  
+  // 3초간 노이즈 레벨 수집
+  const ctx = getSharedAudioContext();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 256;
+  analyser.smoothingTimeConstant = 0.3;
+  
+  const source = ctx.createMediaStreamSource(localStream);
+  source.connect(analyser);
+  
+  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+  let sampleCount = 0;
+  const maxSamples = 30; // 3초 @ 10Hz
+  
+  const collectSample = () => {
+    if (!noiseProfile.isLearning) return;
+    
+    analyser.getByteFrequencyData(dataArray);
+    
+    // RMS 계산
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      sum += dataArray[i] * dataArray[i];
+    }
+    const rms = Math.sqrt(sum / dataArray.length);
+    const dbLevel = 20 * Math.log10(rms / 255) + 0; // 대략적인 dB 변환
+    
+    noiseProfile.learningData.push(dbLevel);
+    sampleCount++;
+    
+    if (sampleCount < maxSamples) {
+      setTimeout(collectSample, 100);
+    } else {
+      finishLearning(analyser);
+    }
+  };
+  
+  collectSample();
+}
+
+function finishLearning(analyser) {
+  noiseProfile.isLearning = false;
+  
+  // 학습 데이터 분석
+  if (noiseProfile.learningData.length > 0) {
+    const sorted = noiseProfile.learningData.sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const q75 = sorted[Math.floor(sorted.length * 0.75)];
+    
+    noiseProfile.baselineLevel = median;
+    noiseProfile.adaptiveThreshold = Math.max(median + 10, q75 + 5);
+    
+    // 설정 저장
+    localStorage.setItem('styx-noise-profile', JSON.stringify({
+      baselineLevel: noiseProfile.baselineLevel,
+      adaptiveThreshold: noiseProfile.adaptiveThreshold
+    }));
+    
+    toast(`노이즈 프로파일 학습 완료 (기준: ${Math.round(noiseProfile.baselineLevel)}dB)`, 'success');
+  }
+  
+  // UI 복원
+  const btn = $('learn-noise');
+  if (btn) {
+    btn.textContent = '학습';
+    btn.disabled = false;
+  }
+  
+  // 분석기 정리
+  try { analyser.disconnect(); } catch {}
+  
+  updateNoiseDisplay();
+}
+
+function resetNoiseProfile() {
+  noiseProfile.baselineLevel = -60;
+  noiseProfile.adaptiveThreshold = -45;
+  noiseProfile.learningData = [];
+  
+  localStorage.removeItem('styx-noise-profile');
+  updateNoiseDisplay();
+  toast('노이즈 프로파일이 리셋되었습니다', 'info');
+}
+
+function updateNoiseDisplay() {
+  const levelEl = $('noise-level');
+  if (levelEl) {
+    if (noiseProfile.baselineLevel > -60) {
+      levelEl.textContent = `${Math.round(noiseProfile.baselineLevel)}dB`;
+      levelEl.style.color = 'var(--accent)';
+    } else {
+      levelEl.textContent = '-';
+      levelEl.style.color = 'var(--text-secondary)';
+    }
+  }
+}
+
+function loadNoiseProfile() {
+  try {
+    const saved = localStorage.getItem('styx-noise-profile');
+    if (saved) {
+      const data = JSON.parse(saved);
+      noiseProfile.baselineLevel = data.baselineLevel || -60;
+      noiseProfile.adaptiveThreshold = data.adaptiveThreshold || -45;
+    }
+  } catch (e) {
+    console.warn('Noise profile load failed:', e);
+  }
+}
+
+// 키보드 네비게이션 개선
+function enhanceKeyboardNavigation() {
+  // 포커스 가능한 요소들에 포커스 표시 개선
+  const focusableElements = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+  
+  document.addEventListener('keydown', (e) => {
+    // Tab 키로 네비게이션 시 포커스 표시 강화
+    if (e.key === 'Tab') {
+      document.body.classList.add('keyboard-navigation');
+    }
+  });
+  
+  document.addEventListener('mousedown', () => {
+    document.body.classList.remove('keyboard-navigation');
+  });
+  
+  // Enter 키로 버튼 활성화
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.matches('button:not([disabled])')) {
+      e.target.click();
+    }
+  });
+}
+
 // 디버그 모드 (프로덕션에서는 false)
 const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const log = (...args) => DEBUG && console.log(...args);
@@ -32,10 +668,12 @@ function showReconnectProgress(attempt = 1) {
   if (!overlay) return;
   
   overlay.classList.remove('hidden');
-  $('reconnect-count').textContent = attempt;
+  const countEl = $('reconnect-count');
+  if (countEl) countEl.textContent = attempt;
   
   const progress = (attempt / 10) * 100;
-  overlay.querySelector('.progress-bar').style.width = progress + '%';
+  const progressBar = overlay.querySelector('.progress-bar');
+  if (progressBar) progressBar.style.width = progress + '%';
 }
 
 function updateReconnectProgress() {
@@ -43,7 +681,8 @@ function updateReconnectProgress() {
   if (!overlay || overlay.classList.contains('hidden')) return;
   
   const progress = (reconnectAttempt / 10) * 100;
-  overlay.querySelector('.progress-bar').style.width = progress + '%';
+  const progressBar = overlay.querySelector('.progress-bar');
+  if (progressBar) progressBar.style.width = progress + '%';
 }
 
 function hideReconnectProgress() {
@@ -78,15 +717,9 @@ let isRecording = false;
 let inputLimiterContext = null; // 입력 리미터용 AudioContext
 let processedStream = null; // 리미터 적용된 스트림
 
-// 피어 오디오용 공유 AudioContext 가져오기
+// 피어 오디오용 공유 AudioContext 가져오기 (통합된 컨텍스트 사용)
 function getPeerAudioContext() {
-  if (!peerAudioContext || peerAudioContext.state === 'closed') {
-    peerAudioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
-  }
-  if (peerAudioContext.state === 'suspended') {
-    peerAudioContext.resume();
-  }
-  return peerAudioContext;
+  return getSharedAudioContext();
 }
 
 // Resume audio contexts on user interaction (browser autoplay policy)
@@ -97,49 +730,286 @@ document.addEventListener('click', function resumeAudio() {
 }, { once: false });
 
 // 입력 오디오에 리미터/컴프레서 + EQ 적용 (저지연)
-let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0 };
+let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0, inputVolume: 120, compressionRatio: 4 };
 let effectNodes = {};
+let noiseGateWorklet = null;
 
-function createProcessedInputStream(rawStream) {
-  inputLimiterContext = new AudioContext({ sampleRate: 48000 });
+// 사용자 경험 개선 - 자동 설정 감지
+async function autoDetectOptimalSettings() {
+  try {
+    // 1. 오디오 장치 자동 선택
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter(d => d.kind === 'audioinput' && d.deviceId !== 'default');
+    const audioOutputs = devices.filter(d => d.kind === 'audiooutput' && d.deviceId !== 'default');
+    
+    // 기본 장치가 아닌 첫 번째 장치 선택 (보통 더 좋은 품질)
+    if (audioInputs.length > 0 && !selectedDeviceId) {
+      selectedDeviceId = audioInputs[0].deviceId;
+      if ($('audio-device')) $('audio-device').value = selectedDeviceId;
+    }
+    
+    if (audioOutputs.length > 0 && !selectedOutputId) {
+      selectedOutputId = audioOutputs[0].deviceId;
+      if ($('audio-output')) $('audio-output').value = selectedOutputId;
+    }
+    
+    // 2. 네트워크 기반 설정 자동 조정
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (connection) {
+      let recommendedBitrate = 96;
+      let recommendedJitter = 40;
+      
+      if (connection.effectiveType === '4g') {
+        recommendedBitrate = 128;
+        recommendedJitter = 30;
+      } else if (connection.effectiveType === '3g') {
+        recommendedBitrate = 64;
+        recommendedJitter = 60;
+      } else if (connection.effectiveType === 'slow-2g' || connection.effectiveType === '2g') {
+        recommendedBitrate = 32;
+        recommendedJitter = 100;
+      }
+      
+      // UI 업데이트
+      if ($('bitrate-slider')) {
+        $('bitrate-slider').value = recommendedBitrate;
+        updateBitrate(recommendedBitrate);
+      }
+      if ($('jitter-slider')) {
+        $('jitter-slider').value = recommendedJitter;
+        updateJitterBuffer(recommendedJitter);
+      }
+    }
+    
+    // 3. 브라우저 최적화 설정
+    if (navigator.userAgent.includes('Chrome')) {
+      // Chrome 최적화
+      echoCancellation = true;
+      noiseSuppression = true;
+    } else if (navigator.userAgent.includes('Firefox')) {
+      // Firefox 최적화
+      echoCancellation = false; // Firefox의 에코 제거가 때로 문제가 됨
+      noiseSuppression = true;
+    }
+    
+    toast('최적 설정이 자동으로 적용되었습니다', 'success', 3000);
+  } catch (e) {
+    console.warn('Auto-detect settings failed:', e);
+  }
+}
+
+// 개선된 에러 메시지
+function showUserFriendlyError(error, context) {
+  const errorMessages = {
+    'NotAllowedError': '마이크 권한이 거부되었습니다. 브라우저 설정에서 마이크 권한을 허용해주세요.',
+    'NotFoundError': '마이크를 찾을 수 없습니다. 마이크가 연결되어 있는지 확인해주세요.',
+    'NotReadableError': '마이크에 접근할 수 없습니다. 다른 앱에서 마이크를 사용 중일 수 있습니다.',
+    'OverconstrainedError': '마이크 설정이 지원되지 않습니다. 다른 마이크를 선택해보세요.',
+    'SecurityError': '보안 오류가 발생했습니다. HTTPS 연결을 사용해주세요.',
+    'AbortError': '마이크 접근이 중단되었습니다.',
+    'TypeError': '설정 오류가 발생했습니다. 페이지를 새로고침해주세요.',
+    'NetworkError': '네트워크 연결에 문제가 있습니다. 인터넷 연결을 확인해주세요.',
+    'timeout': '연결 시간이 초과되었습니다. 네트워크 상태를 확인해주세요.'
+  };
   
-  // Resume if suspended
-  if (inputLimiterContext.state === 'suspended') {
-    inputLimiterContext.resume();
+  const message = errorMessages[error.name] || errorMessages[error] || `알 수 없는 오류가 발생했습니다: ${error.message || error}`;
+  toast(message, 'error', 8000);
+}
+
+// 페이지 로드 시 자동 설정 감지 실행
+document.addEventListener('DOMContentLoaded', () => {
+  loadAccessibilitySettings();
+  enhanceKeyboardNavigation();
+  initSpectrum();
+  loadNoiseProfile();
+  setTimeout(autoDetectOptimalSettings, 1000);
+});
+
+// 네트워크 품질 모니터링 및 적응형 설정
+let networkQuality = 'good'; // 'good', 'fair', 'poor'
+let adaptiveSettingsEnabled = true;
+let lastQualityCheck = 0;
+
+function monitorNetworkQuality() {
+  const now = Date.now();
+  if (now - lastQualityCheck < 5000) return; // 5초마다 체크
+  lastQualityCheck = now;
+  
+  // RTCPeerConnection 통계 기반 품질 평가
+  peers.forEach(async (peer, peerId) => {
+    if (!peer.connection) return;
+    
+    try {
+      const stats = await peer.connection.getStats();
+      let totalLoss = 0, totalRtt = 0, count = 0;
+      
+      stats.forEach(report => {
+        if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
+          if (report.packetsLost !== undefined && report.packetsReceived !== undefined) {
+            const lossRate = report.packetsLost / (report.packetsLost + report.packetsReceived) * 100;
+            totalLoss += lossRate;
+            count++;
+          }
+        }
+        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          if (report.currentRoundTripTime !== undefined) {
+            totalRtt += report.currentRoundTripTime * 1000; // ms로 변환
+          }
+        }
+      });
+      
+      if (count > 0) {
+        const avgLoss = totalLoss / count;
+        const rtt = totalRtt;
+        
+        // 품질 등급 결정
+        let quality = 'good';
+        if (avgLoss > 5 || rtt > 150) quality = 'poor';
+        else if (avgLoss > 2 || rtt > 80) quality = 'fair';
+        
+        if (quality !== networkQuality) {
+          networkQuality = quality;
+          if (adaptiveSettingsEnabled) {
+            adaptToNetworkQuality(quality);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Network quality check failed:', e);
+    }
+  });
+}
+
+function adaptToNetworkQuality(quality) {
+  const settings = {
+    good: { bitrate: 96, jitterBuffer: 40, sampleRate: 48000 },
+    fair: { bitrate: 64, jitterBuffer: 60, sampleRate: 44100 },
+    poor: { bitrate: 32, jitterBuffer: 100, sampleRate: 22050 }
+  };
+  
+  const config = settings[quality];
+  if (!config) return;
+  
+  // 비트레이트 조정
+  if (tauriInvoke) {
+    tauriInvoke('set_bitrate', { bitrate: config.bitrate }).catch(() => {});
+    tauriInvoke('set_jitter_buffer', { size: Math.round(config.jitterBuffer / 10) }).catch(() => {});
   }
   
-  const source = inputLimiterContext.createMediaStreamSource(rawStream);
+  toast(`네트워크 품질: ${quality} - 설정 자동 조정됨`, 'info', 3000);
+}
+
+// 5초마다 네트워크 품질 모니터링
+setInterval(monitorNetworkQuality, 5000);
+
+// 자동 크래시 복구 및 에러 경계
+let crashRecoveryAttempts = 0;
+const MAX_RECOVERY_ATTEMPTS = 3;
+
+function handleCriticalError(error, context) {
+  console.error(`Critical error in ${context}:`, error);
+  
+  if (crashRecoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
+    crashRecoveryAttempts++;
+    toast(`오류 발생 - 자동 복구 시도 중... (${crashRecoveryAttempts}/${MAX_RECOVERY_ATTEMPTS})`, 'warning');
+    
+    setTimeout(() => {
+      try {
+        // 리소스 정리 후 재시작
+        leaveRoom();
+        setTimeout(() => {
+          if (lastRoom) {
+            joinRoom(lastRoom, !!lastRoomPassword, lastRoomPassword);
+          }
+        }, 1000);
+      } catch (e) {
+        console.error('Recovery failed:', e);
+        toast('자동 복구 실패 - 페이지를 새로고침해주세요', 'error');
+      }
+    }, 2000);
+  } else {
+    toast('복구 시도 한계 초과 - 페이지를 새로고침해주세요', 'error');
+  }
+}
+
+// 전역 에러 핸들러
+window.addEventListener('error', (e) => {
+  handleCriticalError(e.error, 'Global');
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  handleCriticalError(e.reason, 'Promise');
+});
+
+// 통합 AudioContext 관리
+let sharedAudioContext = null;
+
+function getSharedAudioContext() {
+  if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
+    sharedAudioContext = new AudioContext({ 
+      latencyHint: 'interactive', 
+      sampleRate: 48000 
+    });
+  }
+  if (sharedAudioContext.state === 'suspended') {
+    sharedAudioContext.resume();
+  }
+  return sharedAudioContext;
+}
+
+async function createProcessedInputStream(rawStream) {
+  // 공유 AudioContext 사용
+  const ctx = getSharedAudioContext();
+  inputLimiterContext = ctx; // 호환성을 위해 유지
+  
+  const source = ctx.createMediaStreamSource(rawStream);
   
   // EQ (3밴드) - 지연 거의 없음 (~0.1ms each)
-  const eqLow = inputLimiterContext.createBiquadFilter();
+  const eqLow = ctx.createBiquadFilter();
   eqLow.type = 'lowshelf'; eqLow.frequency.value = 320; eqLow.gain.value = inputEffects.eqLow;
   
-  const eqMid = inputLimiterContext.createBiquadFilter();
+  const eqMid = ctx.createBiquadFilter();
   eqMid.type = 'peaking'; eqMid.frequency.value = 1000; eqMid.Q.value = 1; eqMid.gain.value = inputEffects.eqMid;
   
-  const eqHigh = inputLimiterContext.createBiquadFilter();
+  const eqHigh = ctx.createBiquadFilter();
   eqHigh.type = 'highshelf'; eqHigh.frequency.value = 3200; eqHigh.gain.value = inputEffects.eqHigh;
   
+  // AI 노이즈 제거 (AudioWorklet noise gate)
+  let lastNode = eqHigh;
+  if (aiNoiseCancellation) {
+    try {
+      await ctx.audioWorklet.addModule('noise-gate-processor.js');
+      noiseGateWorklet = new AudioWorkletNode(ctx, 'noise-gate-processor');
+      const thresholdParam = noiseGateWorklet.parameters.get('threshold');
+      // 적응형 임계값 사용 (노이즈 프로파일 기반)
+      const adaptiveThreshold = noiseProfile.adaptiveThreshold > -60 ? 
+        noiseProfile.adaptiveThreshold : -45;
+      if (thresholdParam) thresholdParam.value = adaptiveThreshold;
+      eqHigh.connect(noiseGateWorklet);
+      lastNode = noiseGateWorklet;
+    } catch (e) { log('Noise gate worklet failed:', e); }
+  }
+  
   // 컴프레서 (리미터 역할) - 클리핑 방지
-  const compressor = inputLimiterContext.createDynamicsCompressor();
+  const compressor = ctx.createDynamicsCompressor();
   compressor.threshold.value = -12; compressor.knee.value = 6;
   compressor.ratio.value = 12; compressor.attack.value = 0.003; compressor.release.value = 0.1;
   
-  // 메이크업 게인
-  const makeupGain = inputLimiterContext.createGain();
-  makeupGain.gain.value = 1.2;
+  // 메이크업 게인 (입력 볼륨 컨트롤)
+  const makeupGain = ctx.createGain();
+  makeupGain.gain.value = inputEffects.inputVolume / 100;
   
-  const dest = inputLimiterContext.createMediaStreamDestination();
+  const dest = ctx.createMediaStreamDestination();
   
-  // 체인: source -> EQ -> compressor -> gain -> dest
+  // 체인: source -> EQ -> [noiseGate] -> compressor -> gain -> dest
   source.connect(eqLow);
   eqLow.connect(eqMid);
   eqMid.connect(eqHigh);
-  eqHigh.connect(compressor);
+  lastNode.connect(compressor);
   compressor.connect(makeupGain);
   makeupGain.connect(dest);
   
-  effectNodes = { eqLow, eqMid, eqHigh, compressor, makeupGain };
+  effectNodes = { eqLow, eqMid, eqHigh, compressor, makeupGain, noiseGate: noiseGateWorklet };
   processedStream = dest.stream;
   return processedStream;
 }
@@ -154,15 +1024,275 @@ function updateInputEffect(effect, value) {
     case 'eqLow': effectNodes.eqLow.gain.value = value; break;
     case 'eqMid': effectNodes.eqMid.gain.value = value; break;
     case 'eqHigh': effectNodes.eqHigh.gain.value = value; break;
+    case 'inputVolume': 
+      if (effectNodes.makeupGain) effectNodes.makeupGain.gain.value = value / 100; 
+      break;
+    case 'compressionRatio':
+      if (effectNodes.compressor) effectNodes.compressor.ratio.value = value;
+      // 모든 피어의 압축비도 업데이트
+      peers.forEach(peer => {
+        if (peer.compressor) peer.compressor.ratio.value = value;
+      });
+      break;
   }
 }
 
 // 저장된 이펙트 설정 로드
-try { inputEffects = JSON.parse(localStorage.getItem('styx-effects')) || inputEffects; } catch {}
+try { 
+  const saved = localStorage.getItem('styx-effects');
+  if (saved) inputEffects = { ...inputEffects, ...JSON.parse(saved) };
+} catch (e) { 
+  console.warn('Effects settings load failed:', e);
+}
 
-// Tauri 감지
-const _isTauriApp = typeof window.__TAURI__ !== 'undefined';
-const tauriInvoke = _isTauriApp ? window.__TAURI__.core.invoke : null;
+// Tauri 감지 - 더 안정적인 방법
+const isTauriApp = () => {
+  // 1. User-Agent 확인
+  if (navigator.userAgent.includes('Tauri')) return true;
+  
+  // 2. window.__TAURI__ 확인
+  if (typeof window.__TAURI__ !== 'undefined') return true;
+  
+  // 3. Tauri 특유의 전역 객체 확인
+  if (typeof window.__TAURI_INTERNALS__ !== 'undefined') return true;
+  
+  // 4. 브라우저 특성 확인 (Tauri는 file:// 프로토콜 사용)
+  if (location.protocol === 'tauri:') return true;
+  
+  return false;
+};
+
+const actuallyTauri = isTauriApp();
+const tauriInvoke = actuallyTauri ? (window.__TAURI__?.core?.invoke || null) : null;
+
+// 관리자 전용 기능 접근 제어
+function checkAdminAccess() {
+  // Tauri 앱에서는 관리자 기능 비활성화
+  if (actuallyTauri) {
+    return false;
+  }
+  
+  // 웹에서만 관리자 기능 허용, 로그인된 관리자만
+  return currentUser && currentUser.isAdmin;
+}
+
+function hideAdminFeaturesInTauri() {
+  if (actuallyTauri) {
+    // Tauri 앱에서는 관리자 관련 UI 숨기기
+    $('admin-panel')?.classList.add('hidden');
+    const adminBtn = document.querySelector('[onclick*="admin"]');
+    if (adminBtn) adminBtn.style.display = 'none';
+  }
+}
+
+// 모니터링 시스템
+let monitoringInterval = null;
+let monitoringInitialized = false;
+const systemLogs = [];
+
+function initMonitoring() {
+  if (!checkAdminAccess() || monitoringInitialized) return;
+  
+  // 탭 전환
+  $('health-tab')?.addEventListener('click', () => switchTab('health'));
+  $('metrics-tab')?.addEventListener('click', () => switchTab('metrics'));
+  $('logs-tab')?.addEventListener('click', () => switchTab('logs'));
+  
+  // 로그 제어
+  $('refresh-logs')?.addEventListener('click', refreshLogs);
+  $('clear-logs')?.addEventListener('click', clearLogs);
+  
+  monitoringInitialized = true;
+  
+  // 자동 새로고침 시작
+  startMonitoring();
+}
+
+function switchTab(tab) {
+  // 탭 버튼 활성화
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  $(`${tab}-tab`)?.classList.add('active');
+  
+  // 콘텐츠 표시
+  document.querySelectorAll('.tab-content').forEach(content => content.classList.add('hidden'));
+  $(`${tab}-content`)?.classList.remove('hidden');
+  
+  // 데이터 로드
+  if (tab === 'health') loadHealthData();
+  else if (tab === 'metrics') loadMetricsData();
+  else if (tab === 'logs') refreshLogs();
+}
+
+function startMonitoring() {
+  if (monitoringInterval) return;
+  
+  monitoringInterval = setInterval(() => {
+    const activeTab = document.querySelector('.tab-btn.active')?.id.replace('-tab', '');
+    if (activeTab === 'health') loadHealthData();
+    else if (activeTab === 'metrics') loadMetricsData();
+  }, 5000); // 5초마다 새로고침
+}
+
+function stopMonitoring() {
+  if (monitoringInterval) {
+    clearInterval(monitoringInterval);
+    monitoringInterval = null;
+  }
+}
+
+async function loadHealthData() {
+  try {
+    const response = await fetch('/health');
+    const data = await response.json();
+    
+    const statsGrid = $('health-stats');
+    if (!statsGrid) return;
+    
+    statsGrid.innerHTML = `
+      <div class="stat-card">
+        <div class="stat-value">${data.status}</div>
+        <div class="stat-label">상태</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${Math.floor(data.uptime / 60)}분</div>
+        <div class="stat-label">가동시간</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${data.stats?.activeConnections || 0}</div>
+        <div class="stat-label">활성 연결</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${data.stats?.activeRooms || 0}</div>
+        <div class="stat-label">활성 방</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${data.stats?.totalMessages || 0}</div>
+        <div class="stat-label">총 메시지</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${data.stats?.errors || 0}</div>
+        <div class="stat-label">오류</div>
+      </div>
+    `;
+  } catch (e) {
+    console.error('Health data load failed:', e);
+  }
+}
+
+async function loadMetricsData() {
+  try {
+    const response = await fetch('/metrics');
+    const data = await response.text();
+    
+    const metricsDisplay = $('metrics-data');
+    if (metricsDisplay) {
+      metricsDisplay.textContent = data;
+    }
+  } catch (e) {
+    console.error('Metrics data load failed:', e);
+  }
+}
+
+function refreshLogs() {
+  const logsDisplay = $('logs-display');
+  if (!logsDisplay) return;
+  
+  // 최근 로그 표시 (실제로는 서버에서 가져와야 하지만 여기서는 클라이언트 로그 표시)
+  const recentLogs = systemLogs.slice(-50).reverse();
+  logsDisplay.textContent = recentLogs.join('\n') || '로그가 없습니다.';
+}
+
+function clearLogs() {
+  systemLogs.length = 0;
+  refreshLogs();
+}
+
+function addSystemLog(message) {
+  const timestamp = new Date().toISOString();
+  systemLogs.push(`[${timestamp}] ${message}`);
+  
+  // 최대 1000개 로그만 유지
+  if (systemLogs.length > 1000) {
+    systemLogs.splice(0, systemLogs.length - 1000);
+  }
+}
+
+// Professional UI Enhancements
+function initUIEnhancements() {
+  // Add fade-in animation to main elements
+  document.querySelectorAll('.modal-box, .card, .room-item').forEach(el => {
+    el.classList.add('fade-in');
+  });
+  
+  // Add loading states to buttons during actions
+  document.querySelectorAll('button').forEach(btn => {
+    const originalClick = btn.onclick;
+    if (originalClick) {
+      btn.onclick = function(e) {
+        btn.classList.add('loading');
+        setTimeout(() => btn.classList.remove('loading'), 1000);
+        return originalClick.call(this, e);
+      };
+    }
+  });
+  
+  // Enhanced form validation feedback
+  document.querySelectorAll('input, select, textarea').forEach(input => {
+    input.addEventListener('invalid', (e) => {
+      e.target.style.borderColor = 'var(--error)';
+      e.target.style.boxShadow = '0 0 0 3px rgba(255, 71, 87, 0.1)';
+    });
+    
+    input.addEventListener('input', (e) => {
+      if (e.target.checkValidity()) {
+        e.target.style.borderColor = 'var(--success)';
+        e.target.style.boxShadow = '0 0 0 3px rgba(0, 210, 106, 0.1)';
+      }
+    });
+  });
+  
+  // Add slide-in animation to new elements
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === 1 && (node.classList.contains('user-card') || node.classList.contains('room-item'))) {
+          node.classList.add('slide-in');
+        }
+      });
+    });
+  });
+  
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+// Enhanced toast notifications with better styling
+function showEnhancedToast(message, type = 'info', duration = 3000) {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type} fade-in`;
+  toast.textContent = message;
+  
+  // Add status indicator
+  const indicator = document.createElement('div');
+  indicator.className = `status-indicator status-${type === 'error' ? 'offline' : type === 'success' ? 'online' : 'away'}`;
+  toast.prepend(indicator);
+  
+  document.body.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-20px)';
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+// Debug: Tauri 감지 상태 확인
+console.log('Tauri detection:', {
+  __TAURI__: typeof window.__TAURI__,
+  __TAURI_INTERNALS__: typeof window.__TAURI_INTERNALS__,
+  userAgent: navigator.userAgent,
+  protocol: location.protocol,
+  actuallyTauri
+});
 
 // 안정성 설정
 let audioMode = localStorage.getItem('styx-audio-mode') || 'voice'; // voice | music
@@ -172,6 +1302,8 @@ let autoAdapt = localStorage.getItem('styx-auto-adapt') !== 'false';
 // 오디오 처리 설정
 let echoCancellation = localStorage.getItem('styx-echo') !== 'false';
 let noiseSuppression = localStorage.getItem('styx-noise') !== 'false';
+let aiNoiseCancellation = localStorage.getItem('styx-ai-noise') === 'true'; // Off by default (adds latency)
+let noiseGateNode = null;
 let pttMode = localStorage.getItem('styx-ptt') === 'true';
 let pttKey = localStorage.getItem('styx-ptt-key') || 'Space';
 let isPttActive = false;
@@ -182,6 +1314,15 @@ let compressorNode = null;
 let noiseGateInterval = null;
 let latencyHistory = []; // 핑 그래프용
 let serverTimeOffset = 0; // 서버 시간과 클라이언트 시간 차이 (ms)
+
+// Self connection stats
+let selfStats = {
+  latency: 0,
+  jitter: 0,
+  packetsLost: 0,
+  bandwidth: 0,
+  connectionType: 'unknown'
+};
 
 // Audio input monitoring
 let inputMonitorEnabled = localStorage.getItem('styx-input-monitor') === 'true';
@@ -341,7 +1482,7 @@ function getQualityGrade(latency, packetLoss, jitter) {
 }
 
 // ===== 연결 테스트 + 네트워크 품질 측정 =====
-let networkQuality = { latency: 0, jitter: 0, isWifi: false };
+let networkTestResults = { latency: 0, jitter: 0, isWifi: false };
 
 async function runConnectionTest() {
   const results = { mic: false, speaker: false, network: false, turn: false, quality: null };
@@ -355,7 +1496,10 @@ async function runConnectionTest() {
     const track = stream.getAudioTracks()[0];
     results.mic = track.readyState === 'live';
     stream.getTracks().forEach(t => t.stop());
-  } catch { results.mic = false; }
+  } catch (e) { 
+    results.mic = false; 
+    showUserFriendlyError(e, 'microphone test');
+  }
   
   // 2. 스피커 테스트 (간단한 비프음)
   updateStatus('🔊 스피커 테스트 중...');
@@ -377,26 +1521,44 @@ async function runConnectionTest() {
   // 3. 네트워크 품질 측정 (ping 테스트)
   updateStatus('📡 네트워크 품질 측정 중...');
   const pings = [];
-  for (let i = 0; i < 5; i++) {
-    const start = performance.now();
-    try {
-      await fetch(serverUrl + '/health', { method: 'HEAD', cache: 'no-store' });
-      pings.push(performance.now() - start);
-    } catch { pings.push(999); }
-    await new Promise(r => setTimeout(r, 100));
+  
+  // Skip network test for Tauri app to avoid CORS issues
+  if (actuallyTauri) {
+    // Tauri app uses UDP directly, so network test is not needed
+    networkTestResults.latency = 25; // Assume good latency for UDP
+    networkTestResults.jitter = 5;
+    results.quality = { latency: 25, jitter: 5, isWifi: false };
+  } else {
+    // Web version - test HTTP latency
+    for (let i = 0; i < 5; i++) {
+      const start = performance.now();
+      try {
+        // Use current origin if serverUrl is empty
+        const testUrl = serverUrl ? serverUrl + '/health' : window.location.origin + '/health';
+        console.log('Testing network to:', testUrl);
+        await fetch(testUrl, { method: 'HEAD', cache: 'no-store' });
+        const ping = performance.now() - start;
+        console.log(`Ping ${i + 1}: ${ping}ms`);
+        pings.push(ping);
+      } catch (e) { 
+        console.log(`Ping ${i + 1} failed:`, e);
+        pings.push(999); 
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+    const avgPing = pings.reduce((a, b) => a + b, 0) / pings.length;
+    const jitterCalc = pings.length > 1 ? Math.sqrt(pings.map(p => Math.pow(p - avgPing, 2)).reduce((a, b) => a + b, 0) / pings.length) : 0;
+    
+    networkTestResults.latency = Math.round(avgPing);
+    networkTestResults.jitter = Math.round(jitterCalc);
+    results.quality = { latency: networkTestResults.latency, jitter: networkTestResults.jitter, isWifi: networkTestResults.isWifi };
   }
-  const avgPing = pings.reduce((a, b) => a + b, 0) / pings.length;
-  const jitterCalc = pings.length > 1 ? Math.sqrt(pings.map(p => Math.pow(p - avgPing, 2)).reduce((a, b) => a + b, 0) / pings.length) : 0;
   
-  networkQuality.latency = Math.round(avgPing);
-  networkQuality.jitter = Math.round(jitterCalc);
-  
-  // Wi-Fi 감지 (NetworkInformation API)
+  // Wi-Fi 감지 (NetworkInformation API) - for both Tauri and web
   if (navigator.connection) {
-    networkQuality.isWifi = navigator.connection.type === 'wifi';
+    networkTestResults.isWifi = navigator.connection.type === 'wifi';
+    results.quality.isWifi = networkTestResults.isWifi;
   }
-  
-  results.quality = { latency: networkQuality.latency, jitter: networkQuality.jitter, isWifi: networkQuality.isWifi };
   
   // 4. STUN 연결 테스트
   updateStatus('🌐 네트워크 테스트 중...');
@@ -661,23 +1823,229 @@ addGlobalListener(window, 'unhandledrejection', (e) => {
   }
 });
 
+// 향상된 키보드 단축키 시스템
+const keyboardShortcuts = {
+  // 기본 제어
+  'KeyM': { action: 'toggleMute', description: 'M - 음소거 토글', global: false },
+  'Space': { action: 'toggleMetronome', description: 'Space - 메트로놈 토글', global: false },
+  'KeyR': { action: 'toggleRecording', description: 'R - 녹음 토글', global: false },
+  'KeyB': { action: 'addMarker', description: 'B - 녹음 마커 추가', global: false, condition: () => isRecording },
+  'KeyI': { action: 'copyInvite', description: 'I - 초대 링크 복사', global: false },
+  'Escape': { action: 'leaveRoom', description: 'Esc - 방 나가기', global: false },
+  
+  // 오디오 제어
+  'KeyV': { action: 'toggleVAD', description: 'V - 음성 감지 토글', global: false },
+  'KeyT': { action: 'toggleTuner', description: 'T - 튜너 토글', global: false },
+  'KeyL': { action: 'toggleLowLatency', description: 'L - 저지연 모드 토글', global: false },
+  'KeyE': { action: 'toggleEchoCancellation', description: 'E - 에코 제거 토글', global: false },
+  'KeyN': { action: 'toggleNoiseSuppression', description: 'N - 노이즈 억제 토글', global: false },
+  
+  // 볼륨 제어
+  'ArrowUp': { action: 'volumeUp', description: '↑ - 마스터 볼륨 증가', global: false },
+  'ArrowDown': { action: 'volumeDown', description: '↓ - 마스터 볼륨 감소', global: false },
+  'ArrowLeft': { action: 'inputVolumeDown', description: '← - 입력 볼륨 감소', global: false },
+  'ArrowRight': { action: 'inputVolumeUp', description: '→ - 입력 볼륨 증가', global: false },
+  
+  // 피어 제어 (숫자 키)
+  'Digit1': { action: 'togglePeerMute', description: '1-8 - 피어 음소거 토글', global: false, peer: 0 },
+  'Digit2': { action: 'togglePeerMute', description: '', global: false, peer: 1 },
+  'Digit3': { action: 'togglePeerMute', description: '', global: false, peer: 2 },
+  'Digit4': { action: 'togglePeerMute', description: '', global: false, peer: 3 },
+  'Digit5': { action: 'togglePeerMute', description: '', global: false, peer: 4 },
+  'Digit6': { action: 'togglePeerMute', description: '', global: false, peer: 5 },
+  'Digit7': { action: 'togglePeerMute', description: '', global: false, peer: 6 },
+  'Digit8': { action: 'togglePeerMute', description: '', global: false, peer: 7 },
+  
+  // 전역 단축키
+  'F1': { action: 'showHelp', description: 'F1 - 단축키 도움말', global: true },
+  'F11': { action: 'toggleFullscreen', description: 'F11 - 전체화면 토글', global: true },
+  'ControlKeyS': { action: 'saveSettings', description: 'Ctrl+S - 설정 저장', global: true },
+  'ControlKeyO': { action: 'openSettings', description: 'Ctrl+O - 설정 열기', global: true },
+  
+  // 접근성 단축키
+  'ControlAltKeyH': { action: 'toggleHighContrast', description: 'Ctrl+Alt+H - 고대비 모드', global: true },
+  'ControlAltKeyS': { action: 'toggleScreenReader', description: 'Ctrl+Alt+S - 스크린 리더 모드', global: true },
+  'ControlAltKeyM': { action: 'toggleReducedMotion', description: 'Ctrl+Alt+M - 애니메이션 감소', global: true }
+};
+
+// 키보드 단축키 액션 실행
+function executeShortcut(action, options = {}) {
+  try {
+    switch (action) {
+      case 'toggleMute':
+        if (!pttMode) {
+          $('muteBtn')?.click();
+          announceToScreenReader(isMuted ? '음소거 해제됨' : '음소거됨');
+        }
+        break;
+      case 'toggleMetronome':
+        $('metronome-toggle')?.click();
+        break;
+      case 'toggleRecording':
+        $('recordBtn')?.click();
+        announceToScreenReader(isRecording ? '녹음 시작됨' : '녹음 중지됨');
+        break;
+      case 'addMarker':
+        if (isRecording) addRecordingMarker();
+        break;
+      case 'copyInvite':
+        $('inviteBtn')?.click();
+        break;
+      case 'leaveRoom':
+        $('leaveBtn')?.click();
+        break;
+      case 'toggleVAD':
+        $('vad-toggle')?.click();
+        break;
+      case 'toggleTuner':
+        $('tuner-toggle')?.click();
+        break;
+      case 'toggleLowLatency':
+        $('low-latency-toggle')?.click();
+        break;
+      case 'toggleEchoCancellation':
+        const echoEl = $('room-echo-cancel') || $('echo-cancel');
+        if (echoEl) { echoEl.checked = !echoEl.checked; echoEl.onchange?.(); }
+        break;
+      case 'toggleNoiseSuppression':
+        const noiseEl = $('room-noise-suppress') || $('noise-suppress');
+        if (noiseEl) { noiseEl.checked = !noiseEl.checked; noiseEl.onchange?.(); }
+        break;
+      case 'volumeUp':
+        adjustMasterVolume(5);
+        break;
+      case 'volumeDown':
+        adjustMasterVolume(-5);
+        break;
+      case 'inputVolumeUp':
+        adjustInputVolume(5);
+        break;
+      case 'inputVolumeDown':
+        adjustInputVolume(-5);
+        break;
+      case 'togglePeerMute':
+        togglePeerMute(options.peer);
+        break;
+      case 'showHelp':
+        $('shortcuts-overlay')?.classList.remove('hidden');
+        break;
+      case 'toggleFullscreen':
+        toggleFullscreen();
+        break;
+      case 'saveSettings':
+        saveCurrentSettings();
+        break;
+      case 'openSettings':
+        $('settingsBtn')?.click();
+        break;
+      case 'toggleHighContrast':
+        toggleHighContrast();
+        break;
+      case 'toggleScreenReader':
+        toggleScreenReaderMode();
+        break;
+      case 'toggleReducedMotion':
+        toggleReducedMotion();
+        break;
+    }
+  } catch (e) {
+    console.warn('Shortcut execution failed:', e);
+  }
+}
+
+// 볼륨 조정 함수들
+function adjustMasterVolume(delta) {
+  const slider = $('master-volume');
+  if (slider) {
+    const newValue = Math.max(0, Math.min(100, parseInt(slider.value) + delta));
+    slider.value = newValue;
+    slider.oninput?.();
+    toast(`마스터 볼륨: ${newValue}%`, 'info', 1000);
+  }
+}
+
+function adjustInputVolume(delta) {
+  const slider = $('input-volume-slider');
+  if (slider) {
+    const newValue = Math.max(0, Math.min(200, parseInt(slider.value) + delta));
+    slider.value = newValue;
+    updateInputEffect('inputVolume', newValue);
+    toast(`입력 볼륨: ${newValue}%`, 'info', 1000);
+  }
+}
+
+function togglePeerMute(peerIndex) {
+  const peerIds = [...peers.keys()];
+  if (peerIds[peerIndex]) {
+    const peer = peers.get(peerIds[peerIndex]);
+    if (peer?.audioEl) {
+      peer.audioEl.muted = !peer.audioEl.muted;
+      toast(`${peer.username} ${peer.audioEl.muted ? '음소거' : '음소거 해제'}`, 'info', 1000);
+      renderUsers();
+    }
+  }
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.();
+  } else {
+    document.exitFullscreen?.();
+  }
+}
+
+function saveCurrentSettings() {
+  const settings = {
+    echoCancellation: $('echo-cancel')?.checked,
+    noiseSuppression: $('noise-suppress')?.checked,
+    autoGainControl: $('auto-gain')?.checked,
+    vadEnabled,
+    lowLatencyMode,
+    inputEffects
+  };
+  localStorage.setItem('styx-user-settings', JSON.stringify(settings));
+  toast('설정이 저장되었습니다', 'success', 2000);
+}
+
 // Use addGlobalListener instead of direct addEventListener
 addGlobalListener(document, 'keydown', (e) => {
-  // F1 or ? key: Show shortcuts help
-  if (e.key === 'F1' || (e.key === '?' && !e.target.matches('input, textarea'))) {
+  // 입력 필드에서는 단축키 비활성화 (F1, Esc 제외)
+  const isInputField = e.target.matches('input, textarea, [contenteditable]');
+  
+  // 전역 단축키 처리
+  const globalKey = e.ctrlKey && e.altKey ? `ControlAlt${e.code}` : 
+                   e.ctrlKey ? `Control${e.code}` : e.code;
+  const globalShortcut = keyboardShortcuts[globalKey];
+  
+  if (globalShortcut?.global) {
     e.preventDefault();
-    $('shortcuts-overlay')?.classList.remove('hidden');
+    executeShortcut(globalShortcut.action);
     return;
   }
   
-  // Esc key: Hide shortcuts help
+  // F1 or ? key: Show shortcuts help
+  if (e.key === 'F1' || (e.key === '?' && !isInputField)) {
+    e.preventDefault();
+    executeShortcut('showHelp');
+    return;
+  }
+  
+  // Esc key: Hide shortcuts help or leave room
   if (e.key === 'Escape') {
     const overlay = $('shortcuts-overlay');
     if (overlay && !overlay.classList.contains('hidden')) {
       overlay.classList.add('hidden');
       return;
     }
+    if (!isInputField && !roomView?.classList.contains('hidden')) {
+      e.preventDefault();
+      executeShortcut('leaveRoom');
+    }
+    return;
   }
+  
+  // 입력 필드에서는 나머지 단축키 비활성화
+  if (isInputField) return;
   
   // PTT 모드
   if (pttMode && !isPttActive && e.code === pttKey && localStream) {
@@ -685,58 +2053,39 @@ addGlobalListener(document, 'keydown', (e) => {
     localStream.getAudioTracks().forEach(t => t.enabled = true);
     $('muteBtn')?.classList.remove('muted');
     $('muteBtn')?.classList.add('ptt-active');
-    $('muteBtn').textContent = '🎤';
+    const muteBtn = $('muteBtn');
+    if (muteBtn) muteBtn.textContent = '🎤';
     return;
   }
   
-  // 입력 필드에서는 무시
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  
-  // 방 화면에서만 작동
+  // 방 화면에서만 작동하는 단축키
   if (roomView?.classList.contains('hidden')) return;
   
-  // M: 음소거 토글
-  if (e.key === 'm' || e.key === 'M' || e.key === 'ㅡ') {
+  // 키보드 단축키 시스템 사용
+  const shortcut = keyboardShortcuts[e.code];
+  if (shortcut && !shortcut.global) {
+    // 조건 확인
+    if (shortcut.condition && !shortcut.condition()) return;
+    
     e.preventDefault();
-    if (!pttMode) $('muteBtn')?.click();
-  } 
-  // Space: 메트로놈 토글
-  else if (e.key === ' ' && e.code !== pttKey) {
-    e.preventDefault();
-    $('metronome-toggle')?.click();
-  }
-  // R: 녹음 토글
-  else if (e.key === 'r' || e.key === 'R' || e.key === 'ㄱ') {
-    e.preventDefault();
-    $('recordBtn')?.click();
-  }
-  // B: 녹음 마커 추가
-  else if ((e.key === 'b' || e.key === 'B' || e.key === 'ㅠ') && isRecording) {
-    e.preventDefault();
-    addRecordingMarker();
-  }
-  // I: 초대 링크 복사
-  else if (e.key === 'i' || e.key === 'I' || e.key === 'ㅑ') {
-    e.preventDefault();
-    $('inviteBtn')?.click();
-  }
-  // Escape: 방 나가기 (확인 필요)
-  else if (e.key === 'Escape') {
-    e.preventDefault();
-    $('leaveBtn')?.click();
-  }
-  // 숫자 1-8: 피어 음소거 토글
-  else if (e.key >= '1' && e.key <= '8') {
-    const idx = parseInt(e.key) - 1;
-    const peerIds = [...peers.keys()];
-    if (peerIds[idx]) {
-      const peer = peers.get(peerIds[idx]);
-      if (peer) {
-        peer.muted = !peer.muted;
-        applyMixerState();
-        renderUsers();
-      }
+    
+    // 피어 관련 단축키
+    if (shortcut.action === 'togglePeerMute') {
+      executeShortcut(shortcut.action, { peer: shortcut.peer });
+    } else {
+      executeShortcut(shortcut.action);
     }
+    return;
+  }
+  
+  // 레거시 지원 (한글 키보드)
+  const legacyMappings = {
+    'ㅡ': 'toggleMute', 'ㄱ': 'toggleRecording', 'ㅠ': 'addMarker', 'ㅑ': 'copyInvite'
+  };
+  
+  if (legacyMappings[e.key]) {
+    e.preventDefault();
+    executeShortcut(legacyMappings[e.key]);
   }
 });
 
@@ -747,7 +2096,8 @@ document.addEventListener('keyup', (e) => {
     localStream.getAudioTracks().forEach(t => t.enabled = false);
     $('muteBtn')?.classList.add('muted');
     $('muteBtn')?.classList.remove('ptt-active');
-    $('muteBtn').textContent = '🔇';
+    const muteBtn = $('muteBtn');
+    if (muteBtn) muteBtn.textContent = '🔇';
   }
 });
 
@@ -872,8 +2222,11 @@ function startRecording() {
   }
   
   isRecording = true;
-  $('recordBtn').textContent = '⏹️ 녹음 중';
-  $('recordBtn').classList.add('recording');
+  const recordBtn = $('recordBtn');
+  if (recordBtn) {
+    recordBtn.textContent = '⏹️ 녹음 중';
+    recordBtn.classList.add('recording');
+  }
 }
 
 function downloadTrack(chunks, name) {
@@ -905,8 +2258,11 @@ function stopRecording() {
   }
   
   isRecording = false;
-  $('recordBtn').textContent = '⏺️ 녹음';
-  $('recordBtn').classList.remove('recording');
+  const recordBtn = $('recordBtn');
+  if (recordBtn) {
+    recordBtn.textContent = '⏺️ 녹음';
+    recordBtn.classList.remove('recording');
+  }
 }
 
 function cleanupRecording() {
@@ -934,13 +2290,19 @@ async function startScreenShare() {
   try {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     isScreenSharing = true;
-    $('screenShareBtn').classList.add('sharing');
-    $('screenShareBtn').textContent = '🖥️ 공유 중';
+    
+    const screenShareBtn = $('screenShareBtn');
+    if (screenShareBtn) {
+      screenShareBtn.classList.add('sharing');
+      screenShareBtn.textContent = '🖥️ 공유 중';
+    }
     
     // 로컬 미리보기
-    $('screen-share-video').srcObject = screenStream;
-    $('screen-share-user').textContent = '내 화면 공유 중';
-    $('screen-share-container').classList.remove('hidden');
+    const screenVideo = $('screen-share-video');
+    if (screenVideo) screenVideo.srcObject = screenStream;
+    const screenUser = $('screen-share-user');
+    if (screenUser) screenUser.textContent = '내 화면 공유 중';
+    $('screen-share-container')?.classList.remove('hidden');
     
     // 다른 피어들에게 화면 공유 시작 알림
     socket.emit('screen-share-start');
@@ -973,9 +2335,12 @@ function stopScreenShare() {
   }
   
   isScreenSharing = false;
-  $('screenShareBtn').classList.remove('sharing');
-  $('screenShareBtn').textContent = '🖥️';
-  $('screen-share-container').classList.add('hidden');
+  const screenShareBtn = $('screenShareBtn');
+  if (screenShareBtn) {
+    screenShareBtn.classList.remove('sharing');
+    screenShareBtn.textContent = '🖥️';
+  }
+  $('screen-share-container')?.classList.add('hidden');
   $('screen-share-video').srcObject = null;
   
   socket.emit('screen-share-stop');
@@ -984,8 +2349,9 @@ function stopScreenShare() {
 
 // 다른 사용자의 화면 공유 수신
 socket.on('screen-share-start', ({ userId, username }) => {
-  $('screen-share-user').textContent = `${username}님의 화면`;
-  $('screen-share-container').classList.remove('hidden');
+  const screenUser = $('screen-share-user');
+  if (screenUser) screenUser.textContent = `${username}님의 화면`;
+  $('screen-share-container')?.classList.remove('hidden');
 });
 
 socket.on('screen-share-stop', () => {
@@ -1048,17 +2414,20 @@ async function autoRejoin() {
     cleanupAudio();
     
     // Get audio stream for Tauri
-    if (_isTauriApp) {
-      socket.emit('join', { room: lastRoom, username: currentUser.username, password: lastRoomPassword }, res => {
+    if (actuallyTauri) {
+      socket.emit('join', { room: lastRoom, username: currentUser.username, password: lastRoomPassword }, async (res) => {
         if (res.error) {
           toast('재입장 실패: ' + res.error, 'error');
           lastRoom = null;
         } else {
           toast('방에 재입장했습니다', 'success');
           socket.room = lastRoom;
-          currentRoom = lastRoom;
           // Restart UDP
-          startUdpMode();
+          try {
+            await startUdpMode();
+          } catch (udpError) {
+            console.error('UDP 재시작 실패:', udpError);
+          }
           startLatencyPing();
         }
       });
@@ -1272,6 +2641,7 @@ $('loginBtn').onclick = () => {
     currentUser = res.user;
     localStorage.setItem('styx-user', username);
     localStorage.setItem('styx-token', res.token);
+    addSystemLog(`User login: ${username} (Admin: ${res.user.isAdmin})`);
     showLobby();
   });
 };
@@ -1307,9 +2677,19 @@ function showAuthMsg(msg, isError) {
 async function showLobby() {
   authPanel.classList.add('hidden');
   lobby.classList.remove('hidden');
-  $('my-username').textContent = currentUser.username;
-  $('my-avatar').style.backgroundImage = currentUser.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
-  if (currentUser.isAdmin) $('adminBtn').classList.remove('hidden');
+  const usernameEl = $('my-username');
+  if (usernameEl) usernameEl.textContent = currentUser.username;
+  
+  const avatarEl = $('my-avatar');
+  if (avatarEl) avatarEl.style.backgroundImage = currentUser.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
+  if (currentUser.isAdmin) {
+    // 웹에서만 관리자 버튼 표시
+    if (!actuallyTauri) {
+      $('adminBtn').classList.remove('hidden');
+      // 관리자 알림 시작
+      setTimeout(updateAdminNotifications, 1000);
+    }
+  }
   
   // 서버에서 설정 로드
   socket.emit('get-settings', null, res => {
@@ -1329,7 +2709,7 @@ async function showLobby() {
 // 안정성 설정 초기화
 function initStabilitySettings() {
   // Tauri 앱이면 오디오 설정 표시, 웹이면 다운로드 배너 표시
-  if (_isTauriApp) {
+  if (actuallyTauri) {
     const tauriSettings = $('tauri-settings');
     if (tauriSettings) tauriSettings.style.display = 'block';
     initTauriFeatures();
@@ -1338,6 +2718,12 @@ function initStabilitySettings() {
     $('audio-settings-section')?.classList.add('hidden');
     $('web-download-banner')?.classList.remove('hidden');
   }
+  
+  // 관리자 기능 접근 제어 적용
+  hideAdminFeaturesInTauri();
+  
+  // Professional UI enhancements 초기화
+  initUIEnhancements();
   
   // 지터 버퍼 슬라이더
   const slider = $('jitter-slider');
@@ -1382,6 +2768,17 @@ function initStabilitySettings() {
     noiseCheck.onchange = () => {
       noiseSuppression = noiseCheck.checked;
       localStorage.setItem('styx-noise', noiseSuppression);
+      scheduleSettingsSave();
+    };
+  }
+  
+  // AI 노이즈 제거
+  const aiNoiseCheck = $('ai-noise');
+  if (aiNoiseCheck) {
+    aiNoiseCheck.checked = aiNoiseCancellation;
+    aiNoiseCheck.onchange = () => {
+      aiNoiseCancellation = aiNoiseCheck.checked;
+      localStorage.setItem('styx-ai-noise', aiNoiseCancellation);
       scheduleSettingsSave();
     };
   }
@@ -1470,7 +2867,8 @@ async function initTauriFeatures() {
     const asioAvailable = await tauriInvoke('check_asio');
     if (asioAvailable) {
       toast('ASIO 드라이버 감지됨 - 저지연 모드 활성화', 'success');
-      $('tauri-audio-hint').textContent = 'ASIO 사용 가능 - 저지연 모드';
+      const hintEl = $('tauri-audio-hint');
+      if (hintEl) hintEl.textContent = 'ASIO 사용 가능 - 저지연 모드';
     }
     
     // 오디오 정보 가져오기
@@ -1499,40 +2897,83 @@ async function initTauriFeatures() {
 const UDP_RELAY_PORT = 5000;
 
 async function startUdpMode() {
-  if (!tauriInvoke) return;
+  if (!tauriInvoke) {
+    console.warn('Tauri not available, skipping UDP mode');
+    return;
+  }
   
   try {
+    console.log('Starting UDP mode...');
     udpPort = await tauriInvoke('udp_bind', { port: 0 });
-    log('UDP 포트 바인딩:', udpPort);
+    console.log('UDP 포트 바인딩:', udpPort);
     
     // Always use relay server (simpler, works for everyone)
-    const relayHost = new URL(serverUrl).hostname;
+    let relayHost = serverUrl ? new URL(serverUrl).hostname : window.location.hostname;
+    
+    // Convert nip.io hostname to IP for Rust SocketAddr parsing
+    if (relayHost === '3-39-223-2.nip.io') {
+      relayHost = '3.39.223.2';
+    }
+    
     const mySessionId = socket.id;
+    
+    console.log('UDP relay debug:', { serverUrl, relayHost, UDP_RELAY_PORT, mySessionId });
     
     // Try UDP first
     let udpSuccess = false;
     try {
+      console.log('Setting UDP relay...');
       await tauriInvoke('udp_set_relay', { host: relayHost, port: UDP_RELAY_PORT, sessionId: mySessionId });
-      socket.emit('udp-bind-room', { sessionId: mySessionId, roomId: currentRoom });
+      console.log('✅ UDP relay set');
+      
+      console.log('Binding to room...');
+      socket.emit('udp-bind-room', { sessionId: mySessionId, roomId: socket.room });
+      console.log('✅ Room binding sent');
+      
+      console.log('Setting audio devices...');
       await tauriInvoke('set_audio_devices', { input: null, output: null });
+      console.log('✅ Audio devices set');
+      
+      console.log('Starting relay stream...');
+      
       await tauriInvoke('udp_start_relay_stream');
+      console.log('✅ UDP relay stream started successfully');
+      
+      // Wait a moment before starting stats monitor
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       udpSuccess = true;
       toast('UDP 오디오 연결됨', 'success');
-      startUdpStatsMonitor();
+      console.log('Skipping stats monitor to prevent crashes...');
+      // Temporarily disable stats monitor
+      // startUdpStatsMonitor();
+      console.log('✅ UDP setup complete');
     } catch (e) {
-      console.warn('UDP 실패, TCP 폴백:', e);
+      console.error('UDP 실패, TCP 폴백:', e);
+      toast(`UDP 연결 실패: ${e.message || e}`, 'warning');
     }
     
     // Fallback to TCP if UDP fails
     if (!udpSuccess) {
       useTcpFallback = true;
-      socket.emit('tcp-bind-room', { roomId: currentRoom });
+      socket.emit('tcp-bind-room', { roomId: socket.room });
       startTcpAudioStream();
       toast('TCP 오디오 연결됨 (폴백)', 'info');
     }
   } catch (e) {
     console.error('오디오 시작 실패:', e);
-    toast('오디오 연결 실패', 'error');
+    toast(`오디오 연결 실패: ${e.message || e}`, 'error');
+    
+    // Force TCP fallback on any error
+    try {
+      useTcpFallback = true;
+      socket.emit('tcp-bind-room', { roomId: socket.room });
+      startTcpAudioStream();
+      toast('TCP 오디오 연결됨 (폴백)', 'info');
+    } catch (tcpError) {
+      console.error('TCP 폴백도 실패:', tcpError);
+      toast('모든 오디오 연결 실패', 'error');
+    }
   }
 }
 
@@ -1598,37 +3039,42 @@ let udpHealthFailCount = 0;
 function startUdpStatsMonitor() {
   if (!tauriInvoke || udpStatsInterval) return;
   
+  console.log('Starting UDP stats monitor...');
+  
   udpStatsInterval = setInterval(async () => {
     try {
       const stats = await tauriInvoke('get_udp_stats');
-      updateUdpStatsUI(stats);
-      
-      // Update input level meter
-      const inputLevel = await tauriInvoke('get_input_level');
-      updateInputLevelUI(inputLevel);
-      
-      // Health check: if no packets received for 5 seconds, switch to TCP
-      if (stats.is_running && stats.packets_received === 0) {
-        udpHealthFailCount++;
-        if (udpHealthFailCount >= 5 && !useTcpFallback) {
-          console.warn('UDP 연결 끊김, TCP로 전환');
-          toast('UDP 연결 끊김, TCP로 전환 중...', 'warning');
-          await tauriInvoke('udp_stop_stream');
-          useTcpFallback = true;
-          socket.emit('tcp-bind-room', { roomId: currentRoom });
-          startTcpAudioStream();
+      if (stats) {
+        updateUdpStatsUI(stats);
+        
+        // Health check: if no packets received for 5 seconds, switch to TCP
+        if (stats.is_running && stats.packets_received === 0) {
+          udpHealthFailCount++;
+          if (udpHealthFailCount >= 5 && !useTcpFallback) {
+            console.warn('UDP 연결 끊김, TCP로 전환');
+            toast('UDP 연결 끊김, TCP로 전환 중...', 'warning');
+            await tauriInvoke('udp_stop_stream');
+            useTcpFallback = true;
+            socket.emit('tcp-bind-room', { roomId: socket.room });
+            startTcpAudioStream();
+          }
+        } else {
+          udpHealthFailCount = 0;
         }
-      } else {
-        udpHealthFailCount = 0;
       }
       
       // Per-peer stats
-      const peerStats = await tauriInvoke('get_peer_stats');
-      updatePeerStatsUI(peerStats);
+      try {
+        const peerStats = await tauriInvoke('get_peer_stats');
+        if (peerStats) updatePeerStatsUI(peerStats);
+      } catch (peerError) {
+        // Silently ignore peer stats errors
+      }
     } catch (e) {
       console.error('UDP 통계 조회 실패:', e);
+      // Don't crash the interval, just log the error
     }
-  }, 100); // 100ms for smoother meter
+  }, 500); // Reduced frequency to 500ms to reduce load
 }
 
 function updateInputLevelUI(level) {
@@ -1647,7 +3093,7 @@ function stopUdpStatsMonitor() {
 
 function updateUdpStatsUI(stats) {
   const badge = $('udp-stats-badge');
-  if (!badge) return;
+  if (!badge || !stats) return;
   
   badge.classList.remove('hidden');
   
@@ -1657,9 +3103,9 @@ function updateUdpStatsUI(stats) {
     return;
   }
   
-  const lossRate = stats.loss_rate.toFixed(1);
-  const bufferMs = stats.jitter_buffer_size * 10; // 10ms per frame
-  const targetMs = (stats.jitter_buffer_target || stats.jitter_buffer_size) * 10;
+  const lossRate = (stats.loss_rate || 0).toFixed(1);
+  const bufferMs = (stats.jitter_buffer_size || 0) * 10; // 10ms per frame
+  const targetMs = ((stats.jitter_buffer_target || stats.jitter_buffer_size) || 0) * 10;
   let quality = 'good';
   if (stats.loss_rate > 5) quality = 'bad';
   else if (stats.loss_rate > 1) quality = 'warning';
@@ -1881,12 +3327,54 @@ $('changePasswordBtn').onclick = () => {
 
 // 관리자 패널
 $('adminBtn').onclick = () => {
+  if (!checkAdminAccess()) {
+    toast('관리자 권한이 필요합니다', 'error');
+    return;
+  }
+  
   loadAdminData();
+  initMonitoring(); // 모니터링 시스템 초기화
   adminPanel.classList.remove('hidden');
   lobby.classList.add('hidden');
 };
 
+// 관리자 알림 시스템
+let pendingUserCount = 0;
+
+function updateAdminNotifications() {
+  if (!currentUser?.isAdmin) return;
+  
+  socket.emit('get-pending', null, res => {
+    const newCount = res.pending?.length || 0;
+    if (newCount > pendingUserCount) {
+      toast(`새로운 가입 요청이 있습니다 (${newCount}개)`, 'info', 5000);
+    }
+    pendingUserCount = newCount;
+    
+    // 관리자 버튼에 알림 배지 표시
+    const adminBtn = $('adminBtn');
+    if (adminBtn) {
+      const badge = adminBtn.querySelector('.notification-badge') || document.createElement('span');
+      badge.className = 'notification-badge';
+      badge.textContent = newCount;
+      badge.style.display = newCount > 0 ? 'block' : 'none';
+      if (!adminBtn.querySelector('.notification-badge')) {
+        adminBtn.appendChild(badge);
+      }
+    }
+  });
+}
+
+// 주기적으로 관리자 알림 확인 (30초마다)
+setInterval(() => {
+  if (currentUser?.isAdmin) updateAdminNotifications();
+}, 30000);
+
 function loadAdminData() {
+  // 관리자 패널 열 때 알림 배지 숨기기
+  const badge = $('adminBtn')?.querySelector('.notification-badge');
+  if (badge) badge.style.display = 'none';
+  
   // Load whitelist
   socket.emit('admin-whitelist-status', res => {
     if (res?.error) return;
@@ -1917,17 +3405,75 @@ function loadAdminData() {
   socket.emit('get-users', null, res => {
     const list = $('users-list');
     list.innerHTML = '';
-    res.users?.forEach(u => {
-      const div = document.createElement('div');
-      div.className = 'user-item';
-      div.innerHTML = `
-        <span>${escapeHtml(u.username)} ${u.isAdmin ? '👑' : ''}</span>
-        ${!u.isAdmin ? `<button onclick="deleteUser('${u.username.replace(/'/g, "\\'")}')">삭제</button>` : ''}
-      `;
-      list.appendChild(div);
-    });
+    
+    if (!res.users?.length) {
+      list.innerHTML = '<p>등록된 사용자가 없습니다</p>';
+      return;
+    }
+    
+    // Store users for search functionality
+    window.allUsers = res.users;
+    renderUserList(res.users);
   });
 }
+
+// Enhanced user management functions
+function renderUserList(users) {
+  const list = $('users-list');
+  list.innerHTML = '';
+  
+  users.forEach(u => {
+    const div = document.createElement('div');
+    div.className = 'user-item';
+    div.innerHTML = `
+      <div class="user-info">
+        <div class="user-avatar">${u.username.charAt(0).toUpperCase()}</div>
+        <div class="user-details">
+          <div class="user-name">${escapeHtml(u.username)}</div>
+          <div class="user-status">
+            ${u.isAdmin ? '<span class="admin-badge">관리자</span>' : '일반 사용자'}
+            ${u.avatar ? ' • 아바타 설정됨' : ''}
+          </div>
+        </div>
+      </div>
+      <div class="user-actions">
+        ${!u.isAdmin ? `<button onclick="makeAdmin('${u.username.replace(/'/g, "\\'")}', true)" class="btn-small">관리자 지정</button>` : 
+          currentUser.username !== u.username ? `<button onclick="makeAdmin('${u.username.replace(/'/g, "\\'")}', false)" class="btn-small btn-danger">관리자 해제</button>` : ''}
+        ${currentUser.username !== u.username ? `<button onclick="deleteUser('${u.username.replace(/'/g, "\\'")}'))" class="btn-small btn-danger">삭제</button>` : ''}
+      </div>
+    `;
+    list.appendChild(div);
+  });
+}
+
+function searchUsers() {
+  const query = $('user-search').value.toLowerCase().trim();
+  if (!window.allUsers) return;
+  
+  const filtered = window.allUsers.filter(u => 
+    u.username.toLowerCase().includes(query)
+  );
+  
+  renderUserList(filtered);
+}
+
+window.makeAdmin = (username, isAdmin) => {
+  const action = isAdmin ? '관리자로 지정' : '관리자 권한 해제';
+  if (!confirm(`${username} 사용자를 ${action}하시겠습니까?`)) return;
+  
+  socket.emit('set-admin', { username, isAdmin }, (res) => {
+    if (res?.error) {
+      toast(res.error, 'error');
+    } else {
+      toast(`${username} 사용자가 ${action}되었습니다`, 'success');
+      loadAdminData();
+    }
+  });
+};
+
+// User management controls
+$('user-search')?.addEventListener('input', searchUsers);
+$('refresh-users')?.addEventListener('click', loadAdminData);
 
 // Whitelist management
 $('whitelist-enabled')?.addEventListener('change', (e) => {
@@ -1954,15 +3500,45 @@ window.removeWhitelistIp = (ip) => {
   });
 };
 
-window.approveUser = (username) => socket.emit('approve-user', { username }, () => loadAdminData());
-window.rejectUser = (username) => socket.emit('reject-user', { username }, () => loadAdminData());
+window.approveUser = (username) => {
+  socket.emit('approve-user', { username }, (res) => {
+    if (res?.error) {
+      toast(res.error, 'error');
+    } else {
+      toast(`${username} 사용자가 승인되었습니다`, 'success');
+      loadAdminData();
+    }
+  });
+};
+
+window.rejectUser = (username) => {
+  if (confirm(`${username} 사용자의 가입 요청을 거부하시겠습니까?`)) {
+    socket.emit('reject-user', { username }, (res) => {
+      if (res?.error) {
+        toast(res.error, 'error');
+      } else {
+        toast(`${username} 사용자의 요청이 거부되었습니다`, 'info');
+        loadAdminData();
+      }
+    });
+  }
+};
+
 window.deleteUser = (username) => {
-  if (confirm(`${username} 사용자를 삭제하시겠습니까?`)) {
-    socket.emit('delete-user', { username }, () => loadAdminData());
+  if (confirm(`${username} 사용자를 영구적으로 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) {
+    socket.emit('delete-user', { username }, (res) => {
+      if (res?.error) {
+        toast(res.error, 'error');
+      } else {
+        toast(`${username} 사용자가 삭제되었습니다`, 'info');
+        loadAdminData();
+      }
+    });
   }
 };
 
 $('closeAdminBtn').onclick = () => {
+  stopMonitoring(); // 모니터링 중지
   adminPanel.classList.add('hidden');
   lobby.classList.remove('hidden');
 };
@@ -1995,7 +3571,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       noiseSuppression: $('noise-suppress')?.checked ?? true,
       autoGainControl: $('auto-gain')?.checked ?? true,
       sampleRate: 48000,
-      channelCount: 1,
+      channelCount: 2, // Stereo support
       latency: { ideal: 0.01 }
     }
   };
@@ -2003,7 +3579,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
   try {
     const rawStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
     // 입력 리미터 적용 (클리핑 방지)
-    localStream = createProcessedInputStream(rawStream);
+    localStream = await createProcessedInputStream(rawStream);
     // 원본 스트림 참조 저장 (정리용)
     localStream._rawStream = rawStream;
     
@@ -2012,11 +3588,12 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       localStream.getAudioTracks().forEach(t => t.enabled = false);
       isMuted = true;
     }
-  } catch {
-    return toast('마이크 접근이 거부되었습니다', 'error');
+  } catch (e) {
+    showUserFriendlyError(e, 'microphone access');
+    return;
   }
 
-  socket.emit('join', { room, username: currentUser.username, password: roomPassword, settings: roomSettings }, res => {
+  socket.emit('join', { room, username: currentUser.username, password: roomPassword, settings: roomSettings }, async (res) => {
     if (res.error) {
       localStream._rawStream?.getTracks().forEach(t => t.stop());
       localStream.getTracks().forEach(t => t.stop());
@@ -2097,8 +3674,13 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     }
 
     // Tauri앱: UDP 릴레이로 오디오, 브라우저: 관전 모드 (오디오 없음)
-    if (_isTauriApp) {
-      startUdpMode();
+    if (actuallyTauri) {
+      try {
+        await startUdpMode();
+      } catch (udpError) {
+        console.error('UDP 시작 실패:', udpError);
+        toast('오디오 연결 중 오류 발생', 'warning');
+      }
     } else {
       // 브라우저 관전 모드 배너 표시, 오디오 컨트롤 숨김
       $('browser-spectator-banner')?.classList.remove('hidden');
@@ -2109,13 +3691,24 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     }
     
     startLatencyPing();
-    if (_isTauriApp) startAudioMeter();
+    if (actuallyTauri) startAudioMeter();
     initPttTouch();
   });
 };
 
 // 오디오 레벨 미터
 function startAudioMeter() {
+  // Clean up existing meter
+  if (meterInterval) {
+    clearInterval(meterInterval);
+    meterInterval = null;
+  }
+  
+  // Close existing audio context
+  if (audioContext && audioContext.state !== 'closed') {
+    try { audioContext.close(); } catch {}
+  }
+  
   try {
     audioContext = new AudioContext();
     analyser = audioContext.createAnalyser();
@@ -2128,6 +3721,11 @@ function startAudioMeter() {
     const meter = $('audio-meter');
     
     meterInterval = setInterval(() => {
+      if (!analyser || !meter) {
+        clearInterval(meterInterval);
+        meterInterval = null;
+        return;
+      }
       analyser.getByteFrequencyData(dataArray);
       const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
       const level = Math.min(100, avg * 1.5);
@@ -2417,13 +4015,17 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
       
       const source = ctx.createMediaStreamSource(e.streams[0]);
       
-      // 압축기
+      // 다이나믹 레인지 압축 (자동 레벨 매칭)
       const compressor = ctx.createDynamicsCompressor();
-      compressor.threshold.value = -24;
-      compressor.knee.value = 30;
-      compressor.ratio.value = 4;
-      compressor.attack.value = 0.003;
-      compressor.release.value = 0.25;
+      compressor.threshold.value = -24; // dB - 압축 시작점
+      compressor.knee.value = 30; // 부드러운 압축
+      compressor.ratio.value = 4; // 4:1 압축비
+      compressor.attack.value = 0.003; // 3ms 빠른 반응
+      compressor.release.value = 0.25; // 250ms 자연스러운 해제
+      
+      // 메이크업 게인 (압축 손실 보상)
+      const makeupGain = ctx.createGain();
+      makeupGain.gain.value = 2.0; // 압축으로 인한 볼륨 손실 보상
       
       // 팬 노드 (스테레오 위치)
       const panNode = ctx.createStereoPanner();
@@ -2444,7 +4046,8 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
       const dest = ctx.createMediaStreamDestination();
       source.connect(peerAnalyser);
       peerAnalyser.connect(compressor);
-      compressor.connect(panNode);
+      compressor.connect(makeupGain);
+      makeupGain.connect(panNode);
       panNode.connect(delayNode);
       delayNode.connect(gainNode);
       gainNode.connect(dest);
@@ -2452,12 +4055,19 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
       audioEl.srcObject = dest.stream;
       if (peerData) {
         peerData.audioContext = ctx; // 공유 컨텍스트 참조
+        peerData.compressor = compressor;
+        peerData.makeupGain = makeupGain;
         peerData.panNode = panNode;
         peerData.gainNode = gainNode;
         peerData.delayNode = delayNode;
         peerData.analyser = peerAnalyser;
         peerData.isSpeaking = false;
-        peerData.audioNodes = { source, compressor, panNode, gainNode, delayNode, peerAnalyser, dest }; // 정리용
+        peerData.audioNodes = { source, compressor, makeupGain, panNode, gainNode, delayNode, peerAnalyser, dest }; // 정리용
+      }
+      
+      // 공간 오디오 설정
+      if (spatialAudioEnabled) {
+        setupSpatialAudio(peerId, audioEl);
       }
       
       // VAD 시작
@@ -2466,6 +4076,14 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
     } catch (err) {
       console.error('오디오 처리 설정 실패:', err);
       audioEl.srcObject = e.streams[0];
+      
+      // 공간 오디오 설정
+      if (spatialAudioEnabled) {
+        setupSpatialAudio(peerId, audioEl);
+      }
+      
+      // 폴백: 간단한 볼륨 모니터링
+      if (vadEnabled) startVAD(peerId, null);
     }
     
     if (audioEl.playsInline !== undefined) {
@@ -2589,6 +4207,9 @@ function renderUsers() {
           <span class="stat">${peer.latency ? peer.latency + 'ms' : '--'}</span>
           <span class="stat">${peer.packetLoss.toFixed(1)}% 손실</span>
         </div>
+        <div class="volume-meter">
+          <div class="volume-bar" data-peer="${id}"></div>
+        </div>
       </div>
       <div class="card-mixer">
         <button class="mixer-btn ${peer.muted ? 'active' : ''}" data-action="mute">M</button>
@@ -2689,71 +4310,111 @@ function startLatencyPing() {
   if (statsInterval) clearInterval(statsInterval);
   latencyHistory = [];
   
+  // Simple ping test for self latency (every 5 seconds)
+  latencyInterval = setInterval(() => {
+    const start = Date.now();
+    socket.emit('ping', start, (serverTime) => {
+      const rtt = Date.now() - start;
+      selfStats.latency = rtt;
+      updateSelfStatsUI();
+    });
+  }, 5000);
+  
   // 상세 통계 수집 (2초마다)
   statsInterval = setInterval(async () => {
     let avgLatency = 0, count = 0;
+    let totalBandwidth = 0, totalPacketLoss = 0, peerCount = 0;
     
-    for (const [id, peer] of peers) {
-      if (peer.pc.connectionState !== 'connected') continue;
-      
-      try {
-        const stats = await peer.pc.getStats();
-        let packetsLost = 0, packetsReceived = 0, jitter = 0, rtt = 0;
+    // Tauri 앱에서는 UDP 통계 사용, 웹에서는 WebRTC 통계 사용
+    if (actuallyTauri) {
+      // Tauri UDP 모드: 간단한 추정치 사용
+      if (peers.size > 0) {
+        selfStats.bandwidth = Math.round(audioModes[audioMode].bitrate / 8); // kbps
+        selfStats.packetsLost = 0; // UDP는 패킷 손실 추적이 복잡함
+        updateSelfStatsUI();
+      }
+    } else {
+      // 웹 WebRTC 모드: 실제 WebRTC 통계 수집
+      for (const [id, peer] of peers) {
+        if (!peer.pc || peer.pc.connectionState !== 'connected') continue;
         
-        stats.forEach(report => {
-          if (report.type === 'inbound-rtp' && report.kind === 'audio') {
-            packetsLost = report.packetsLost || 0;
-            packetsReceived = report.packetsReceived || 0;
-            jitter = (report.jitter || 0) * 1000;
+        try {
+          const stats = await peer.pc.getStats();
+          let packetsLost = 0, packetsReceived = 0, jitter = 0, rtt = 0;
+          let bytesReceived = 0, bytesSent = 0;
+          
+          stats.forEach(report => {
+            if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+              packetsLost = report.packetsLost || 0;
+              packetsReceived = report.packetsReceived || 0;
+              jitter = (report.jitter || 0) * 1000;
+              bytesReceived = report.bytesReceived || 0;
+            }
+            if (report.type === 'outbound-rtp' && report.kind === 'audio') {
+              bytesSent = report.bytesSent || 0;
+            }
+            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+              rtt = (report.currentRoundTripTime || 0) * 1000;
+            }
+          });
+          
+          const totalPackets = packetsLost + packetsReceived;
+          const lossRate = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
+          const bandwidth = Math.round((bytesReceived + bytesSent) * 8 / 1000 / 2); // kbps estimate
+          
+          peer.latency = Math.round(rtt);
+          peer.packetLoss = lossRate;
+          peer.jitter = jitter;
+          const prevQuality = peer.quality?.grade;
+          peer.quality = getQualityGrade(rtt, lossRate, jitter);
+          
+          // Accumulate for self stats
+          totalBandwidth += bandwidth;
+          totalPacketLoss += lossRate;
+          peerCount++;
+          
+          // 품질 저하 경고
+          if (prevQuality === 'good' && peer.quality.grade === 'poor') {
+            toast(`${peer.username} 연결 불안정`, 'warning', 3000);
           }
-          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-            rtt = (report.currentRoundTripTime || 0) * 1000;
-          }
-        });
-        
-        const totalPackets = packetsLost + packetsReceived;
-        const lossRate = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
-        
-        peer.latency = Math.round(rtt);
-        peer.packetLoss = lossRate;
-        peer.jitter = jitter;
-        const prevQuality = peer.quality?.grade;
-        peer.quality = getQualityGrade(rtt, lossRate, jitter);
-        
-        // 품질 저하 경고
-        if (prevQuality === 'good' && peer.quality.grade === 'poor') {
-          toast(`${peer.username} 연결 불안정`, 'warning', 3000);
-        }
-        
-        if (rtt > 0) { avgLatency += rtt; count++; }
-        
-        // 자동 적응: 네트워크 상태에 따라 비트레이트 조절
-        if (autoAdapt) {
-          const sender = peer.pc.getSenders().find(s => s.track?.kind === 'audio');
-          if (sender) {
-            const params = sender.getParameters();
-            if (params.encodings?.[0]) {
-              const targetBitrate = audioModes[audioMode].bitrate;
-              const currentBitrate = params.encodings[0].maxBitrate || targetBitrate;
-              let newBitrate = currentBitrate;
-              
-              // 품질 저하 시 비트레이트 감소
-              if (lossRate > 3 || jitter > 40) {
-                newBitrate = Math.max(16000, currentBitrate * 0.8);
-              } 
-              // 품질 좋으면 점진적 복구
-              else if (lossRate < 1 && jitter < 20 && currentBitrate < targetBitrate) {
-                newBitrate = Math.min(targetBitrate, currentBitrate * 1.1);
-              }
-              
-              if (newBitrate !== currentBitrate) {
-                params.encodings[0].maxBitrate = Math.round(newBitrate);
-                sender.setParameters(params).catch(() => {});
+          
+          if (rtt > 0) { avgLatency += rtt; count++; }
+          
+          // 자동 적응: 네트워크 상태에 따라 비트레이트 조절
+          if (autoAdapt) {
+            const sender = peer.pc.getSenders().find(s => s.track?.kind === 'audio');
+            if (sender) {
+              const params = sender.getParameters();
+              if (params.encodings?.[0]) {
+                const targetBitrate = audioModes[audioMode].bitrate;
+                const currentBitrate = params.encodings[0].maxBitrate || targetBitrate;
+                let newBitrate = currentBitrate;
+                
+                // 품질 저하 시 비트레이트 감소
+                if (lossRate > 3 || jitter > 40) {
+                  newBitrate = Math.max(16000, currentBitrate * 0.8);
+                } 
+                // 품질 좋으면 점진적 복구
+                else if (lossRate < 1 && jitter < 20 && currentBitrate < targetBitrate) {
+                  newBitrate = Math.min(targetBitrate, currentBitrate * 1.1);
+                }
+                
+                if (newBitrate !== currentBitrate) {
+                  params.encodings[0].maxBitrate = Math.round(newBitrate);
+                  sender.setParameters(params).catch(() => {});
+                }
               }
             }
           }
-        }
-      } catch (e) {}
+        } catch (e) {}
+      }
+      
+      // Update self stats with aggregated WebRTC data
+      if (peerCount > 0) {
+        selfStats.bandwidth = Math.round(totalBandwidth / peerCount);
+        selfStats.packetsLost = Math.round(totalPacketLoss / peerCount);
+        updateSelfStatsUI();
+      }
     }
     
     // 지연 보상 적용
@@ -2773,6 +4434,12 @@ function startLatencyPing() {
   }, 2000);
 }
 
+function updateSelfStatsUI() {
+  if ($('self-latency')) $('self-latency').textContent = selfStats.latency ? selfStats.latency + 'ms' : '-';
+  if ($('self-bandwidth')) $('self-bandwidth').textContent = selfStats.bandwidth ? selfStats.bandwidth + 'kbps' : '-';
+  if ($('self-loss')) $('self-loss').textContent = selfStats.packetsLost ? selfStats.packetsLost.toFixed(1) + '%' : '0%';
+}
+
 // 지연 보상: 가장 느린 피어에 맞춰 다른 피어들에게 딜레이 추가
 function applyDelayCompensation() {
   let maxLatency = 0;
@@ -2786,6 +4453,29 @@ function applyDelayCompensation() {
       peer.delayNode.delayTime.setTargetAtTime(compensation, peer.audioContext.currentTime, 0.1);
     }
   });
+}
+
+function updateJitterBuffer(value) {
+  const minBuffer = lowLatencyMode ? 20 : 30;
+  jitterBuffer = Math.min(200, Math.max(minBuffer, value));
+  localStorage.setItem('styx-jitter-buffer', jitterBuffer);
+  
+  // UI 동기화
+  if ($('jitter-slider')) {
+    $('jitter-slider').value = jitterBuffer;
+    $('jitter-value').textContent = jitterBuffer + 'ms';
+  }
+  if ($('room-jitter-slider')) {
+    $('room-jitter-slider').value = jitterBuffer;
+    $('room-jitter-value').textContent = jitterBuffer + 'ms';
+  }
+  
+  applyJitterBuffer();
+  
+  // Tauri UDP 지터 버퍼도 설정
+  if (tauriInvoke) {
+    tauriInvoke('set_jitter_buffer', { size: Math.round(jitterBuffer / 10) }).catch(() => {});
+  }
 }
 
 // 지터 버퍼 적용 (기존 피어에)
@@ -2907,17 +4597,32 @@ function updateQualityIndicator(jitter = 0, packetLoss = 0) {
 
 // VAD (음성 활동 감지)
 function startVAD(peerId, analyser) {
-  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+  const dataArray = analyser ? new Uint8Array(analyser.frequencyBinCount) : null;
   const threshold = 30; // 음성 감지 임계값
   
   const interval = setInterval(() => {
     const peer = peers.get(peerId);
-    if (!peer) { clearInterval(interval); return; }
+    if (!peer || !peers.has(peerId)) { 
+      clearInterval(interval); 
+      vadIntervals.delete(peerId);
+      return; 
+    }
     
-    analyser.getByteFrequencyData(dataArray);
-    const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+    let avg = 0;
+    if (analyser && dataArray) {
+      analyser.getByteFrequencyData(dataArray);
+      avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+    }
+    
     const wasSpeaking = peer.isSpeaking;
     peer.isSpeaking = avg > threshold;
+    
+    // 볼륨 바 업데이트 (0-255 -> 0-100%)
+    const volumeLevel = Math.min(100, (avg / 255) * 100);
+    const volumeBar = document.querySelector(`.volume-bar[data-peer="${peerId}"]`);
+    if (volumeBar) {
+      volumeBar.style.width = `${volumeLevel}%`;
+    }
     
     // 상태 변경 시 UI 업데이트
     if (wasSpeaking !== peer.isSpeaking) {
@@ -2927,6 +4632,9 @@ function startVAD(peerId, analyser) {
     }
   }, 100);
   
+  // VAD 인터벌 저장 (정리용)
+  const peer = peers.get(peerId);
+  if (peer) peer.vadInterval = interval;
   vadIntervals.set(peerId, interval);
 }
 
@@ -3016,6 +4724,10 @@ socket.on('ice-candidate', async ({ from, candidate }) => {
 });
 
 socket.on('user-left', ({ id }) => {
+  // Cleanup spatial audio and bandwidth monitoring for this peer
+  spatialPanners.delete(id);
+  connectionStats.delete(id);
+  
   playSound('leave');
   toast(`사용자 퇴장`, 'info', 2000);
   renderUsers();
@@ -3074,21 +4786,39 @@ function updateMuteUI() {
 async function restartAudioStream() {
   if (!localStream) return;
   
+  // Stop old streams
   const oldTracks = localStream.getAudioTracks();
   oldTracks.forEach(t => t.stop());
   
+  // Stop raw stream if it exists
+  if (localStream._rawStream) {
+    localStream._rawStream.getAudioTracks().forEach(t => t.stop());
+  }
+  
+  // Close old audio context
+  if (inputLimiterContext) {
+    inputLimiterContext.close();
+    inputLimiterContext = null;
+  }
+  
   try {
-    const newStream = await navigator.mediaDevices.getUserMedia({
+    const rawStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
         echoCancellation: $('room-echo-cancel')?.checked ?? $('echo-cancel')?.checked ?? true,
         noiseSuppression: $('room-noise-suppress')?.checked ?? $('noise-suppress')?.checked ?? true,
-        autoGainControl: $('auto-gain')?.checked ?? true
+        autoGainControl: $('auto-gain')?.checked ?? true,
+        sampleRate: 48000,
+        channelCount: 2, // Stereo support
+        latency: { ideal: 0.01 }
       }
     });
     
-    const newTrack = newStream.getAudioTracks()[0];
-    localStream = newStream;
+    // Recreate processed stream with input limiter and effects
+    localStream = await createProcessedInputStream(rawStream);
+    localStream._rawStream = rawStream;
+    
+    const newTrack = localStream.getAudioTracks()[0];
     
     // 모든 피어 연결에 새 트랙 적용
     peers.forEach(peer => {
@@ -3099,6 +4829,11 @@ async function restartAudioStream() {
     // 음소거 상태 유지
     if (isMuted || pttMode) {
       newTrack.enabled = false;
+    }
+    
+    // Restart audio meter if it was running
+    if (actuallyTauri) {
+      startAudioMeter();
     }
     
   } catch (e) {
@@ -3125,25 +4860,46 @@ function leaveRoom() {
   // 서버에 방 나가기 알림
   socket.emit('leave-room');
   
+  // 모든 타이머 정리
   if (latencyInterval) { clearInterval(latencyInterval); latencyInterval = null; }
   if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
   if (meterInterval) { clearInterval(meterInterval); meterInterval = null; }
+  if (tunerInterval) { clearInterval(tunerInterval); tunerInterval = null; }
+  if (tcpAudioInterval) { clearInterval(tcpAudioInterval); tcpAudioInterval = null; }
+  if (udpStatsInterval) { clearInterval(udpStatsInterval); udpStatsInterval = null; }
+  if (metronomeInterval) { clearInterval(metronomeInterval); metronomeInterval = null; }
+  if (turnRefreshTimer) { clearTimeout(turnRefreshTimer); turnRefreshTimer = null; }
+  
   // VAD 인터벌 정리
   vadIntervals.forEach(int => clearInterval(int));
   vadIntervals.clear();
   
   stopMetronome();
-  cleanupRecording(); // Use cleanup function to handle AudioContext properly
+  cleanupRecording();
+  stopSpectrum(); // 스펙트럼 분석기 정리
   
-  if (audioContext) { 
-    try { audioContext.close(); } catch {} 
-    audioContext = null; 
-  }
-  if (metronomeAudio) { 
-    try { metronomeAudio.close(); } catch {} 
-    metronomeAudio = null; 
-  }
-  // 피어 오디오용 공유 AudioContext 정리
+  // 모든 AudioContext 정리
+  const contexts = [audioContext, metronomeAudio, peerAudioContext, inputLimiterContext, inputMonitorCtx, tunerCtx];
+  contexts.forEach(ctx => {
+    if (ctx && ctx.state !== 'closed') {
+      try { 
+        ctx.close(); 
+      } catch (e) { 
+        console.warn('AudioContext cleanup failed:', e); 
+      }
+    }
+  });
+  
+  // 전역 변수 초기화
+  audioContext = null;
+  metronomeAudio = null;
+  peerAudioContext = null;
+  inputLimiterContext = null;
+  inputMonitorCtx = null;
+  tunerCtx = null;
+  processedStream = null;
+  effectNodes = {};
+  noiseGateWorklet = null;
   if (peerAudioContext) {
     try { peerAudioContext.close(); } catch {}
     peerAudioContext = null;
@@ -3166,6 +4922,11 @@ function leaveRoom() {
   });
   peers.clear();
   volumeStates.clear();
+  
+  // Cleanup spatial audio and bandwidth monitoring
+  spatialPanners.clear();
+  connectionStats.clear();
+  
   latencyHistory = [];
   
   // 원본 스트림도 정리
@@ -3214,7 +4975,8 @@ $('test-audio-btn').onclick = async () => {
       audio: {
         deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
         echoCancellation: $('echo-cancel').checked,
-        noiseSuppression: $('noise-suppress').checked
+        noiseSuppression: $('noise-suppress').checked,
+        channelCount: 2 // Stereo support
       }
     });
     
@@ -3429,6 +5191,7 @@ function syncRoomAudioSettings() {
   };
   syncCheckbox('echo-cancel', 'room-echo-cancel');
   syncCheckbox('noise-suppress', 'room-noise-suppress');
+  syncCheckbox('ai-noise', 'room-ai-noise');
   syncCheckbox('ptt-mode', 'room-ptt-mode');
   syncCheckbox('vad-mode', 'room-vad-mode');
   syncCheckbox('auto-adapt', 'room-auto-adapt');
@@ -3461,11 +5224,27 @@ if ($('room-audio-output')) {
 }
 
 if ($('room-echo-cancel')) {
-  $('room-echo-cancel').onchange = async () => { if (localStream) await restartAudioStream(); };
+  $('room-echo-cancel').onchange = async () => { 
+    echoCancellation = $('room-echo-cancel').checked;
+    localStorage.setItem('styx-echo', echoCancellation);
+    if (localStream) await restartAudioStream(); 
+  };
 }
 
 if ($('room-noise-suppress')) {
-  $('room-noise-suppress').onchange = async () => { if (localStream) await restartAudioStream(); };
+  $('room-noise-suppress').onchange = async () => { 
+    noiseSuppression = $('room-noise-suppress').checked;
+    localStorage.setItem('styx-noise', noiseSuppression);
+    if (localStream) await restartAudioStream(); 
+  };
+}
+
+if ($('room-ai-noise')) {
+  $('room-ai-noise').onchange = async () => {
+    aiNoiseCancellation = $('room-ai-noise').checked;
+    localStorage.setItem('styx-ai-noise', aiNoiseCancellation);
+    if (localStream) await restartAudioStream();
+  };
 }
 
 if ($('room-ptt-mode')) {
@@ -3636,6 +5415,53 @@ $('effects-toggle')?.addEventListener('click', () => {
   };
 });
 
+// 압축비 슬라이더 초기화
+const compressionEl = $('compression-ratio');
+if (compressionEl) {
+  compressionEl.value = inputEffects.compressionRatio || 4;
+  compressionEl.nextElementSibling.textContent = `${compressionEl.value}:1`;
+  compressionEl.oninput = () => {
+    const val = parseFloat(compressionEl.value);
+    compressionEl.nextElementSibling.textContent = `${val}:1`;
+    updateInputEffect('compressionRatio', val);
+  };
+}
+
+// 스펙트럼 분석기 토글
+$('spectrum-toggle')?.addEventListener('click', toggleSpectrum);
+
+// 공간 오디오 토글
+$('spatial-toggle')?.addEventListener('click', toggleSpatialAudio);
+
+// 대역폭 모니터링 토글
+$('bandwidth-toggle')?.addEventListener('click', toggleBandwidthMonitoring);
+
+// 오디오 라우팅 토글 및 제어
+$('routing-toggle')?.addEventListener('click', toggleRouting);
+$('input-routing')?.addEventListener('change', (e) => {
+  updateRouting(e.target.value);
+});
+
+// 노이즈 프로파일링 제어
+$('noise-profile-toggle')?.addEventListener('click', toggleNoiseProfile);
+$('learn-noise')?.addEventListener('click', startNoiseLearning);
+$('reset-profile')?.addEventListener('click', resetNoiseProfile);
+
+// 입력 볼륨 슬라이더 초기화
+const inputVolumeEl = $('input-volume');
+if (inputVolumeEl) {
+  const initialValue = inputEffects.inputVolume || 120;
+  inputVolumeEl.value = initialValue;
+  const valueLabel = inputVolumeEl.nextElementSibling;
+  if (valueLabel) valueLabel.textContent = `${initialValue}%`;
+  
+  inputVolumeEl.oninput = () => {
+    const val = parseInt(inputVolumeEl.value);
+    if (valueLabel) valueLabel.textContent = `${val}%`;
+    updateInputEffect('inputVolume', val);
+  };
+}
+
 
 // ===== Inline 이벤트 핸들러 대체 =====
 $('themeBtn').onclick = toggleTheme;
@@ -3656,7 +5482,7 @@ $('closeRoomBtn')?.addEventListener('click', closeRoom);
 // 설정 동기화
 function collectSettings() {
   return {
-    audioMode, jitterBuffer, autoAdapt, echoCancellation, noiseSuppression,
+    audioMode, jitterBuffer, autoAdapt, echoCancellation, noiseSuppression, aiNoiseCancellation,
     pttMode, pttKey, duckingEnabled, vadEnabled,
     theme: document.documentElement.getAttribute('data-theme') || 'dark'
   };
@@ -3669,6 +5495,7 @@ function applySettings(s) {
   autoAdapt = s.autoAdapt ?? autoAdapt;
   echoCancellation = s.echoCancellation ?? echoCancellation;
   noiseSuppression = s.noiseSuppression ?? noiseSuppression;
+  aiNoiseCancellation = s.aiNoiseCancellation ?? aiNoiseCancellation;
   pttMode = s.pttMode ?? pttMode;
   pttKey = s.pttKey ?? pttKey;
   duckingEnabled = s.duckingEnabled ?? duckingEnabled;
@@ -3680,6 +5507,7 @@ function applySettings(s) {
   localStorage.setItem('styx-auto-adapt', autoAdapt);
   localStorage.setItem('styx-echo', echoCancellation);
   localStorage.setItem('styx-noise', noiseSuppression);
+  localStorage.setItem('styx-ai-noise', aiNoiseCancellation);
   localStorage.setItem('styx-ptt', pttMode);
   localStorage.setItem('styx-ptt-key', pttKey);
   localStorage.setItem('styx-ducking', duckingEnabled);

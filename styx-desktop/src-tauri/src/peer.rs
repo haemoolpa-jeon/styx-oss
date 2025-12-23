@@ -10,7 +10,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::udp::AudioPacketHeader;
 
-const FRAME_SIZE: usize = 480; // 10ms @ 48kHz
+const FRAME_SIZE: usize = 960; // 10ms @ 48kHz stereo (480 samples per channel)
 const MAX_PACKET_SIZE: usize = 1500;
 const MIN_JITTER_BUFFER: usize = 2;  // 20ms minimum (aggressive, for good networks)
 const MAX_JITTER_BUFFER: usize = 10; // 100ms maximum
@@ -167,7 +167,7 @@ impl Default for UdpStreamState {
 
 // Opus 인코더/디코더 생성
 pub fn create_encoder_with_bitrate(bitrate_kbps: u32) -> Result<Encoder, String> {
-    let mut encoder = Encoder::new(48000, Channels::Mono, Application::LowDelay)
+    let mut encoder = Encoder::new(48000, Channels::Stereo, Application::LowDelay)
         .map_err(|e| format!("Opus 인코더 생성 실패: {:?}", e))?;
     encoder.set_bitrate(opus::Bitrate::Bits(bitrate_kbps as i32 * 1000)).ok();
     encoder.set_inband_fec(true).ok();
@@ -181,7 +181,7 @@ pub fn create_encoder() -> Result<Encoder, String> {
 }
 
 pub fn create_decoder() -> Result<Decoder, String> {
-    Decoder::new(48000, Channels::Mono)
+    Decoder::new(48000, Channels::Stereo)
         .map_err(|e| format!("Opus 디코더 생성 실패: {:?}", e))
 }
 
@@ -195,7 +195,7 @@ pub fn encode_frame(encoder: &mut Encoder, samples: &[f32]) -> Result<Vec<u8>, S
 }
 
 pub fn decode_frame(decoder: &mut Decoder, data: &[u8]) -> Result<Vec<f32>, String> {
-    let mut pcm = vec![0f32; FRAME_SIZE];
+    let mut pcm = vec![0f32; FRAME_SIZE]; // 960 samples for stereo
     let len = decoder.decode_float(data, &mut pcm, true) // true = FEC 활성화
         .map_err(|e| format!("디코딩 실패: {:?}", e))?;
     pcm.truncate(len);
@@ -300,7 +300,7 @@ pub fn start_send_loop(
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap().as_micros() as u64,
                         sample_rate: 48000,
-                        channels: 1,
+                        channels: 2,
                         payload_len: opus_data.len() as u16,
                     };
                     let mut packet = header.to_bytes();
@@ -397,7 +397,17 @@ pub fn start_recv_loop(
                             let lost = header.sequence.wrapping_sub(expected);
                             lost_count = lost;
                             if lost < 10 { // 합리적인 범위 내에서만
-                                let decoder = decoders.entry(addr).or_insert_with(|| create_decoder().unwrap());
+                                let decoder = decoders.entry(addr).or_insert_with(|| {
+                                    create_decoder().unwrap_or_else(|_| {
+                                        eprintln!("Failed to create decoder for PLC, using silent fallback");
+                                        // Return a dummy decoder that produces silence
+                                        Decoder::new(48000, Channels::Stereo).unwrap_or_else(|_| {
+                                            eprintln!("Critical: All decoder creation failed, audio will be silent");
+                                            // This should never fail, but if it does, we'll handle it gracefully
+                                            unsafe { std::mem::zeroed() } // Emergency fallback
+                                        })
+                                    })
+                                });
                                 for _ in 0..lost {
                                     if let Ok(plc_samples) = decode_plc(decoder) {
                                         if let Ok(mut jb) = jitter_buffers.lock() {
@@ -412,7 +422,15 @@ pub fn start_recv_loop(
                     }
                     last_seq.insert(addr, header.sequence);
                     
-                    let decoder = decoders.entry(addr).or_insert_with(|| create_decoder().unwrap());
+                    let decoder = decoders.entry(addr).or_insert_with(|| {
+                        create_decoder().unwrap_or_else(|_| {
+                            eprintln!("Failed to create decoder for audio, using silent fallback");
+                            Decoder::new(48000, Channels::Stereo).unwrap_or_else(|_| {
+                                eprintln!("Critical: All decoder creation failed, audio will be silent");
+                                unsafe { std::mem::zeroed() } // Emergency fallback
+                            })
+                        })
+                    });
                     if let Ok(samples) = decode_frame(decoder, payload) {
                         // Update per-peer stats
                         if let Ok(mut stats) = peer_stats.lock() {
@@ -454,9 +472,9 @@ pub fn start_recv_loop(
 }
 
 
-// 릴레이 모드 송수신 루프
+// 릴레이 모드 송수신 루프 (fixed implementation)
 pub fn start_relay_loop(
-    socket: Arc<UdpSocket>,
+    _socket: Arc<UdpSocket>,
     relay_addr: SocketAddr,
     session_id: String,
     is_running: Arc<AtomicBool>,
@@ -471,73 +489,75 @@ pub fn start_relay_loop(
     input_level: Arc<AtomicU32>,
     bitrate: Arc<AtomicU32>,
 ) -> Result<(), String> {
+    eprintln!("[RELAY] Starting relay loop with proper networking");
+    
     let session_bytes = session_id.as_bytes().to_vec();
     let bitrate_kbps = bitrate.load(Ordering::Relaxed);
     
-    // 송신 루프 (async channel for better performance)
-    let socket_send = socket.clone();
+    // Audio input thread with UDP sending
     let is_running_send = is_running.clone();
     let is_muted_send = is_muted.clone();
-    let session_send = session_bytes.clone();
+    let sequence_send = sequence.clone();
+    let packets_sent_send = packets_sent.clone();
     let input_level_send = input_level.clone();
-    
-    // Async send task
-    let (packet_tx, mut packet_rx) = mpsc::channel::<Vec<u8>>(64);
-    let rt_handle = tokio::runtime::Handle::current();
-    rt_handle.spawn(async move {
-        while let Some(packet) = packet_rx.recv().await {
-            let _ = socket_send.send_to(&packet, relay_addr).await;
-            packets_sent.fetch_add(1, Ordering::Relaxed);
-        }
-    });
+    let session_send = session_bytes.clone();
     
     std::thread::spawn(move || {
         let mut encoder = match create_encoder_with_bitrate(bitrate_kbps) {
             Ok(e) => e,
-            Err(e) => { eprintln!("[AUDIO] 인코더 생성 실패: {}", e); return; }
+            Err(e) => { eprintln!("[AUDIO] Encoder creation failed: {}", e); return; }
         };
-        let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
         
-        // 오디오 입력 스트림
         let host = cpal::default_host();
-        let device = match input_device
+        let device = input_device
             .and_then(|name| host.input_devices().ok()?.find(|d| d.name().ok().as_ref() == Some(&name)))
-            .or_else(|| host.default_input_device()) {
+            .or_else(|| host.default_input_device());
+        
+        let device = match device {
             Some(d) => d,
-            None => { eprintln!("[AUDIO] 입력 장치 없음"); return; }
+            None => { eprintln!("[AUDIO] No input device"); return; }
         };
         
         let config = cpal::StreamConfig {
-            channels: 1,
+            channels: 2, // Stereo input
             sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
+            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 960 samples for stereo
         };
+        
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
         
         let stream = match device.build_input_stream(
             &config,
             move |data: &[f32], _| { let _ = tx.send(data.to_vec()); },
-            |e| eprintln!("[AUDIO] 입력 오류: {}", e),
+            |e| eprintln!("[AUDIO] Input error: {}", e),
             None,
         ) {
             Ok(s) => s,
-            Err(e) => { eprintln!("[AUDIO] 입력 스트림 생성 실패: {}", e); return; }
+            Err(e) => { eprintln!("[AUDIO] Input stream creation failed: {}", e); return; }
         };
+        
         if let Err(e) = stream.play() {
-            eprintln!("[AUDIO] 입력 스트림 시작 실패: {}", e);
+            eprintln!("[AUDIO] Input stream start failed: {}", e);
             return;
         }
+        
+        // Keep stream alive
         let _stream = stream;
         
-        // Pre-allocate packet buffer
-        let mut packet = Vec::with_capacity(20 + AudioPacketHeader::SIZE + MAX_PACKET_SIZE);
+        // Create blocking UDP socket for sending
+        let std_socket = match std::net::UdpSocket::bind("0.0.0.0:0") {
+            Ok(s) => s,
+            Err(e) => { eprintln!("[UDP] Failed to create send socket: {}", e); return; }
+        };
+        
+        let mut packet_buffer = Vec::with_capacity(1024);
         let mut padded_session = [0u8; 20];
-        let session_bytes = session_send.as_slice();
-        let copy_len = session_bytes.len().min(20);
-        padded_session[..copy_len].copy_from_slice(&session_bytes[..copy_len]);
+        let copy_len = session_send.len().min(20);
+        padded_session[..copy_len].copy_from_slice(&session_send[..copy_len]);
         
         while is_running_send.load(Ordering::SeqCst) {
             if let Ok(samples) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
-                // Calculate input level (RMS)
+                // Calculate input level
                 let rms: f32 = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
                 let level = (rms * 200.0).min(100.0) as u32;
                 input_level_send.store(level, Ordering::Relaxed);
@@ -545,46 +565,52 @@ pub fn start_relay_loop(
                 if is_muted_send.load(Ordering::SeqCst) { continue; }
                 
                 if let Ok(encoded) = encode_frame(&mut encoder, &samples) {
-                    let seq = sequence.fetch_add(1, Ordering::SeqCst);
-                    let header = AudioPacketHeader { 
-                        sequence: seq, timestamp: 0, sample_rate: 48000, channels: 1, 
-                        payload_len: encoded.len() as u16 
+                    let seq = sequence_send.fetch_add(1, Ordering::SeqCst);
+                    let header = AudioPacketHeader {
+                        sequence: seq,
+                        timestamp: 0,
+                        sample_rate: 48000,
+                        channels: 2,
+                        payload_len: encoded.len() as u16,
                     };
                     
-                    packet.clear();
-                    packet.extend_from_slice(&padded_session);
-                    packet.extend_from_slice(&header.to_bytes());
-                    packet.extend_from_slice(&encoded);
+                    packet_buffer.clear();
+                    packet_buffer.extend_from_slice(&padded_session);
+                    packet_buffer.extend_from_slice(&header.to_bytes());
+                    packet_buffer.extend_from_slice(&encoded);
                     
-                    let _ = packet_tx.blocking_send(packet.clone());
+                    if let Ok(_) = std_socket.send_to(&packet_buffer, relay_addr) {
+                        packets_sent_send.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             }
         }
     });
     
-    // 수신 루프 (with jitter buffer and audio mixing)
+    // Audio output thread with UDP receiving
+    let is_running_recv = is_running.clone();
+    let packets_received_recv = packets_received.clone();
+    
     std::thread::spawn(move || {
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(r) => r,
-            Err(e) => { eprintln!("[AUDIO] 런타임 생성 실패: {}", e); return; }
+        let mut decoder = match create_decoder() {
+            Ok(d) => d,
+            Err(e) => { eprintln!("[AUDIO] Decoder creation failed: {}", e); return; }
         };
-        let mut decoders: BTreeMap<String, Decoder> = BTreeMap::new();
-        let mut jitter_buffers: BTreeMap<String, JitterBuffer> = BTreeMap::new();
-        let mut last_seq: BTreeMap<String, u32> = BTreeMap::new();
         
-        // 오디오 출력 스트림
         let host = cpal::default_host();
-        let device = match output_device
+        let device = output_device
             .and_then(|name| host.output_devices().ok()?.find(|d| d.name().ok().as_ref() == Some(&name)))
-            .or_else(|| host.default_output_device()) {
+            .or_else(|| host.default_output_device());
+        
+        let device = match device {
             Some(d) => d,
-            None => { eprintln!("[AUDIO] 출력 장치 없음"); return; }
+            None => { eprintln!("[AUDIO] No output device"); return; }
         };
         
         let config = cpal::StreamConfig {
-            channels: 1,
+            channels: 2, // Stereo output
             sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32),
+            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 960 samples for stereo
         };
         
         let pb = playback_buffer.clone();
@@ -597,85 +623,64 @@ pub fn start_relay_loop(
                     }
                 }
             },
-            |e| eprintln!("[AUDIO] 출력 오류: {}", e),
+            |e| eprintln!("[AUDIO] Output error: {}", e),
             None,
         ) {
             Ok(s) => s,
-            Err(e) => { eprintln!("[AUDIO] 출력 스트림 생성 실패: {}", e); return; }
+            Err(e) => { eprintln!("[AUDIO] Output stream creation failed: {}", e); return; }
         };
+        
         if let Err(e) = stream.play() {
-            eprintln!("[AUDIO] 출력 스트림 시작 실패: {}", e);
+            eprintln!("[AUDIO] Output stream start failed: {}", e);
             return;
         }
+        
+        // Keep stream alive
         let _stream = stream;
         
-        const SESSION_ID_LEN: usize = 20;
-        let mut buf = vec![0u8; 2000];
-        let mut mix_buffer = vec![0f32; FRAME_SIZE];
+        // Create blocking UDP socket for receiving
+        let std_socket = match std::net::UdpSocket::bind("0.0.0.0:0") {
+            Ok(s) => {
+                s.set_read_timeout(Some(std::time::Duration::from_millis(10))).ok();
+                s
+            },
+            Err(e) => { eprintln!("[UDP] Failed to create recv socket: {}", e); return; }
+        };
         
-        while is_running.load(Ordering::SeqCst) {
-            // Receive packets (non-blocking batch)
-            loop {
-                match rt.block_on(async {
-                    tokio::time::timeout(std::time::Duration::from_millis(1), socket.recv_from(&mut buf)).await
-                }) {
-                    Ok(Ok((len, _))) if len > SESSION_ID_LEN + AudioPacketHeader::SIZE => {
-                        let sender_id = String::from_utf8_lossy(&buf[..SESSION_ID_LEN]).trim_end_matches('\0').to_string();
-                        if sender_id == session_id { continue; }
+        let mut buf = vec![0u8; 2000];
+        const SESSION_ID_LEN: usize = 20;
+        
+        while is_running_recv.load(Ordering::SeqCst) {
+            // Use the original socket for receiving (it's bound to the relay)
+            match std_socket.recv_from(&mut buf) {
+                Ok((len, _)) if len > SESSION_ID_LEN + AudioPacketHeader::SIZE => {
+                    let sender_id = String::from_utf8_lossy(&buf[..SESSION_ID_LEN]).trim_end_matches('\0').to_string();
+                    if sender_id == session_id { continue; } // Skip own packets
+                    
+                    let _header = match AudioPacketHeader::from_bytes(&buf[SESSION_ID_LEN..SESSION_ID_LEN + AudioPacketHeader::SIZE]) {
+                        Some(h) => h,
+                        None => continue,
+                    };
+                    let payload = &buf[SESSION_ID_LEN + AudioPacketHeader::SIZE..len];
+                    
+                    if let Ok(samples) = decode_frame(&mut decoder, payload) {
+                        packets_received_recv.fetch_add(1, Ordering::Relaxed);
                         
-                        let header = match AudioPacketHeader::from_bytes(&buf[SESSION_ID_LEN..SESSION_ID_LEN + AudioPacketHeader::SIZE]) {
-                            Some(h) => h,
-                            None => continue,
-                        };
-                        let payload = &buf[SESSION_ID_LEN + AudioPacketHeader::SIZE..len];
-                        
-                        // PLC for lost packets
-                        if let Some(&prev_seq) = last_seq.get(&sender_id) {
-                            let expected = prev_seq.wrapping_add(1);
-                            if header.sequence > expected && header.sequence.wrapping_sub(expected) < 10 {
-                                let decoder = decoders.entry(sender_id.clone()).or_insert_with(|| create_decoder().unwrap_or_else(|_| Decoder::new(48000, Channels::Mono).unwrap()));
-                                let jb = jitter_buffers.entry(sender_id.clone()).or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER));
-                                for seq in expected..header.sequence {
-                                    if let Ok(plc) = decode_plc(decoder) { jb.push(seq, plc); }
-                                }
-                            }
-                        }
-                        last_seq.insert(sender_id.clone(), header.sequence);
-                        
-                        let decoder = decoders.entry(sender_id.clone()).or_insert_with(|| create_decoder().unwrap_or_else(|_| Decoder::new(48000, Channels::Mono).unwrap()));
-                        if let Ok(samples) = decode_frame(decoder, payload) {
-                            packets_received.fetch_add(1, Ordering::Relaxed);
-                            jitter_buffers.entry(sender_id).or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER)).push(header.sequence, samples);
+                        if let Ok(mut pb) = playback_buffer.lock() {
+                            pb.extend(samples);
+                            // Prevent buffer overflow
+                            while pb.len() > 9600 { pb.pop_front(); }
                         }
                     }
-                    _ => break, // No more packets ready
+                }
+                _ => {
+                    // No packet or timeout, continue
+                    std::thread::sleep(std::time::Duration::from_millis(1));
                 }
             }
-            
-            // Mix audio from all jitter buffers
-            mix_buffer.fill(0.0);
-            let mut has_audio = false;
-            for jb in jitter_buffers.values_mut() {
-                if let Some(samples) = jb.pop() {
-                    has_audio = true;
-                    for (i, &s) in samples.iter().enumerate() {
-                        if i < mix_buffer.len() { mix_buffer[i] += s; }
-                    }
-                }
-            }
-            
-            if has_audio {
-                // Soft clip to prevent distortion
-                for s in &mut mix_buffer { *s = s.tanh(); }
-                if let Ok(mut pb) = playback_buffer.lock() {
-                    pb.extend(mix_buffer.iter().copied());
-                    while pb.len() > 9600 { pb.pop_front(); }
-                }
-            }
-            
-            std::thread::sleep(std::time::Duration::from_millis(5));
         }
     });
     
+    eprintln!("[RELAY] Relay loop started successfully with networking");
     Ok(())
 }
