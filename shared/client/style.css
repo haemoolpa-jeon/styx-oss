@@ -1351,3 +1351,27 @@ input[type="range"]::-webkit-slider-thumb:hover {
   box-shadow: 0 0 20px rgba(0, 210, 106, 0.3);
   animation: pulse 1.5s infinite;
 }
+
+/* Self Stats Display */
+.self-stats {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.self-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-input);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.self-stat span {
+  font-weight: 500;
+  color: var(--text-primary);
+}

@@ -1200,6 +1200,11 @@ io.on('connection', (socket) => {
     cb(Date.now());
   });
 
+  // 핑 테스트 (자체 지연시간 측정용)
+  socket.on('ping', (clientTime, cb) => {
+    cb(Date.now());
+  });
+
   // TURN 자격증명 요청
   socket.on('get-turn-credentials', (_, cb) => {
     const creds = generateTurnCredentials(socket.username || 'anonymous');

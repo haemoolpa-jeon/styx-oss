@@ -1315,6 +1315,15 @@ let noiseGateInterval = null;
 let latencyHistory = []; // 핑 그래프용
 let serverTimeOffset = 0; // 서버 시간과 클라이언트 시간 차이 (ms)
 
+// Self connection stats
+let selfStats = {
+  latency: 0,
+  jitter: 0,
+  packetsLost: 0,
+  bandwidth: 0,
+  connectionType: 'unknown'
+};
+
 // Audio input monitoring
 let inputMonitorEnabled = localStorage.getItem('styx-input-monitor') === 'true';
 let inputMonitorGain = null;
@@ -4301,6 +4310,16 @@ function startLatencyPing() {
   if (statsInterval) clearInterval(statsInterval);
   latencyHistory = [];
   
+  // Simple ping test for self latency (every 5 seconds)
+  latencyInterval = setInterval(() => {
+    const start = Date.now();
+    socket.emit('ping', start, (serverTime) => {
+      const rtt = Date.now() - start;
+      selfStats.latency = rtt;
+      updateSelfStatsUI();
+    });
+  }, 5000);
+  
   // 상세 통계 수집 (2초마다)
   statsInterval = setInterval(async () => {
     let avgLatency = 0, count = 0;
@@ -4383,6 +4402,12 @@ function startLatencyPing() {
     
     renderUsers();
   }, 2000);
+}
+
+function updateSelfStatsUI() {
+  if ($('self-latency')) $('self-latency').textContent = selfStats.latency ? selfStats.latency + 'ms' : '-';
+  if ($('self-bandwidth')) $('self-bandwidth').textContent = selfStats.bandwidth || '-';
+  if ($('self-loss')) $('self-loss').textContent = selfStats.packetsLost || '0';
 }
 
 // 지연 보상: 가장 느린 피어에 맞춰 다른 피어들에게 딜레이 추가
