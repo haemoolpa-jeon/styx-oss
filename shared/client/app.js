@@ -3244,21 +3244,39 @@ function updateMuteUI() {
 async function restartAudioStream() {
   if (!localStream) return;
   
+  // Stop old streams
   const oldTracks = localStream.getAudioTracks();
   oldTracks.forEach(t => t.stop());
   
+  // Stop raw stream if it exists
+  if (localStream._rawStream) {
+    localStream._rawStream.getAudioTracks().forEach(t => t.stop());
+  }
+  
+  // Close old audio context
+  if (inputLimiterContext) {
+    inputLimiterContext.close();
+    inputLimiterContext = null;
+  }
+  
   try {
-    const newStream = await navigator.mediaDevices.getUserMedia({
+    const rawStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
         echoCancellation: $('room-echo-cancel')?.checked ?? $('echo-cancel')?.checked ?? true,
         noiseSuppression: $('room-noise-suppress')?.checked ?? $('noise-suppress')?.checked ?? true,
-        autoGainControl: $('auto-gain')?.checked ?? true
+        autoGainControl: $('auto-gain')?.checked ?? true,
+        sampleRate: 48000,
+        channelCount: 1,
+        latency: { ideal: 0.01 }
       }
     });
     
-    const newTrack = newStream.getAudioTracks()[0];
-    localStream = newStream;
+    // Recreate processed stream with input limiter and effects
+    localStream = await createProcessedInputStream(rawStream);
+    localStream._rawStream = rawStream;
+    
+    const newTrack = localStream.getAudioTracks()[0];
     
     // 모든 피어 연결에 새 트랙 적용
     peers.forEach(peer => {
@@ -3269,6 +3287,11 @@ async function restartAudioStream() {
     // 음소거 상태 유지
     if (isMuted || pttMode) {
       newTrack.enabled = false;
+    }
+    
+    // Restart audio meter if it was running
+    if (actuallyTauri) {
+      startAudioMeter();
     }
     
   } catch (e) {
