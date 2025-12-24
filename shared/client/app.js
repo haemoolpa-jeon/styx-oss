@@ -2287,6 +2287,9 @@ function toggleRecording() {
 let screenStream = null;
 let isScreenSharing = false;
 
+// Screen share WebRTC connections (separate from audio UDP)
+const screenPeerConnections = new Map(); // peerId -> RTCPeerConnection
+
 async function startScreenShare() {
   try {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
@@ -2308,16 +2311,28 @@ async function startScreenShare() {
     // 다른 피어들에게 화면 공유 시작 알림
     socket.emit('screen-share-start');
     
-    // 각 피어에게 비디오 트랙 추가
+    // Create dedicated WebRTC connections for screen share
     const videoTrack = screenStream.getVideoTracks()[0];
-    peers.forEach((peer, id) => {
-      peer.pc.addTrack(videoTrack, screenStream);
-      // 재협상 필요
-      peer.pc.createOffer().then(offer => {
-        peer.pc.setLocalDescription(offer);
-        socket.emit('offer', { to: id, offer });
+    
+    // For Tauri mode: create new WebRTC connections just for screen
+    // For browser mode: use existing peer connections if available
+    if (actuallyTauri) {
+      // Create dedicated screen share connections
+      peers.forEach((peer, peerId) => {
+        createScreenShareConnection(peerId, videoTrack, true);
       });
-    });
+    } else {
+      // Browser mode: use existing peer connections
+      peers.forEach((peer, id) => {
+        if (peer.pc) {
+          peer.pc.addTrack(videoTrack, screenStream);
+          peer.pc.createOffer().then(offer => {
+            peer.pc.setLocalDescription(offer);
+            socket.emit('offer', { to: id, offer });
+          });
+        }
+      });
+    }
     
     // 공유 중지 감지
     videoTrack.onended = () => stopScreenShare();
@@ -2327,6 +2342,54 @@ async function startScreenShare() {
   }
 }
 
+// Create dedicated WebRTC connection for screen sharing
+function createScreenShareConnection(peerId, videoTrack, initiator) {
+  // Close existing screen connection if any
+  if (screenPeerConnections.has(peerId)) {
+    screenPeerConnections.get(peerId).close();
+  }
+  
+  const pc = new RTCPeerConnection(rtcConfig);
+  screenPeerConnections.set(peerId, pc);
+  
+  if (videoTrack) {
+    pc.addTrack(videoTrack, screenStream);
+  }
+  
+  pc.ontrack = (e) => {
+    if (e.track.kind === 'video') {
+      const screenVideo = $('screen-share-video');
+      if (screenVideo) {
+        screenVideo.srcObject = e.streams[0];
+        screenVideo.style.display = '';
+        const placeholder = $('screen-share-placeholder');
+        if (placeholder) placeholder.style.display = 'none';
+      }
+    }
+  };
+  
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      socket.emit('screen-ice-candidate', { to: peerId, candidate: e.candidate });
+    }
+  };
+  
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      console.log(`Screen share connection ${pc.connectionState} with ${peerId}`);
+    }
+  };
+  
+  if (initiator) {
+    pc.createOffer().then(offer => {
+      pc.setLocalDescription(offer);
+      socket.emit('screen-offer', { to: peerId, offer });
+    });
+  }
+  
+  return pc;
+}
+
 function stopScreenShare() {
   if (!isScreenSharing) return;
   
@@ -2334,6 +2397,12 @@ function stopScreenShare() {
     screenStream.getTracks().forEach(t => t.stop());
     screenStream = null;
   }
+  
+  // Close all screen share WebRTC connections
+  screenPeerConnections.forEach(pc => {
+    try { pc.close(); } catch {}
+  });
+  screenPeerConnections.clear();
   
   isScreenSharing = false;
   const screenShareBtn = $('screenShareBtn');
@@ -2354,34 +2423,48 @@ socket.on('screen-share-start', ({ userId, username }) => {
   if (screenUser) screenUser.textContent = `${username}님의 화면`;
   $('screen-share-container')?.classList.remove('hidden');
   
-  // Tauri 앱에서는 화면 공유 수신 불가 안내
-  if (actuallyTauri) {
-    const screenVideo = $('screen-share-video');
-    if (screenVideo) {
-      // Show placeholder message
-      screenVideo.style.display = 'none';
-      let placeholder = $('screen-share-placeholder');
-      if (!placeholder) {
-        placeholder = document.createElement('div');
-        placeholder.id = 'screen-share-placeholder';
-        placeholder.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#1a1a2e;color:#888;font-size:14px;text-align:center;padding:20px;';
-        placeholder.textContent = '화면 공유는 웹 브라우저에서만 볼 수 있습니다.\n데스크톱 앱에서는 지원되지 않습니다.';
-        screenVideo.parentNode.insertBefore(placeholder, screenVideo);
-      }
-      placeholder.style.display = 'flex';
-    }
-  }
+  // Tauri 앱에서도 WebRTC로 화면 공유 수신 가능
+  // (WebRTC connection will be created when screen-offer is received)
 });
 
 socket.on('screen-share-stop', () => {
   if (!isScreenSharing) {
     $('screen-share-container').classList.add('hidden');
     $('screen-share-video').srcObject = null;
-    // Hide placeholder if exists
-    const placeholder = $('screen-share-placeholder');
-    if (placeholder) placeholder.style.display = 'none';
-    const screenVideo = $('screen-share-video');
-    if (screenVideo) screenVideo.style.display = '';
+    // Close screen share connections
+    screenPeerConnections.forEach(pc => {
+      try { pc.close(); } catch {}
+    });
+    screenPeerConnections.clear();
+  }
+});
+
+// Screen share WebRTC signaling
+socket.on('screen-offer', async ({ from, offer }) => {
+  console.log('Received screen-offer from', from);
+  const pc = createScreenShareConnection(from, null, false);
+  await pc.setRemoteDescription(offer);
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  socket.emit('screen-answer', { to: from, answer });
+});
+
+socket.on('screen-answer', async ({ from, answer }) => {
+  console.log('Received screen-answer from', from);
+  const pc = screenPeerConnections.get(from);
+  if (pc) {
+    await pc.setRemoteDescription(answer);
+  }
+});
+
+socket.on('screen-ice-candidate', async ({ from, candidate }) => {
+  const pc = screenPeerConnections.get(from);
+  if (pc) {
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch (e) {
+      console.warn('Failed to add screen ICE candidate:', e);
+    }
   }
 });
 

@@ -1142,6 +1142,19 @@ io.on('connection', (socket) => {
     socket.to(socket.room).emit('screen-share-stop', { userId: socket.id });
   });
 
+  // Screen share WebRTC signaling (separate from audio)
+  socket.on('screen-offer', ({ to, offer }) => {
+    io.to(to).emit('screen-offer', { from: socket.id, offer });
+  });
+
+  socket.on('screen-answer', ({ to, answer }) => {
+    io.to(to).emit('screen-answer', { from: socket.id, answer });
+  });
+
+  socket.on('screen-ice-candidate', ({ to, candidate }) => {
+    io.to(to).emit('screen-ice-candidate', { from: socket.id, candidate });
+  });
+
   // 역할 변경 (호스트만 가능)
   socket.on('change-role', ({ userId, role }, cb) => {
     if (!socket.room) return cb?.({ error: 'Not in room' });
