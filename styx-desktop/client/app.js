@@ -710,6 +710,7 @@ let analyser = null;
 let meterInterval = null;
 let metronomeInterval = null;
 let metronomeAudio = null;
+let metronomeLocalStop = false; // Track if user locally stopped metronome
 let sessionRestored = false;
 let mediaRecorder = null;
 let recordedChunks = [];
@@ -1628,10 +1629,25 @@ function showTestResults(results) {
   const qualityLabel = { good: '좋음 ✓', fair: '보통 ⚠', poor: '불안정 ✗', unknown: '측정 실패' }[qualityGrade];
   const qualityColor = { good: '#2ed573', fair: '#ffa502', poor: '#ff4757', unknown: '#999' }[qualityGrade];
   
+  // Connection status: direct (STUN) or relay (TURN)
+  let connStatus, connClass;
+  if (results.network) {
+    connStatus = '✓ 직접 연결';
+    connClass = 'pass';
+  } else if (results.turn) {
+    connStatus = '✓ TURN 릴레이';
+    connClass = 'pass';
+  } else {
+    connStatus = '✗ 연결 실패';
+    connClass = 'fail';
+  }
+  
   el.innerHTML = `
     <div class="test-item ${results.mic ? 'pass' : 'fail'}">🎤 마이크: ${results.mic ? '✓' : '✗'}</div>
     <div class="test-item ${results.speaker ? 'pass' : 'fail'}">🔊 스피커: ${results.speaker ? '✓' : '✗'}</div>
-    <div class="test-item ${results.network ? 'pass' : 'fail'}">🌐 서버 연결: ${results.network ? '✓' : '✗'}</div>
+    <div class="test-item ${connClass}">🌐 서버 연결: ${connStatus}</div>
+    ${!results.network && results.turn ? '<div class="test-item warn">⚠️ 직접 연결 불가 - TURN 릴레이 사용 (지연 증가)</div>' : ''}
+    ${!results.network && !results.turn ? '<div class="test-item fail">❌ 네트워크 차단됨 - 방화벽 확인 필요</div>' : ''}
     ${q ? `<div class="test-item" style="color:${qualityColor}">📡 네트워크: ${qualityLabel} (${q.latency}ms, 지터 ${q.jitter}ms)</div>` : ''}
     ${q?.isWifi ? '<div class="test-item warn">⚠️ Wi-Fi 감지 - 유선 연결 권장</div>' : ''}
     <button class="btn-small" onclick="$('test-results').classList.add('hidden')" style="margin-top:8px;">닫기</button>
@@ -2286,6 +2302,9 @@ function toggleRecording() {
 let screenStream = null;
 let isScreenSharing = false;
 
+// Screen share WebRTC connections (separate from audio UDP)
+const screenPeerConnections = new Map(); // peerId -> RTCPeerConnection
+
 async function startScreenShare() {
   try {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
@@ -2307,16 +2326,28 @@ async function startScreenShare() {
     // 다른 피어들에게 화면 공유 시작 알림
     socket.emit('screen-share-start');
     
-    // 각 피어에게 비디오 트랙 추가
+    // Create dedicated WebRTC connections for screen share
     const videoTrack = screenStream.getVideoTracks()[0];
-    peers.forEach((peer, id) => {
-      peer.pc.addTrack(videoTrack, screenStream);
-      // 재협상 필요
-      peer.pc.createOffer().then(offer => {
-        peer.pc.setLocalDescription(offer);
-        socket.emit('offer', { to: id, offer });
+    
+    // For Tauri mode: create new WebRTC connections just for screen
+    // For browser mode: use existing peer connections if available
+    if (actuallyTauri) {
+      // Create dedicated screen share connections
+      peers.forEach((peer, peerId) => {
+        createScreenShareConnection(peerId, videoTrack, true);
       });
-    });
+    } else {
+      // Browser mode: use existing peer connections
+      peers.forEach((peer, id) => {
+        if (peer.pc) {
+          peer.pc.addTrack(videoTrack, screenStream);
+          peer.pc.createOffer().then(offer => {
+            peer.pc.setLocalDescription(offer);
+            socket.emit('offer', { to: id, offer });
+          });
+        }
+      });
+    }
     
     // 공유 중지 감지
     videoTrack.onended = () => stopScreenShare();
@@ -2326,6 +2357,54 @@ async function startScreenShare() {
   }
 }
 
+// Create dedicated WebRTC connection for screen sharing
+function createScreenShareConnection(peerId, videoTrack, initiator) {
+  // Close existing screen connection if any
+  if (screenPeerConnections.has(peerId)) {
+    screenPeerConnections.get(peerId).close();
+  }
+  
+  const pc = new RTCPeerConnection(rtcConfig);
+  screenPeerConnections.set(peerId, pc);
+  
+  if (videoTrack) {
+    pc.addTrack(videoTrack, screenStream);
+  }
+  
+  pc.ontrack = (e) => {
+    if (e.track.kind === 'video') {
+      const screenVideo = $('screen-share-video');
+      if (screenVideo) {
+        screenVideo.srcObject = e.streams[0];
+        screenVideo.style.display = '';
+        const placeholder = $('screen-share-placeholder');
+        if (placeholder) placeholder.style.display = 'none';
+      }
+    }
+  };
+  
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      socket.emit('screen-ice-candidate', { to: peerId, candidate: e.candidate });
+    }
+  };
+  
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      console.log(`Screen share connection ${pc.connectionState} with ${peerId}`);
+    }
+  };
+  
+  if (initiator) {
+    pc.createOffer().then(offer => {
+      pc.setLocalDescription(offer);
+      socket.emit('screen-offer', { to: peerId, offer });
+    });
+  }
+  
+  return pc;
+}
+
 function stopScreenShare() {
   if (!isScreenSharing) return;
   
@@ -2333,6 +2412,12 @@ function stopScreenShare() {
     screenStream.getTracks().forEach(t => t.stop());
     screenStream = null;
   }
+  
+  // Close all screen share WebRTC connections
+  screenPeerConnections.forEach(pc => {
+    try { pc.close(); } catch {}
+  });
+  screenPeerConnections.clear();
   
   isScreenSharing = false;
   const screenShareBtn = $('screenShareBtn');
@@ -2352,12 +2437,49 @@ socket.on('screen-share-start', ({ userId, username }) => {
   const screenUser = $('screen-share-user');
   if (screenUser) screenUser.textContent = `${username}님의 화면`;
   $('screen-share-container')?.classList.remove('hidden');
+  
+  // Tauri 앱에서도 WebRTC로 화면 공유 수신 가능
+  // (WebRTC connection will be created when screen-offer is received)
 });
 
 socket.on('screen-share-stop', () => {
   if (!isScreenSharing) {
     $('screen-share-container').classList.add('hidden');
     $('screen-share-video').srcObject = null;
+    // Close screen share connections
+    screenPeerConnections.forEach(pc => {
+      try { pc.close(); } catch {}
+    });
+    screenPeerConnections.clear();
+  }
+});
+
+// Screen share WebRTC signaling
+socket.on('screen-offer', async ({ from, offer }) => {
+  console.log('Received screen-offer from', from);
+  const pc = createScreenShareConnection(from, null, false);
+  await pc.setRemoteDescription(offer);
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  socket.emit('screen-answer', { to: from, answer });
+});
+
+socket.on('screen-answer', async ({ from, answer }) => {
+  console.log('Received screen-answer from', from);
+  const pc = screenPeerConnections.get(from);
+  if (pc) {
+    await pc.setRemoteDescription(answer);
+  }
+});
+
+socket.on('screen-ice-candidate', async ({ from, candidate }) => {
+  const pc = screenPeerConnections.get(from);
+  if (pc) {
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch (e) {
+      console.warn('Failed to add screen ICE candidate:', e);
+    }
   }
 });
 
@@ -2469,14 +2591,21 @@ socket.on('connect', () => {
     
     if (savedUser && savedToken) {
       socket.emit('restore-session', { username: savedUser, token: savedToken }, res => {
-        if (res.success) {
+        if (res && res.success) {
           currentUser = res.user;
           showLobby();
           // URL에서 방 정보 확인
           checkInviteLink();
         } else {
-          localStorage.removeItem('styx-user');
-          localStorage.removeItem('styx-token');
+          // Only clear if server explicitly rejected (not on timeout/error)
+          if (res && res.error) {
+            console.log('Session restore failed:', res.error);
+            localStorage.removeItem('styx-user');
+            localStorage.removeItem('styx-token');
+          } else {
+            // Retry on next connect if no response
+            sessionRestored = false;
+          }
         }
       });
     }
@@ -3676,6 +3805,32 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       updateMuteUI();
     }
 
+    // Tauri앱: 기존 사용자들을 peers Map에 추가
+    if (actuallyTauri && res.users) {
+      res.users.forEach(({ id, username, avatar, role }) => {
+        if (!peers.has(id)) {
+          peers.set(id, {
+            pc: { connectionState: 'connected' }, // Fake PC for UI compatibility
+            username,
+            avatar,
+            role: role || 'performer',
+            audioEl: null,
+            latency: null,
+            volume: 100,
+            packetLoss: 0,
+            jitter: 0,
+            bitrate: 0,
+            quality: { grade: 'good', label: 'UDP', color: '#2ed573' },
+            pan: 0,
+            muted: false,
+            solo: false,
+            isSpeaking: false
+          });
+        }
+      });
+      renderUsers();
+    }
+
     // Tauri앱: UDP 릴레이로 오디오, 브라우저: 관전 모드 (오디오 없음)
     if (actuallyTauri) {
       try {
@@ -3752,8 +3907,10 @@ $('metronome-toggle').onclick = () => {
   const countIn = $('count-in')?.checked || false;
   
   if (playing) {
+    metronomeLocalStop = false;
     startMetronome(bpm, null, countIn);
   } else {
+    metronomeLocalStop = true;
     stopMetronome();
   }
   
@@ -3772,6 +3929,12 @@ $('bpm-input').onchange = () => {
 socket.on('metronome-sync', ({ bpm, playing, startTime }) => {
   $('bpm-input').value = bpm;
   if (playing) {
+    // Don't restart if user just stopped it locally (debounce)
+    if (metronomeLocalStop) {
+      // Reset flag after a short delay to allow future syncs
+      setTimeout(() => { metronomeLocalStop = false; }, 500);
+      return;
+    }
     startMetronome(bpm, startTime);
   } else {
     stopMetronome();
@@ -4006,6 +4169,19 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
 
   pc.ontrack = (e) => {
     const peerData = peers.get(peerId);
+    
+    // Handle video track (screen share)
+    if (e.track.kind === 'video') {
+      const screenVideo = $('screen-share-video');
+      if (screenVideo) {
+        screenVideo.srcObject = e.streams[0];
+        screenVideo.style.display = '';
+        // Hide placeholder if exists
+        const placeholder = $('screen-share-placeholder');
+        if (placeholder) placeholder.style.display = 'none';
+      }
+      return;
+    }
     
     // 지터 버퍼 적용 (WebRTC playoutDelayHint)
     if (e.receiver && e.receiver.playoutDelayHint !== undefined) {
@@ -4707,9 +4883,30 @@ function renderPingGraph() {
 // 소켓 이벤트
 socket.on('user-joined', ({ id, username, avatar, role }) => {
   log(`새 사용자 입장: ${username} (${id}), role=${role}`);
-  // 브라우저는 관전 모드 - WebRTC 피어 연결 안함
   playSound('join');
   toast(`${username} 입장`, 'info', 2000);
+  
+  // Tauri 앱에서는 UDP 모드로 피어 추가 (WebRTC 없이)
+  if (actuallyTauri && !peers.has(id)) {
+    peers.set(id, {
+      pc: { connectionState: 'connected' }, // Fake PC for UI compatibility
+      username,
+      avatar,
+      role,
+      audioEl: null,
+      latency: null,
+      volume: 100,
+      packetLoss: 0,
+      jitter: 0,
+      bitrate: 0,
+      quality: { grade: 'good', label: 'UDP', color: '#2ed573' },
+      pan: 0,
+      muted: false,
+      solo: false,
+      isSpeaking: false
+    });
+    renderUsers();
+  }
 });
 
 socket.on('offer', async ({ from, offer }) => {
@@ -4730,6 +4927,20 @@ socket.on('user-left', ({ id }) => {
   // Cleanup spatial audio and bandwidth monitoring for this peer
   spatialPanners.delete(id);
   connectionStats.delete(id);
+  
+  // Remove peer from peers Map
+  const peer = peers.get(id);
+  if (peer) {
+    // Cleanup audio elements and connections
+    if (peer.audioEl) {
+      peer.audioEl.srcObject = null;
+      peer.audioEl.remove();
+    }
+    if (peer.pc && peer.pc.close) {
+      try { peer.pc.close(); } catch {}
+    }
+    peers.delete(id);
+  }
   
   playSound('leave');
   toast(`사용자 퇴장`, 'info', 2000);
@@ -5468,11 +5679,14 @@ if (inputVolumeEl) {
 
 // ===== Inline 이벤트 핸들러 대체 =====
 $('themeBtn').onclick = toggleTheme;
+
+// Modal backdrop click handlers - close only the parent modal
 document.querySelectorAll('.modal-backdrop').forEach(el => {
-  el.onclick = () => {
-    closeCreateRoomModal();
-    $('settings-panel')?.classList.add('hidden');
-    $('admin-panel')?.classList.add('hidden');
+  el.onclick = (e) => {
+    const modal = e.target.closest('.modal');
+    if (modal) {
+      modal.classList.add('hidden');
+    }
   };
 });
 $('create-room-modal')?.querySelector('.modal-close')?.addEventListener('click', closeCreateRoomModal);
