@@ -1629,10 +1629,25 @@ function showTestResults(results) {
   const qualityLabel = { good: '좋음 ✓', fair: '보통 ⚠', poor: '불안정 ✗', unknown: '측정 실패' }[qualityGrade];
   const qualityColor = { good: '#2ed573', fair: '#ffa502', poor: '#ff4757', unknown: '#999' }[qualityGrade];
   
+  // Connection status: direct (STUN) or relay (TURN)
+  let connStatus, connClass;
+  if (results.network) {
+    connStatus = '✓ 직접 연결';
+    connClass = 'pass';
+  } else if (results.turn) {
+    connStatus = '✓ TURN 릴레이';
+    connClass = 'pass';
+  } else {
+    connStatus = '✗ 연결 실패';
+    connClass = 'fail';
+  }
+  
   el.innerHTML = `
     <div class="test-item ${results.mic ? 'pass' : 'fail'}">🎤 마이크: ${results.mic ? '✓' : '✗'}</div>
     <div class="test-item ${results.speaker ? 'pass' : 'fail'}">🔊 스피커: ${results.speaker ? '✓' : '✗'}</div>
-    <div class="test-item ${results.network ? 'pass' : 'fail'}">🌐 서버 연결: ${results.network ? '✓' : '✗'}</div>
+    <div class="test-item ${connClass}">🌐 서버 연결: ${connStatus}</div>
+    ${!results.network && results.turn ? '<div class="test-item warn">⚠️ 직접 연결 불가 - TURN 릴레이 사용 (지연 증가)</div>' : ''}
+    ${!results.network && !results.turn ? '<div class="test-item fail">❌ 네트워크 차단됨 - 방화벽 확인 필요</div>' : ''}
     ${q ? `<div class="test-item" style="color:${qualityColor}">📡 네트워크: ${qualityLabel} (${q.latency}ms, 지터 ${q.jitter}ms)</div>` : ''}
     ${q?.isWifi ? '<div class="test-item warn">⚠️ Wi-Fi 감지 - 유선 연결 권장</div>' : ''}
     <button class="btn-small" onclick="$('test-results').classList.add('hidden')" style="margin-top:8px;">닫기</button>
