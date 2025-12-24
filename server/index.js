@@ -1369,7 +1369,7 @@ udpServer.on('message', (msg, rinfo) => {
   for (const otherId of members) {
     if (otherId === sessionId) continue;
     const other = udpClients.get(otherId);
-    if (!other) continue;
+    if (!other || !other.address) continue; // Skip if no address yet
     
     udpServer.send(relayBuffer, 0, packetLen, other.port, other.address);
     udpStats.packetsOut++;
@@ -1379,17 +1379,21 @@ udpServer.on('message', (msg, rinfo) => {
 
 // Helper: Add client to room
 function addToRoom(sessionId, roomId) {
-  const client = udpClients.get(sessionId);
-  if (client) {
-    // Remove from old room
-    if (client.roomId && roomMembers.has(client.roomId)) {
-      roomMembers.get(client.roomId).delete(sessionId);
-    }
-    // Add to new room
-    client.roomId = roomId;
-    if (!roomMembers.has(roomId)) roomMembers.set(roomId, new Set());
-    roomMembers.get(roomId).add(sessionId);
+  let client = udpClients.get(sessionId);
+  if (!client) {
+    // Client not registered yet via UDP, create placeholder
+    // Address will be updated when first UDP packet arrives
+    client = { address: null, port: null, roomId: null, lastSeen: Date.now() };
+    udpClients.set(sessionId, client);
   }
+  // Remove from old room
+  if (client.roomId && roomMembers.has(client.roomId)) {
+    roomMembers.get(client.roomId).delete(sessionId);
+  }
+  // Add to new room
+  client.roomId = roomId;
+  if (!roomMembers.has(roomId)) roomMembers.set(roomId, new Set());
+  roomMembers.get(roomId).add(sessionId);
 }
 
 // Helper: Remove client
