@@ -1057,7 +1057,7 @@ io.on('connection', (socket) => {
         serverStats.totalRooms++;
         
         const passwordHash = roomPassword ? await bcrypt.hash(roomPassword, 8) : null;
-        const s = validSettings;
+        const s = validSettings || {};
         rooms.set(room, { 
           users: new Map(), messages: [], passwordHash,
           creatorId: socket.id, creatorUsername: username,
@@ -1329,7 +1329,8 @@ let udpStats = { packetsIn: 0, packetsOut: 0, bytesIn: 0, bytesOut: 0 };
 udpServer.on('message', (msg, rinfo) => {
   if (msg.length < SESSION_ID_LEN + 1 || msg.length > MAX_PACKET_SIZE) return;
   
-  const sessionId = msg.slice(0, SESSION_ID_LEN).toString();
+  // Extract session ID and remove null padding
+  const sessionId = msg.slice(0, SESSION_ID_LEN).toString().replace(/\0/g, '');
   const payload = msg.slice(SESSION_ID_LEN);
   
   udpStats.packetsIn++;
@@ -1344,18 +1345,23 @@ udpServer.on('message', (msg, rinfo) => {
   // Register/update client
   let client = udpClients.get(sessionId);
   if (!client) {
+    console.log(`[UDP] New client registered via packet: ${sessionId.slice(0,8)}... from ${rinfo.address}:${rinfo.port}`);
     udpClients.set(sessionId, { address: rinfo.address, port: rinfo.port, roomId: null, lastSeen: Date.now() });
     return;
   }
   
   // Update address if changed (NAT rebinding)
   if (client.address !== rinfo.address || client.port !== rinfo.port) {
+    console.log(`[UDP] Client address updated: ${sessionId.slice(0,8)}... ${client.address}:${client.port} -> ${rinfo.address}:${rinfo.port}`);
     client.address = rinfo.address;
     client.port = rinfo.port;
   }
   client.lastSeen = Date.now();
   
-  if (!client.roomId) return;
+  if (!client.roomId) {
+    // Client sending audio but not bound to room yet
+    return;
+  }
   
   // O(1) room member lookup
   const members = roomMembers.get(client.roomId);
@@ -1383,8 +1389,11 @@ function addToRoom(sessionId, roomId) {
   if (!client) {
     // Client not registered yet via UDP, create placeholder
     // Address will be updated when first UDP packet arrives
+    console.log(`[UDP] Creating placeholder for: ${sessionId.slice(0,8)}... (no UDP packet yet)`);
     client = { address: null, port: null, roomId: null, lastSeen: Date.now() };
     udpClients.set(sessionId, client);
+  } else {
+    console.log(`[UDP] Client already exists: ${sessionId.slice(0,8)}... addr=${client.address}:${client.port}`);
   }
   // Remove from old room
   if (client.roomId && roomMembers.has(client.roomId)) {
@@ -1394,6 +1403,14 @@ function addToRoom(sessionId, roomId) {
   client.roomId = roomId;
   if (!roomMembers.has(roomId)) roomMembers.set(roomId, new Set());
   roomMembers.get(roomId).add(sessionId);
+  
+  // Log room state
+  const members = roomMembers.get(roomId);
+  const memberInfo = [...members].map(id => {
+    const c = udpClients.get(id);
+    return `${id.slice(0,8)}(${c?.address || 'no-addr'})`;
+  }).join(', ');
+  console.log(`[UDP] Room ${roomId} members: [${memberInfo}]`);
 }
 
 // Helper: Remove client
