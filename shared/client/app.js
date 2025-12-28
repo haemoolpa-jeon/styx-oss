@@ -1252,11 +1252,11 @@ function initUIEnhancements() {
     });
   });
   
-  // Add slide-in animation to new elements
+  // Add slide-in animation to new elements (room items only, not user cards which rebuild frequently)
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
       mutation.addedNodes.forEach((node) => {
-        if (node.nodeType === 1 && (node.classList.contains('user-card') || node.classList.contains('room-item'))) {
+        if (node.nodeType === 1 && node.classList.contains('room-item')) {
           node.classList.add('slide-in');
         }
       });
@@ -3036,6 +3036,13 @@ async function startUdpMode() {
   
   try {
     console.log('Starting UDP mode...');
+    
+    // Stop any existing stream first
+    try {
+      await tauriInvoke('udp_stop_stream');
+      await new Promise(r => setTimeout(r, 100)); // Wait for cleanup
+    } catch (e) { /* ignore */ }
+    
     udpPort = await tauriInvoke('udp_bind', { port: 0 });
     console.log('UDP 포트 바인딩:', udpPort);
     

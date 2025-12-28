@@ -195,8 +195,14 @@ fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn udp_stop_stream(state: State<'_, AppState>) -> Result<(), String> {
-    let stream_state = state.udp_stream.lock().map_err(|_| "스트림 상태 잠금 실패".to_string())?;
+    let mut stream_state = state.udp_stream.lock().map_err(|_| "스트림 상태 잠금 실패".to_string())?;
     stream_state.is_running.store(false, Ordering::SeqCst);
+    // Clear buffers and reset state for clean restart
+    if let Ok(mut jb) = stream_state.jitter_buffers.lock() { jb.clear(); }
+    if let Ok(mut pb) = stream_state.playback_buffer.lock() { pb.clear(); }
+    stream_state.packets_sent.store(0, Ordering::Relaxed);
+    stream_state.packets_received.store(0, Ordering::Relaxed);
+    stream_state.socket = None; // Release socket for rebind
     Ok(())
 }
 
