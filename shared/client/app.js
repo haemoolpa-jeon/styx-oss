@@ -1070,23 +1070,24 @@ window.addEventListener('unhandledrejection', (e) => {
   handleCriticalError(e.reason, 'Promise');
 });
 
-// 통합 AudioContext 관리
+// 통합 AudioContext 관리 - delegates to module
 let sharedAudioContext = null;
 
 function getSharedAudioContext() {
+  if (M.audio?.getSharedAudioContext) return M.audio.getSharedAudioContext();
   if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
-    sharedAudioContext = new AudioContext({ 
-      latencyHint: 'interactive', 
-      sampleRate: 48000 
-    });
+    sharedAudioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
   }
-  if (sharedAudioContext.state === 'suspended') {
-    sharedAudioContext.resume();
-  }
+  if (sharedAudioContext.state === 'suspended') sharedAudioContext.resume();
   return sharedAudioContext;
 }
 
 async function createProcessedInputStream(rawStream) {
+  if (M.audio?.createProcessedInputStream) {
+    const result = await M.audio.createProcessedInputStream(rawStream);
+    processedStream = result;
+    return result;
+  }
   // Pro Mode: bypass all processing for minimum latency
   if (proMode) {
     processedStream = rawStream;
@@ -1151,6 +1152,7 @@ async function createProcessedInputStream(rawStream) {
 }
 
 function updateInputEffect(effect, value) {
+  if (M.audio?.updateInputEffect) return M.audio.updateInputEffect(effect, value);
   inputEffects[effect] = value;
   localStorage.setItem('styx-effects', JSON.stringify(inputEffects));
   
