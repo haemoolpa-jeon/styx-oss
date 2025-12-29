@@ -755,25 +755,17 @@ async function autoDetectOptimalSettings() {
     // 2. 네트워크 기반 설정 자동 조정
     const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
     if (connection) {
-      let recommendedBitrate = 96;
       let recommendedJitter = 40;
       
       if (connection.effectiveType === '4g') {
-        recommendedBitrate = 128;
         recommendedJitter = 30;
       } else if (connection.effectiveType === '3g') {
-        recommendedBitrate = 64;
         recommendedJitter = 60;
       } else if (connection.effectiveType === 'slow-2g' || connection.effectiveType === '2g') {
-        recommendedBitrate = 32;
         recommendedJitter = 100;
       }
       
       // UI 업데이트
-      if ($('bitrate-slider')) {
-        $('bitrate-slider').value = recommendedBitrate;
-        updateBitrate(recommendedBitrate);
-      }
       if ($('jitter-slider')) {
         $('jitter-slider').value = recommendedJitter;
         updateJitterBuffer(recommendedJitter);
