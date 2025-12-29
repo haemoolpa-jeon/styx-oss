@@ -1534,12 +1534,35 @@ async function runConnectionTest() {
   updateStatus('📡 네트워크 품질 측정 중...');
   const pings = [];
   
-  // Skip network test for Tauri app to avoid CORS issues
-  if (actuallyTauri) {
-    // Tauri app uses UDP directly, so network test is not needed
-    networkTestResults.latency = 25; // Assume good latency for UDP
-    networkTestResults.jitter = 5;
-    results.quality = { latency: 25, jitter: 5, isWifi: false };
+  // Tauri app - use UDP latency measurement
+  if (actuallyTauri && tauriInvoke) {
+    try {
+      // Measure UDP latency multiple times
+      for (let i = 0; i < 5; i++) {
+        const rtt = await tauriInvoke('measure_relay_latency');
+        pings.push(rtt);
+        await new Promise(r => setTimeout(r, 100));
+      }
+      const avgPing = pings.reduce((a, b) => a + b, 0) / pings.length;
+      const jitterCalc = Math.sqrt(pings.map(p => Math.pow(p - avgPing, 2)).reduce((a, b) => a + b, 0) / pings.length);
+      
+      networkTestResults.latency = Math.round(avgPing);
+      networkTestResults.jitter = Math.round(jitterCalc);
+      results.quality = { latency: networkTestResults.latency, jitter: networkTestResults.jitter, isWifi: false };
+      results.network = true; // UDP works
+      
+      // Also detect NAT type
+      try {
+        const natInfo = await tauriInvoke('detect_nat');
+        results.natType = natInfo.nat_type;
+        results.publicAddr = natInfo.public_addr;
+      } catch {}
+    } catch (e) {
+      console.error('UDP latency test failed:', e);
+      networkTestResults.latency = 0;
+      networkTestResults.jitter = 0;
+      results.quality = { latency: 0, jitter: 0, isWifi: false };
+    }
   } else {
     // Web version - test HTTP latency
     for (let i = 0; i < 5; i++) {
@@ -1657,6 +1680,7 @@ function showTestResults(results) {
     <div class="test-item ${results.mic ? 'pass' : 'fail'}">🎤 마이크: ${results.mic ? '✓' : '✗'}</div>
     <div class="test-item ${results.speaker ? 'pass' : 'fail'}">🔊 스피커: ${results.speaker ? '✓' : '✗'}</div>
     <div class="test-item ${connClass}">🌐 서버 연결: ${connStatus}</div>
+    ${results.natType ? `<div class="test-item pass">🔗 NAT 유형: ${results.natType}${results.natType === 'Symmetric' ? ' (P2P 제한)' : ' (P2P 가능)'}</div>` : ''}
     ${!results.network && results.turn ? '<div class="test-item warn">⚠️ 직접 연결 불가 - TURN 릴레이 사용 (지연 증가)</div>' : ''}
     ${!results.network && !results.turn ? '<div class="test-item fail">❌ 네트워크 차단됨 - 방화벽 확인 필요</div>' : ''}
     ${q ? `<div class="test-item" style="color:${qualityColor}">📡 네트워크: ${qualityLabel} (${q.latency}ms, 지터 ${q.jitter}ms)</div>` : ''}
