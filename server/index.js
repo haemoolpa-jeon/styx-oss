@@ -1250,27 +1250,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('udp-info', ({ port, publicIp }) => {
-    if (!socket.room) return;
-    socket.udpPort = port;
-    socket.udpPublicIp = publicIp;
-    socket.to(socket.room).emit('udp-peer-info', { id: socket.id, port, publicIp, username: socket.username });
-  });
-
-  socket.on('udp-request-peers', () => {
-    if (!socket.room) return;
-    const roomData = rooms.get(socket.room);
-    if (!roomData) return;
-    const peers = [];
-    for (const [id, u] of roomData.users) {
-      const peerSocket = io.sockets.sockets.get(id);
-      if (peerSocket && peerSocket.udpPort && id !== socket.id) {
-        peers.push({ id, port: peerSocket.udpPort, publicIp: peerSocket.udpPublicIp, username: u.username });
-      }
-    }
-    socket.emit('udp-peers', peers);
-  });
-
   // Admin: IP Whitelist Management
   socket.on('admin-whitelist-status', (cb) => {
     if (!socket.isAdmin) return cb?.({ error: 'Not authorized' });
