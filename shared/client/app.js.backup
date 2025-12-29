@@ -1,10 +1,6 @@
 // Styx 클라이언트 - HADES 실시간 오디오 협업
 // WebRTC P2P 오디오 + 안정성 중심 설계
 
-// Use ES modules if available (gradual migration)
-const useModules = typeof window.styxModulesLoaded !== 'undefined';
-const M = window.styxModules || {};
-
 // 접근성 개선 시스템
 const accessibility = {
   highContrast: false,
@@ -1071,26 +1067,23 @@ window.addEventListener('unhandledrejection', (e) => {
   handleCriticalError(e.reason, 'Promise');
 });
 
-// 통합 AudioContext 관리 - use module if available
+// 통합 AudioContext 관리
 let sharedAudioContext = null;
 
 function getSharedAudioContext() {
-  if (useModules && M.getSharedAudioContext) return M.getSharedAudioContext();
   if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
-    sharedAudioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
+    sharedAudioContext = new AudioContext({ 
+      latencyHint: 'interactive', 
+      sampleRate: 48000 
+    });
   }
-  if (sharedAudioContext.state === 'suspended') sharedAudioContext.resume();
+  if (sharedAudioContext.state === 'suspended') {
+    sharedAudioContext.resume();
+  }
   return sharedAudioContext;
 }
 
 async function createProcessedInputStream(rawStream) {
-  // Use module version if available
-  if (useModules && M.createProcessedInputStream) {
-    const result = await M.createProcessedInputStream(rawStream);
-    processedStream = M.state?.processedStream || result;
-    return result;
-  }
-  
   // Pro Mode: bypass all processing for minimum latency
   if (proMode) {
     processedStream = rawStream;
@@ -1155,9 +1148,6 @@ async function createProcessedInputStream(rawStream) {
 }
 
 function updateInputEffect(effect, value) {
-  // Use module if available
-  if (useModules && M.updateInputEffect) return M.updateInputEffect(effect, value);
-  
   inputEffects[effect] = value;
   localStorage.setItem('styx-effects', JSON.stringify(inputEffects));
   
@@ -1819,31 +1809,28 @@ function showTestResults(results) {
   }
 }
 
-// 토스트 메시지 - use module if available
+// 토스트 메시지
 function toast(message, type = 'info', duration = 3000) {
-  if (useModules && M.toast) return M.toast(message, type, duration);
   const container = $('toast-container');
-  if (!container) return;
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.textContent = message;
   container.appendChild(el);
+  
   setTimeout(() => {
     el.classList.add('hide');
     setTimeout(() => el.remove(), 300);
   }, duration);
 }
 
-// ===== 테마 ===== (use module if available)
+// ===== 테마 =====
 function initTheme() {
-  if (useModules && M.initTheme) return M.initTheme();
   const saved = localStorage.getItem('styx-theme') || 'dark';
   document.body.dataset.theme = saved;
   updateThemeIcon();
 }
 
 function toggleTheme() {
-  if (useModules && M.toggleTheme) return M.toggleTheme();
   const current = document.body.dataset.theme;
   const next = current === 'dark' ? 'light' : 'dark';
   document.body.dataset.theme = next;

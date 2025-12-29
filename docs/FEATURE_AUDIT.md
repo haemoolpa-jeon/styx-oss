@@ -451,25 +451,29 @@ Microphone → EQ (3-band) → [Noise Gate] → Compressor → Gain → Output
 | Dual build scripts | ✅ Done | build.sh/build.bat for prod + dev versions |
 | Dev version | ✅ Done | Includes devtools for debugging |
 
+### Phase 7: Additional Features ✅
+| Task | Status | Details |
+|------|--------|---------|
+| Cross-platform CI/CD | ✅ Done | GitHub Actions for Windows/Linux/macOS |
+| Custom preset save/load | ✅ Done | User-defined presets with 💾 button |
+| Loopback recording | ✅ Done | Record what you hear (peers only) |
+| Click track export | ✅ Done | Export metronome as WAV file |
+
 ---
 
 ## ❌ REMAINING IMPROVEMENTS
 
-### Phase 7: Advanced Features (Future)
+### Phase 8: Advanced Audio Features
 | Feature | Difficulty | Impact | Notes |
 |---------|------------|--------|-------|
 | VST plugin hosting | Very High | ⭐⭐⭐ | Load external VST effects in Tauri |
 | MIDI sync | High | ⭐⭐ | Sync with DAWs via MIDI clock |
-| Linux/macOS builds | Medium | ⭐⭐ | Cross-platform CI/CD pipeline |
 
 ### Other Possible Improvements
 | Feature | Difficulty | Impact | Notes |
 |---------|------------|--------|-------|
 | 24-bit audio | Medium | ⭐ | Higher dynamic range |
 | Multi-sample rate | Medium | ⭐ | Support 44.1/96kHz |
-| Custom preset save/load | Low | ⭐ | User-defined audio profiles |
-| Loopback recording | Medium | ⭐⭐ | Record what you hear |
-| Click track export | Low | ⭐ | Export metronome as audio |
 | Room persistence | Medium | ⭐ | Save/restore room state |
 | Audio file playback | High | ⭐⭐ | Play backing tracks |
 
@@ -526,13 +530,13 @@ Total:             ~55-95ms (but more stable)
 - Phase 4: Device & Buffer Management
 - Phase 5: Diagnostics & Monitoring
 - Phase 6: Audio Presets
+- Phase 7: CI/CD, Custom Presets, Loopback, Click Export
 
-### Phase 7: Advanced Features (Future)
+### Phase 8: Advanced Audio Features (In Progress)
 | Task | Effort | Priority | Status |
 |------|--------|----------|--------|
-| 7.1 VST plugin hosting | 40h+ | Low | ⬜ |
-| 7.2 MIDI sync | 16h | Low | ⬜ |
-| 7.3 Linux/macOS builds | 8h | Medium | ⬜ |
+| 8.1 VST plugin hosting | 40h+ | Medium | ⬜ |
+| 8.2 MIDI sync | 16h | Medium | ⬜ |
 
 ---
 
