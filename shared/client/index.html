@@ -201,6 +201,17 @@
               <select id="tauri-audio-host"></select>
               <span id="tauri-audio-hint" class="hint"></span>
             </div>
+            <div class="form-field">
+              <label>🔧 버퍼 크기 <span id="buffer-size-value">480 (10ms)</span></label>
+              <select id="buffer-size-select">
+                <option value="64">64 (1.3ms) - 최저 지연</option>
+                <option value="128">128 (2.7ms) - 저지연</option>
+                <option value="256">256 (5.3ms) - 균형</option>
+                <option value="480" selected>480 (10ms) - 안정</option>
+                <option value="960">960 (20ms) - 최고 안정</option>
+              </select>
+              <span class="hint">낮을수록 지연↓ 불안정↑ (재시작 필요)</span>
+            </div>
             <div id="udp-stats-badge" class="stats-badge hidden"></div>
             <canvas id="ping-graph" width="200" height="60" style="display:none;"></canvas>
           </div>
@@ -399,6 +410,43 @@
       </div>
     </div>
 
+    <!-- 연결 진단 모달 -->
+    <div id="diagnostics-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-box modal-wide">
+        <div class="modal-header">
+          <h2>📊 연결 진단</h2>
+          <button class="modal-close" onclick="closeDiagnostics()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="diag-section">
+            <h4>📈 지연 시간 (최근 30초)</h4>
+            <canvas id="diag-latency-chart" width="400" height="120"></canvas>
+            <div class="diag-stats">
+              <span>평균: <strong id="diag-avg-latency">-</strong>ms</span>
+              <span>최소: <strong id="diag-min-latency">-</strong>ms</span>
+              <span>최대: <strong id="diag-max-latency">-</strong>ms</span>
+            </div>
+          </div>
+          <div class="diag-section">
+            <h4>📉 지터 분포</h4>
+            <canvas id="diag-jitter-chart" width="400" height="100"></canvas>
+          </div>
+          <div class="diag-section">
+            <h4>📦 패킷 손실</h4>
+            <div class="diag-stats">
+              <span>총 수신: <strong id="diag-packets-recv">-</strong></span>
+              <span>손실: <strong id="diag-packets-lost">-</strong></span>
+              <span>손실률: <strong id="diag-loss-rate">-</strong>%</span>
+            </div>
+          </div>
+          <div class="diag-actions">
+            <button onclick="exportSessionStats()" class="btn-small">📥 통계 내보내기</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 방 화면 -->
     <div id="room-view" class="hidden">
       <!-- 브라우저 관전 모드 안내 -->
@@ -486,6 +534,15 @@
         <div class="toolbar-section effects-section">
           <button id="effects-toggle" class="btn-icon" title="EQ">🎛️</button>
           <div id="effects-panel" class="effects-panel hidden">
+            <div class="effect-row preset-row">
+              <span>프리셋</span>
+              <select id="audio-preset" onchange="applyAudioPreset(this.value)">
+                <option value="custom">사용자 정의</option>
+                <option value="voice">🎤 음성</option>
+                <option value="instrument">🎸 악기</option>
+                <option value="podcast">🎙️ 팟캐스트</option>
+              </select>
+            </div>
             <div class="effect-row"><span>입력</span><input type="range" id="input-volume" min="0" max="200" value="120"><span class="effect-val">120%</span></div>
             <div class="effect-row"><span>저음</span><input type="range" id="eq-low" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
             <div class="effect-row"><span>중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
@@ -503,6 +560,10 @@
             <div class="effect-row sfu-row">
               <span>SFU</span>
               <button id="sfu-toggle" class="btn-small" onclick="toggleSfuMode()" title="서버 믹싱 (4명+ 권장)">🔀</button>
+            </div>
+            <div class="effect-row diag-row">
+              <span>진단</span>
+              <button id="diag-toggle" class="btn-small" onclick="openDiagnostics()" title="연결 진단">🔍</button>
             </div>
             <div class="effect-row bandwidth-row">
               <span>대역폭</span>

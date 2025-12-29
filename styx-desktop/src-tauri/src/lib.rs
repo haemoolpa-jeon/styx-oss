@@ -150,6 +150,23 @@ fn set_jitter_buffer(state: State<'_, AppState>, size: usize) -> Result<(), Stri
 }
 
 #[tauri::command]
+fn set_buffer_size(size: u32) -> Result<String, String> {
+    // Valid sizes: 64 (1.3ms), 128 (2.7ms), 256 (5.3ms), 480 (10ms), 960 (20ms)
+    let valid = match size {
+        64 | 128 | 256 | 480 | 960 => size,
+        _ => return Err(format!("Invalid buffer size: {}. Use 64, 128, 256, 480, or 960", size))
+    };
+    peer::set_cpal_buffer_size(valid);
+    let latency_ms = valid as f32 / 48.0;
+    Ok(format!("Buffer size set to {} samples ({:.1}ms). Restart stream to apply.", valid, latency_ms))
+}
+
+#[tauri::command]
+fn get_buffer_size() -> u32 {
+    peer::get_cpal_buffer_size()
+}
+
+#[tauri::command]
 fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
     let stream_state = state.udp_stream.lock().map_err(|_| "스트림 상태 잠금 실패".to_string())?;
     
@@ -516,6 +533,8 @@ pub fn run() {
             udp_is_running,
             udp_clear_peers,
             set_jitter_buffer,
+            set_buffer_size,
+            get_buffer_size,
             set_audio_devices,
             udp_start_stream,
             udp_stop_stream,

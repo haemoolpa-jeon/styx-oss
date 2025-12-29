@@ -17,6 +17,39 @@ const PLAYBACK_BUFFER_CAP: usize = 9600; // 100ms @ 48kHz stereo
 const MAX_JITTER_BUFFER: usize = 20; // 100ms maximum (5ms * 20 frames)
 const KEEPALIVE_INTERVAL_MS: u64 = 5000; // 5초마다 keepalive
 
+// Configurable buffer sizes (samples)
+pub static CPAL_BUFFER_SIZE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(480);
+
+pub fn set_cpal_buffer_size(size: u32) {
+    // Valid sizes: 64, 128, 256, 480, 960
+    let valid = match size {
+        64 | 128 | 256 | 480 | 960 => size,
+        _ => 480
+    };
+    CPAL_BUFFER_SIZE.store(valid, Ordering::SeqCst);
+}
+
+pub fn get_cpal_buffer_size() -> u32 {
+    CPAL_BUFFER_SIZE.load(Ordering::SeqCst)
+}
+
+// Get best available host (prefer ASIO for low latency)
+fn get_best_host() -> cpal::Host {
+    #[cfg(target_os = "windows")]
+    {
+        // Try ASIO first for lowest latency
+        for host_id in cpal::available_hosts() {
+            if format!("{:?}", host_id).contains("Asio") {
+                if let Ok(host) = cpal::host_from_id(host_id) {
+                    eprintln!("[AUDIO] Using ASIO host for low latency");
+                    return host;
+                }
+            }
+        }
+    }
+    cpal::default_host()
+}
+
 // NetEQ-style adaptive jitter buffer
 pub struct JitterBuffer {
     buffer: BTreeMap<u32, Vec<f32>>,
@@ -243,7 +276,6 @@ pub fn create_encoder_with_bitrate(bitrate_kbps: u32) -> Result<Encoder, String>
     encoder.set_inband_fec(true).ok();
     encoder.set_packet_loss_perc(5).ok();
     encoder.set_vbr(false).ok(); // CBR for consistent latency
-    // Note: Application::LowDelay already optimizes for low latency
     Ok(encoder)
 }
 
@@ -301,7 +333,7 @@ pub fn start_send_loop(
     packets_received: Arc<AtomicU32>,
     input_device_name: Option<String>,
 ) -> Result<(), String> {
-    let host = cpal::default_host();
+    let host = get_best_host();
     let device = match &input_device_name {
         Some(name) => host.input_devices()
             .map_err(|e| e.to_string())?
@@ -440,7 +472,7 @@ pub fn start_recv_loop(
     peer_stats: Arc<Mutex<BTreeMap<SocketAddr, PeerStats>>>,
     output_device_name: Option<String>,
 ) -> Result<(), String> {
-    let host = cpal::default_host();
+    let host = get_best_host();
     let device = match &output_device_name {
         Some(name) => host.output_devices()
             .map_err(|e| e.to_string())?
@@ -678,7 +710,7 @@ pub fn start_relay_loop(
             Err(e) => { eprintln!("[AUDIO] Encoder creation failed: {}", e); return; }
         };
         
-        let host = cpal::default_host();
+        let host = get_best_host();
         let device = input_device
             .and_then(|name| host.input_devices().ok()?.find(|d| d.name().ok().as_ref() == Some(&name)))
             .or_else(|| host.default_input_device());
@@ -691,7 +723,7 @@ pub fn start_relay_loop(
         let config = cpal::StreamConfig {
             channels: 2, // Stereo input
             sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 480 samples (5ms)
+            buffer_size: cpal::BufferSize::Fixed(get_cpal_buffer_size()), // Configurable
         };
         
         let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
@@ -782,7 +814,7 @@ pub fn start_relay_loop(
             Err(e) => { eprintln!("[AUDIO] Decoder creation failed: {}", e); return; }
         };
         
-        let host = cpal::default_host();
+        let host = get_best_host();
         let device = output_device
             .and_then(|name| host.output_devices().ok()?.find(|d| d.name().ok().as_ref() == Some(&name)))
             .or_else(|| host.default_output_device());
@@ -795,7 +827,7 @@ pub fn start_relay_loop(
         let config = cpal::StreamConfig {
             channels: 2, // Stereo output
             sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 480 samples (5ms)
+            buffer_size: cpal::BufferSize::Fixed(get_cpal_buffer_size()), // Configurable
         };
         
         let pb = playback_buffer.clone();
