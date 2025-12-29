@@ -949,6 +949,13 @@ function getSharedAudioContext() {
 }
 
 async function createProcessedInputStream(rawStream) {
+  // Pro Mode: bypass all processing for minimum latency
+  if (proMode) {
+    processedStream = rawStream;
+    effectNodes = {};
+    return rawStream;
+  }
+  
   // 공유 AudioContext 사용
   const ctx = getSharedAudioContext();
   inputLimiterContext = ctx; // 호환성을 위해 유지
@@ -1395,6 +1402,7 @@ let vadIntervals = new Map(); // 피어별 VAD 인터벌
 let delayCompensation = false;
 let autoJitter = localStorage.getItem('styx-auto-jitter') !== 'false'; // 자동 지터 버퍼
 let lowLatencyMode = localStorage.getItem('styx-low-latency') === 'true'; // 저지연 모드
+let proMode = localStorage.getItem('styx-pro-mode') === 'true'; // Pro 모드 (처리 우회)
 let currentRoomSettings = {}; // 현재 방 설정
 let isRoomCreator = false; // 방장 여부
 let roomCreatorUsername = ''; // 방장 이름
@@ -4949,7 +4957,7 @@ function applyDelayCompensation() {
 }
 
 function updateJitterBuffer(value) {
-  const minBuffer = lowLatencyMode ? 20 : 30;
+  const minBuffer = proMode ? 5 : (lowLatencyMode ? 10 : 20);
   jitterBuffer = Math.min(200, Math.max(minBuffer, value));
   localStorage.setItem('styx-jitter-buffer', jitterBuffer);
   
@@ -4986,7 +4994,7 @@ function applyJitterBuffer() {
 
 // 지터 버퍼 설정 (UI 동기화 포함)
 function setJitterBuffer(value) {
-  const minBuffer = lowLatencyMode ? 20 : 30;
+  const minBuffer = proMode ? 5 : (lowLatencyMode ? 10 : 20);
   jitterBuffer = Math.min(200, Math.max(minBuffer, value));
   localStorage.setItem('styx-jitter-buffer', jitterBuffer);
   
@@ -5086,6 +5094,13 @@ function updateQualityIndicator(jitter = 0, packetLoss = 0) {
   
   indicator.className = `quality-indicator ${quality}`;
   indicator.querySelector('.quality-text').textContent = text;
+  
+  // E2E latency estimate: network RTT/2 + jitter buffer + processing
+  const networkLatency = networkTestResults.latency / 2 || 10;
+  const processingLatency = proMode ? 2 : 10;
+  const e2eLatency = Math.round(networkLatency + jitterBuffer + processingLatency);
+  const latencyEl = indicator.querySelector('.latency-text');
+  if (latencyEl) latencyEl.textContent = `${e2eLatency}ms`;
 }
 
 // VAD (음성 활동 감지)
@@ -5840,21 +5855,38 @@ if ($('low-latency-mode')) {
     lowLatencyMode = $('low-latency-mode').checked;
     localStorage.setItem('styx-low-latency', lowLatencyMode);
     applyLowLatencyMode();
-    toast(lowLatencyMode ? '⚡ 저지연 모드 활성화 (20ms 버퍼)' : '📊 일반 모드 (50ms 버퍼)', 'info');
+    toast(lowLatencyMode ? '⚡ 저지연 모드 활성화 (10ms 버퍼)' : '📊 일반 모드 (50ms 버퍼)', 'info');
   };
   applyLowLatencyMode();
+}
+
+// Pro 모드 토글 (모든 오디오 처리 우회)
+if ($('pro-mode')) {
+  $('pro-mode').checked = proMode;
+  $('pro-mode').onchange = async () => {
+    proMode = $('pro-mode').checked;
+    localStorage.setItem('styx-pro-mode', proMode);
+    // Restart audio stream to apply
+    if (localStream) {
+      const rawStream = localStream._rawStream || localStream;
+      processedStream = await createProcessedInputStream(rawStream);
+      localStream = processedStream;
+      localStream._rawStream = rawStream;
+    }
+    toast(proMode ? '🎸 Pro 모드: 모든 처리 우회 (최저 지연)' : '🎛️ 일반 모드: EQ/압축/노이즈게이트 활성', 'info');
+  };
 }
 
 function applyLowLatencyMode() {
   if (lowLatencyMode) {
     // Aggressive settings for good networks
-    jitterBuffer = 20;
+    jitterBuffer = 10;
     autoJitter = false;
-    if ($('jitter-slider')) { $('jitter-slider').value = 20; $('jitter-slider').disabled = true; }
-    if ($('jitter-value')) $('jitter-value').textContent = '20ms';
+    if ($('jitter-slider')) { $('jitter-slider').value = 10; $('jitter-slider').disabled = true; }
+    if ($('jitter-value')) $('jitter-value').textContent = '10ms';
     if ($('auto-jitter')) { $('auto-jitter').checked = false; $('auto-jitter').disabled = true; }
-    if ($('room-jitter-slider')) { $('room-jitter-slider').value = 20; $('room-jitter-slider').disabled = true; }
-    if ($('room-jitter-value')) $('room-jitter-value').textContent = '20ms';
+    if ($('room-jitter-slider')) { $('room-jitter-slider').value = 10; $('room-jitter-slider').disabled = true; }
+    if ($('room-jitter-value')) $('room-jitter-value').textContent = '10ms';
     if ($('room-auto-jitter')) { $('room-auto-jitter').checked = false; $('room-auto-jitter').disabled = true; }
   } else {
     // Restore normal settings
@@ -5873,7 +5905,7 @@ function applyLowLatencyMode() {
   
   // Apply to Tauri UDP if available
   if (tauriInvoke) {
-    tauriInvoke('set_jitter_buffer', { size: lowLatencyMode ? 2 : Math.round(jitterBuffer / 10) }).catch(() => {});
+    tauriInvoke('set_jitter_buffer', { size: lowLatencyMode ? 1 : Math.round(jitterBuffer / 10) }).catch(() => {});
   }
 }
 

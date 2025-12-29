@@ -21,6 +21,7 @@
       <div class="bar"></div>
     </div>
     <span class="quality-text">연결 중...</span>
+    <span class="latency-text" title="예상 E2E 지연"></span>
   </div>
   <div id="reconnect-overlay" class="reconnect-overlay hidden">
     <div class="reconnect-content">
@@ -174,10 +175,13 @@
             <div class="audio-col">
               <div class="form-field">
                 <label>📊 버퍼 <span id="jitter-value">50ms</span> <label class="auto-jitter-label"><input type="checkbox" id="auto-jitter" checked> 자동</label></label>
-                <input type="range" id="jitter-slider" min="20" max="150" value="50" step="10">
+                <input type="range" id="jitter-slider" min="5" max="150" value="50" step="5">
               </div>
               <div class="form-field">
                 <label class="low-latency-label"><input type="checkbox" id="low-latency-mode"> ⚡ 저지연 모드 <small>(ASIO + 유선랜 권장)</small></label>
+              </div>
+              <div class="form-field">
+                <label class="low-latency-label"><input type="checkbox" id="pro-mode"> 🎸 Pro 모드 <small>(모든 처리 우회, 최저 지연)</small></label>
               </div>
               <div class="test-buttons">
                 <button id="test-audio-btn" class="btn-test">🎤 마이크</button>
@@ -448,7 +452,7 @@
         </div>
         <div class="toolbar-section">
           <span class="toolbar-label">버퍼:</span>
-          <input type="range" id="room-jitter-slider" min="30" max="150" value="50" step="10" class="toolbar-slider">
+          <input type="range" id="room-jitter-slider" min="5" max="150" value="50" step="5" class="toolbar-slider">
           <span id="room-jitter-value" class="toolbar-value">50ms</span>
           <label class="toolbar-check"><input type="checkbox" id="room-auto-jitter" checked> 자동</label>
         </div>

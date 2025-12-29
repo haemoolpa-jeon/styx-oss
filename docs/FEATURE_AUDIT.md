@@ -402,60 +402,212 @@ Microphone → EQ (3-band) → [Noise Gate] → Compressor → Gain → Output
 
 ## ❌ NOT IMPLEMENTED
 
-### Audio
-| Feature | Difficulty | Impact |
-|---------|------------|--------|
-| Configurable buffer size | Medium | High - user latency control |
-| 24-bit audio | Medium | Medium - quality improvement |
-| Multi-sample rate | Medium | Low - most use 48kHz |
-| MIDI sync | High | Medium - DAW integration |
-| VST hosting | Very High | High - effects plugins |
+### Audio Engine
+| Feature | Difficulty | Latency Impact | Stability Impact |
+|---------|------------|----------------|------------------|
+| Configurable buffer size (UI) | Low | ⭐⭐⭐ High | ⭐⭐ Medium |
+| Pro Mode (bypass processing) | Low | ⭐⭐⭐ High | ⭐⭐ Medium |
+| 24-bit audio | Medium | ⭐ None | ⭐ None |
+| Multi-sample rate | Medium | ⭐ None | ⭐ None |
+| MIDI sync | High | ⭐ None | ⭐ None |
+| VST hosting | Very High | ❌ Adds latency | ⭐ None |
 
 ### Network
-| Feature | Difficulty | Impact |
-|---------|------------|--------|
-| SFU mode | High | High - better for 4+ users |
-| End-to-end encryption | High | Medium - privacy |
-| Regional servers | Medium | High - geographic latency |
-| IPv6 | Low | Low - most have IPv4 |
+| Feature | Difficulty | Latency Impact | Stability Impact |
+|---------|------------|----------------|------------------|
+| SFU mode (server mixing) | High | ⭐⭐ For 4+ users | ⭐⭐⭐ High |
+| Improved jitter algorithm | High | ⭐⭐ Medium | ⭐⭐⭐ High |
+| End-to-end encryption | High | ❌ Adds 2-5ms | ⭐ Security only |
+| Regional servers | Medium | ⭐⭐⭐ Geographic | ⭐⭐ Redundancy |
 
 ### Platform
-| Feature | Difficulty | Impact |
-|---------|------------|--------|
-| Mobile apps | Very High | High - mobile users |
-| PWA | Low | Medium - installable web |
-| Linux build | Low | Medium - Linux users |
-| macOS build | Medium | Medium - Mac users |
+| Feature | Difficulty | User Impact |
+|---------|------------|-------------|
+| PWA (installable web) | Low | ⭐⭐ Convenience |
+| Mobile apps | Very High | ⭐⭐⭐ Mobile users |
+| Linux/macOS builds | Medium | ⭐⭐ Platform support |
 
-### Features
-| Feature | Difficulty | Impact |
-|---------|------------|--------|
-| True E2E latency display | Medium | High - user feedback |
-| Session history | Low | Low - convenience |
-| Public rooms | Low | Medium - discovery |
-| User profiles | Medium | Low - social features |
+### UX
+| Feature | Difficulty | User Impact |
+|---------|------------|-------------|
+| True E2E latency display | Medium | ⭐⭐ Awareness |
+| Connection diagnostics | Medium | ⭐⭐ Troubleshooting |
+| QR code sharing | Low | ⭐ Convenience |
 
 ---
 
-## 📈 RECOMMENDED IMPROVEMENTS (Priority Order)
+## 📋 IMPLEMENTATION ROADMAP
 
-### 1. High Impact, Low Effort
-1. **Configurable buffer size** - Add UI slider, pass to Rust
-2. **True latency measurement** - Timestamp through audio path
-3. **PWA manifest** - Add manifest.json + service worker
-4. **Pro Mode toggle** - Disable all processing
+### Phase 1: Latency Optimization (Priority: Critical)
+*Goal: Achieve <20ms latency on good networks*
 
-### 2. High Impact, Medium Effort
-1. **Adaptive jitter buffer improvements** - Better algorithm
-2. **Connection diagnostics page** - Jitter histogram, loss patterns
-3. **Linux/macOS builds** - CI/CD pipeline
-4. **QR code room sharing** - Generate QR from invite link
+| Task | Effort | Impact | Status |
+|------|--------|--------|--------|
+| 1.1 Pro Mode toggle | 2h | Bypass all audio processing, save 5-15ms | ⬜ |
+| 1.2 Configurable buffer size | 3h | User control over latency/stability tradeoff | ⬜ |
+| 1.3 Reduce min jitter buffer | 1h | Allow 5ms (1 frame) minimum | ⬜ |
+| 1.4 True E2E latency display | 3h | Show actual mouth-to-ear delay | ⬜ |
 
-### 3. High Impact, High Effort
-1. **SFU mode** - Server-side mixing for large rooms
-2. **Mobile apps** - React Native with native audio
-3. **End-to-end encryption** - Encrypt audio packets
-4. **Regional servers** - Deploy to multiple regions
+### Phase 2: Stability Improvements (Priority: High)
+*Goal: Fewer dropouts and glitches*
+
+| Task | Effort | Impact | Status |
+|------|--------|--------|--------|
+| 2.1 Improved adaptive jitter | 8h | NetEQ-style algorithm | ⬜ |
+| 2.2 Better packet loss handling | 4h | Smarter FEC/PLC decisions | ⬜ |
+| 2.3 Connection quality prediction | 4h | Warn before problems occur | ⬜ |
+| 2.4 Graceful degradation | 4h | Auto-reduce quality vs dropout | ⬜ |
+
+### Phase 3: Scalability (Priority: Medium)
+*Goal: Support larger rooms (4+ users)*
+
+| Task | Effort | Impact | Status |
+|------|--------|--------|--------|
+| 3.1 SFU architecture design | 8h | Plan server-side mixing | ⬜ |
+| 3.2 SFU implementation | 20h | Server mixes audio streams | ⬜ |
+| 3.3 Hybrid P2P/SFU switching | 8h | Auto-switch based on room size | ⬜ |
+
+### Phase 4: Platform & Distribution (Priority: Low)
+*Goal: Easier access and installation*
+
+| Task | Effort | Impact | Status |
+|------|--------|--------|--------|
+| 4.1 PWA manifest | 2h | Installable from browser | ⬜ |
+| 4.2 Service worker | 4h | Offline lobby, faster loads | ⬜ |
+| 4.3 Auto-update system | 4h | Notify users of new versions | ⬜ |
+
+### Phase 5: Quality of Life (Priority: Low)
+*Goal: Better user experience*
+
+| Task | Effort | Impact | Status |
+|------|--------|--------|--------|
+| 5.1 Connection diagnostics page | 4h | Jitter histogram, loss patterns | ⬜ |
+| 5.2 Audio device hot-swap | 4h | Change devices without restart | ⬜ |
+| 5.3 Preset audio profiles | 2h | Voice/Instrument/Podcast modes | ⬜ |
+| 5.4 Session statistics export | 2h | Post-session quality report | ⬜ |
+
+---
+
+## 🎯 QUICK REFERENCE: What Affects Latency
+
+### Current Latency Stack (Estimated)
+```
+Input buffer:     ~5ms (480 samples @ 48kHz)
+Opus encoding:    ~2ms
+Network (LAN):    ~1-5ms
+Jitter buffer:    ~10-50ms (adaptive)
+Opus decoding:    ~2ms
+Output buffer:    ~5ms
+─────────────────────────
+Total:            ~25-70ms
+```
+
+### With Optimizations
+```
+Input buffer:     ~1.3ms (64 samples) ← Configurable
+Opus encoding:    ~2ms
+Network (LAN):    ~1-5ms
+Jitter buffer:    ~5ms (1 frame min) ← Reduced
+Opus decoding:    ~2ms
+Output buffer:    ~1.3ms (64 samples) ← Configurable
+─────────────────────────
+Total:            ~12-18ms ← Target for music
+```
+
+### Processing Latency (Bypassed in Pro Mode)
+```
+Echo cancellation:  ~3-10ms
+Noise suppression:  ~3-10ms
+AI noise gate:      ~5-10ms
+Compressor:         ~1-2ms
+EQ:                 ~0.5ms
+─────────────────────────
+Total processing:   ~12-32ms saved in Pro Mode
+```
+
+---
+
+## ✅ ALREADY IMPLEMENTED (Complete List)
+
+### Audio Engine (Rust)
+- [x] 48kHz stereo audio
+- [x] 32-bit float samples
+- [x] 5ms frame size (480 samples)
+- [x] Opus codec (LowDelay, FEC, CBR)
+- [x] Adaptive jitter buffer (10-100ms)
+- [x] Packet loss concealment (PLC)
+- [x] QoS/DSCP marking
+- [x] Configurable bitrate (32-256kbps)
+- [x] ASIO detection
+
+### Networking
+- [x] UDP relay server
+- [x] P2P with NAT detection
+- [x] UDP hole punching
+- [x] TCP fallback
+- [x] STUN queries
+- [x] Keepalive packets
+- [x] Adaptive bitrate (packet loss based)
+- [x] Connection recovery
+- [x] WebRTC fallback (browser)
+- [x] TURN credential refresh
+
+### Audio Processing (Client)
+- [x] 3-band EQ
+- [x] Compressor/limiter
+- [x] AI noise cancellation (RNNoise)
+- [x] Noise profiling
+- [x] Echo cancellation
+- [x] Noise suppression
+- [x] VAD (voice activity)
+- [x] Ducking
+- [x] Spatial audio (3D panning)
+- [x] Audio routing matrix
+- [x] Input level meter
+- [x] Spectrum analyzer
+- [x] Tuner
+
+### Features
+- [x] Multitrack recording
+- [x] Recording markers
+- [x] Screen sharing
+- [x] Metronome with sync
+- [x] Sync mode (latency equalization)
+- [x] Low latency mode
+- [x] Room templates
+- [x] Deep link invites (styx://)
+- [x] Text chat
+
+### User Management
+- [x] Login/signup with approval
+- [x] Role system (host/performer/listener)
+- [x] Admin panel
+- [x] IP whitelist
+- [x] Session persistence
+- [x] Avatar upload
+
+### UI/UX
+- [x] Dark/light themes
+- [x] Keyboard shortcuts
+- [x] Accessibility (ARIA, high contrast)
+- [x] Responsive design
+- [x] Toast notifications
+- [x] Connection status indicator
+- [x] Quality indicator
+- [x] Speaking indicator
+
+### Security
+- [x] Password hashing (bcrypt)
+- [x] Session tokens
+- [x] Rate limiting
+- [x] CORS configuration
+- [x] Security headers
+- [x] Input validation
+
+---
+
+*Document generated from code review of Styx v1.4.1*
+
 
 ---
 
@@ -467,7 +619,3 @@ Microphone → EQ (3-band) → [Noise Gate] → Compressor → Gain → Output
 | Hardcoded 48kHz | peer.rs | Low - works for most |
 | No unit tests | All | Medium - add test coverage |
 | Console logging | All | Low - add structured logging |
-
----
-
-*Document generated from code review of Styx v1.4.1*

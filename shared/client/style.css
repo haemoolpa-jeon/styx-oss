@@ -280,6 +280,7 @@ input:focus, select:focus, textarea:focus {
 .quality-indicator.fair .bar:nth-child(-n+2) { background: var(--warning); }
 .quality-indicator.poor .bar:nth-child(1) { background: var(--error); }
 .quality-text { min-width: 40px; }
+.latency-text { color: var(--accent); font-weight: 500; }
 
 /* Reconnect Overlay */
 .reconnect-overlay {
