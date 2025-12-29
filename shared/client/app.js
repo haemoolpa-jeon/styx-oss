@@ -1,6 +1,9 @@
 // Styx 클라이언트 - HADES 실시간 오디오 협업
 // WebRTC P2P 오디오 + 안정성 중심 설계
 
+// Bundled ES modules (from styx-modules.js)
+const M = window.StyxModules || {};
+
 // 접근성 개선 시스템
 const accessibility = {
   highContrast: false,
@@ -1809,28 +1812,31 @@ function showTestResults(results) {
   }
 }
 
-// 토스트 메시지
+// 토스트 메시지 - delegates to module
 function toast(message, type = 'info', duration = 3000) {
+  if (M.ui?.toast) return M.ui.toast(message, type, duration);
   const container = $('toast-container');
+  if (!container) return;
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.textContent = message;
   container.appendChild(el);
-  
   setTimeout(() => {
     el.classList.add('hide');
     setTimeout(() => el.remove(), 300);
   }, duration);
 }
 
-// ===== 테마 =====
+// ===== 테마 ===== - delegates to module
 function initTheme() {
+  if (M.ui?.initTheme) return M.ui.initTheme();
   const saved = localStorage.getItem('styx-theme') || 'dark';
   document.body.dataset.theme = saved;
   updateThemeIcon();
 }
 
 function toggleTheme() {
+  if (M.ui?.toggleTheme) return M.ui.toggleTheme();
   const current = document.body.dataset.theme;
   const next = current === 'dark' ? 'light' : 'dark';
   document.body.dataset.theme = next;
