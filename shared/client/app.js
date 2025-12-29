@@ -644,10 +644,10 @@ function finishLearning(analyser) {
 }
 
 function resetNoiseProfile() {
+  if (M.audio?.resetNoiseProfile) return M.audio.resetNoiseProfile();
   noiseProfile.baselineLevel = -60;
   noiseProfile.adaptiveThreshold = -45;
   noiseProfile.learningData = [];
-  
   localStorage.removeItem('styx-noise-profile');
   updateNoiseDisplay();
   toast('노이즈 프로파일이 리셋되었습니다', 'info');
@@ -806,6 +806,7 @@ const builtInPresets = {
 let customPresets = JSON.parse(localStorage.getItem('styx-custom-presets') || '{}');
 
 function applyAudioPreset(preset) {
+  if (M.audio?.applyAudioPreset) return M.audio.applyAudioPreset(builtInPresets[preset] || customPresets[preset]);
   if (preset === 'custom') return;
   
   const p = builtInPresets[preset] || customPresets[preset];
@@ -832,9 +833,16 @@ function applyAudioPreset(preset) {
 }
 
 function saveCustomPreset() {
+  if (M.settings?.saveCustomPreset) {
+    const name = prompt('프리셋 이름을 입력하세요:');
+    if (!name || name.trim() === '') return;
+    M.settings.saveCustomPreset(name, { ...inputEffects });
+    updatePresetSelect();
+    toast(`💾 "${name}" 프리셋 저장됨`, 'success');
+    return;
+  }
   const name = prompt('프리셋 이름을 입력하세요:');
   if (!name || name.trim() === '') return;
-  
   customPresets[name] = { ...inputEffects };
   localStorage.setItem('styx-custom-presets', JSON.stringify(customPresets));
   updatePresetSelect();
@@ -842,6 +850,12 @@ function saveCustomPreset() {
 }
 
 function deleteCustomPreset(name) {
+  if (M.settings?.deleteCustomPreset) {
+    M.settings.deleteCustomPreset(name);
+    updatePresetSelect();
+    toast(`🗑️ "${name}" 프리셋 삭제됨`, 'info');
+    return;
+  }
   if (!customPresets[name]) return;
   delete customPresets[name];
   localStorage.setItem('styx-custom-presets', JSON.stringify(customPresets));
