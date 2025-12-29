@@ -10,10 +10,10 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::udp::AudioPacketHeader;
 
-const FRAME_SIZE: usize = 960; // 10ms @ 48kHz stereo (480 samples per channel)
+const FRAME_SIZE: usize = 480; // 5ms @ 48kHz stereo (240 samples per channel) - reduced for lower latency
 const MAX_PACKET_SIZE: usize = 1500;
-const MIN_JITTER_BUFFER: usize = 2;  // 20ms minimum (aggressive, for good networks)
-const MAX_JITTER_BUFFER: usize = 10; // 100ms maximum
+const MIN_JITTER_BUFFER: usize = 2;  // 10ms minimum (5ms * 2 frames)
+const MAX_JITTER_BUFFER: usize = 20; // 100ms maximum (5ms * 20 frames)
 const KEEPALIVE_INTERVAL_MS: u64 = 5000; // 5초마다 keepalive
 
 // 적응형 지터 버퍼
@@ -204,7 +204,7 @@ pub fn create_encoder_with_bitrate(bitrate_kbps: u32) -> Result<Encoder, String>
     encoder.set_bitrate(opus::Bitrate::Bits(bitrate_kbps as i32 * 1000)).ok();
     encoder.set_inband_fec(true).ok();
     encoder.set_packet_loss_perc(5).ok();
-    encoder.set_vbr(false).ok();
+    encoder.set_vbr(false).ok(); // CBR for consistent latency
     Ok(encoder)
 }
 
@@ -548,8 +548,8 @@ pub fn start_recv_loop(
                     if let Some(samples) = buffer.pop() {
                         if let Ok(mut pb) = playback_buffer.lock() {
                             pb.extend(samples);
-                            // 버퍼 오버플로우 방지 (200ms 최대)
-                            while pb.len() > 19200 { // 200ms @ 48kHz stereo = 19,200 samples
+                            // 버퍼 오버플로우 방지 (100ms 최대)
+                            while pb.len() > 9600 { // 100ms @ 48kHz stereo = 9,600 samples
                                 pb.pop_front();
                             }
                         }
@@ -633,7 +633,7 @@ pub fn start_relay_loop(
         let config = cpal::StreamConfig {
             channels: 2, // Stereo input
             sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 960 samples for stereo
+            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 480 samples (5ms)
         };
         
         let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
@@ -724,7 +724,7 @@ pub fn start_relay_loop(
         let config = cpal::StreamConfig {
             channels: 2, // Stereo output
             sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 960 samples for stereo
+            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 480 samples (5ms)
         };
         
         let pb = playback_buffer.clone();
@@ -785,8 +785,8 @@ pub fn start_relay_loop(
                         
                         if let Ok(mut pb) = playback_buffer.lock() {
                             pb.extend(samples);
-                            // Prevent buffer overflow (200ms max)
-                            while pb.len() > 19200 { pb.pop_front(); } // 200ms @ 48kHz stereo = 19,200 samples
+                            // Prevent buffer overflow (100ms max)
+                            while pb.len() > 9600 { pb.pop_front(); } // 100ms @ 48kHz stereo = 9,600 samples
                         }
                     }
                 }
