@@ -1,6 +1,9 @@
 // Styx 클라이언트 - HADES 실시간 오디오 협업
 // WebRTC P2P 오디오 + 안정성 중심 설계
 
+// Bundled ES modules (from styx-modules.js)
+const M = window.StyxModules || {};
+
 // 접근성 개선 시스템
 const accessibility = {
   highContrast: false,
