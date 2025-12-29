@@ -475,6 +475,7 @@ function updateRouting(mode) {
 
 function applyRoutingToStream() {
   if (!localStream || !inputLimiterContext) return;
+  const rawStream = localStream._rawStream || localStream;
   
   // 기존 라우팅 노드가 있으면 제거
   if (effectNodes.routingNode) {
@@ -482,7 +483,7 @@ function applyRoutingToStream() {
   }
   
   const ctx = inputLimiterContext;
-  const source = ctx.createMediaStreamSource(localStream._rawStream);
+  const source = ctx.createMediaStreamSource(rawStream);
   
   let routedNode;
   
@@ -803,7 +804,8 @@ const builtInPresets = {
   instrument: { eqLow: 0, eqMid: 0, eqHigh: 0, inputVolume: 100, compressionRatio: 2 },
   podcast: { eqLow: -2, eqMid: 3, eqHigh: 2, inputVolume: 140, compressionRatio: 5 }
 };
-let customPresets = JSON.parse(localStorage.getItem('styx-custom-presets') || '{}');
+let customPresets = {};
+try { customPresets = JSON.parse(localStorage.getItem('styx-custom-presets') || '{}'); } catch {}
 
 function applyAudioPreset(preset) {
   if (preset === 'custom') return;
@@ -1032,7 +1034,7 @@ function adaptToNetworkQuality(quality) {
   if (!config) return;
   
   // Graceful degradation - adjust settings to prevent dropout
-  if (tauriInvoke) {
+  if (actuallyTauri) {
     tauriInvoke('set_bitrate', { bitrate: config.bitrate }).catch(() => {});
     tauriInvoke('set_jitter_buffer', { size: Math.round(config.jitterBuffer / 5) }).catch(() => {});
   }
@@ -1048,8 +1050,8 @@ function adaptToNetworkQuality(quality) {
   toast(`📶 ${labels[quality]} - ${quality === 'poor' ? '버퍼 증가됨' : '최적화됨'}`, 'info', 2000);
 }
 
-// 5초마다 네트워크 품질 모니터링
-setInterval(monitorNetworkQuality, 5000);
+// 네트워크 품질 모니터링 (방 입장 시 시작)
+let networkQualityInterval = null;
 
 // 자동 크래시 복구 및 에러 경계
 let crashRecoveryAttempts = 0;
@@ -1221,7 +1223,15 @@ const isTauriApp = () => {
 };
 
 const actuallyTauri = isTauriApp();
-const tauriInvoke = actuallyTauri ? (window.__TAURI__?.core?.invoke || null) : null;
+const tauriInvoke = (cmd, args) => {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return Promise.reject('Tauri not ready');
+  return invoke(cmd, args).catch(e => {
+    // Suppress IPC protocol errors - Tauri falls back to postMessage
+    if (String(e).includes('Failed to fetch')) return Promise.reject('IPC fallback');
+    throw e;
+  });
+};
 
 // 관리자 전용 기능 접근 제어
 function checkAdminAccess() {
@@ -1672,35 +1682,25 @@ async function runConnectionTest() {
   const pings = [];
   
   // Tauri app - use UDP latency measurement
-  if (actuallyTauri && tauriInvoke) {
+  if (actuallyTauri && window.__TAURI__?.core?.invoke) {
     // First detect NAT type (works without relay)
     try {
-      const natInfo = await tauriInvoke('detect_nat');
-      results.natType = natInfo.nat_type;
-      results.publicAddr = natInfo.public_addr;
-      results.network = true; // NAT detection succeeded means UDP works
+      const natInfo = await Promise.race([
+        tauriInvoke('detect_nat'),
+        new Promise((_, reject) => setTimeout(() => reject('timeout'), 5000))
+      ]);
+      if (natInfo) {
+        results.natType = natInfo.nat_type;
+        results.publicAddr = natInfo.public_addr;
+        results.network = true;
+      }
     } catch (e) {
-      console.log('NAT detection failed:', e);
+      console.log('NAT detection skipped:', e);
+      results.network = true; // Assume network works
     }
     
-    // Try UDP latency measurement (only works if relay is set up)
-    try {
-      for (let i = 0; i < 5; i++) {
-        const rtt = await tauriInvoke('measure_relay_latency');
-        pings.push(rtt);
-        await new Promise(r => setTimeout(r, 100));
-      }
-      const avgPing = pings.reduce((a, b) => a + b, 0) / pings.length;
-      const jitterCalc = Math.sqrt(pings.map(p => Math.pow(p - avgPing, 2)).reduce((a, b) => a + b, 0) / pings.length);
-      
-      networkTestResults.latency = Math.round(avgPing);
-      networkTestResults.jitter = Math.round(jitterCalc);
-      results.quality = { latency: networkTestResults.latency, jitter: networkTestResults.jitter, isWifi: false };
-    } catch (e) {
-      // Relay not set up yet - use Socket.IO ping as fallback
-      console.log('UDP latency test skipped (not in room)');
-      results.quality = { latency: 0, jitter: 0, isWifi: false };
-    }
+    // Skip UDP latency test - use socket ping instead
+    results.quality = { latency: 0, jitter: 0, isWifi: false };
   } else {
     // Web version - test HTTP latency
     for (let i = 0; i < 5; i++) {
@@ -2623,7 +2623,8 @@ function stopScreenShare() {
     screenShareBtn.textContent = '🖥️';
   }
   $('screen-share-container')?.classList.add('hidden');
-  $('screen-share-video').srcObject = null;
+  const screenVideo = $('screen-share-video');
+  if (screenVideo) screenVideo.srcObject = null;
   
   socket.emit('screen-share-stop');
   toast('화면 공유 종료', 'info');
@@ -2641,8 +2642,9 @@ socket.on('screen-share-start', ({ userId, username }) => {
 
 socket.on('screen-share-stop', () => {
   if (!isScreenSharing) {
-    $('screen-share-container').classList.add('hidden');
-    $('screen-share-video').srcObject = null;
+    $('screen-share-container')?.classList.add('hidden');
+    const screenVideo = $('screen-share-video');
+    if (screenVideo) screenVideo.srcObject = null;
     // Close screen share connections
     screenPeerConnections.forEach(pc => {
       try { pc.close(); } catch {}
@@ -2653,19 +2655,27 @@ socket.on('screen-share-stop', () => {
 
 // Screen share WebRTC signaling
 socket.on('screen-offer', async ({ from, offer }) => {
-  console.log('Received screen-offer from', from);
-  const pc = createScreenShareConnection(from, null, false);
-  await pc.setRemoteDescription(offer);
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  socket.emit('screen-answer', { to: from, answer });
+  try {
+    console.log('Received screen-offer from', from);
+    const pc = createScreenShareConnection(from, null, false);
+    await pc.setRemoteDescription(offer);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    socket.emit('screen-answer', { to: from, answer });
+  } catch (e) {
+    console.error('Screen offer handling failed:', e);
+  }
 });
 
 socket.on('screen-answer', async ({ from, answer }) => {
-  console.log('Received screen-answer from', from);
-  const pc = screenPeerConnections.get(from);
-  if (pc) {
-    await pc.setRemoteDescription(answer);
+  try {
+    console.log('Received screen-answer from', from);
+    const pc = screenPeerConnections.get(from);
+    if (pc) {
+      await pc.setRemoteDescription(answer);
+    }
+  } catch (e) {
+    console.error('Screen answer handling failed:', e);
   }
 });
 
@@ -2686,7 +2696,7 @@ $('screenShareBtn')?.addEventListener('click', () => {
 
 $('screen-share-close')?.addEventListener('click', () => {
   if (isScreenSharing) stopScreenShare();
-  else $('screen-share-container').classList.add('hidden');
+  else $('screen-share-container')?.classList.add('hidden');
 });
 
 const authPanel = $('auth');
@@ -2909,28 +2919,32 @@ function checkPendingDeepLink() {
 }
 
 // Deep link handler for Tauri (styx://join/roomName)
-if (actuallyTauri && window.__TAURI__?.event) {
-  window.__TAURI__.event.listen('deep-link', (event) => {
-    const url = event.payload;
-    console.log('Deep link received:', url);
-    
-    // Parse styx://join/roomName or styx://join/roomName?password=xxx
-    const match = url.match(/styx:\/\/join\/([^?]+)(\?password=(.+))?/);
-    if (match) {
-      const roomName = decodeURIComponent(match[1]);
-      const password = match[3] ? decodeURIComponent(match[3]) : null;
+if (actuallyTauri) {
+  const setupDeepLink = () => {
+    window.__TAURI__?.event?.listen('deep-link', (event) => {
+      const url = event.payload;
+      console.log('Deep link received:', url);
       
-      if (currentUser) {
-        toast(`"${roomName}" 방으로 초대됨`, 'info');
-        setTimeout(() => joinRoom(roomName, !!password, password), 500);
-      } else {
-        // Save for after login
-        sessionStorage.setItem('pendingRoom', roomName);
-        if (password) sessionStorage.setItem('pendingPassword', password);
-        toast('로그인 후 방에 입장합니다', 'info');
+      // Parse styx://join/roomName or styx://join/roomName?password=xxx
+      const match = url.match(/styx:\/\/join\/([^?]+)(\?password=(.+))?/);
+      if (match) {
+        const roomName = decodeURIComponent(match[1]);
+        const password = match[3] ? decodeURIComponent(match[3]) : null;
+        
+        if (currentUser) {
+          toast(`"${roomName}" 방으로 초대됨`, 'info');
+          setTimeout(() => joinRoom(roomName, !!password, password), 500);
+        } else {
+          // Save for after login
+          sessionStorage.setItem('pendingRoom', roomName);
+          if (password) sessionStorage.setItem('pendingPassword', password);
+          toast('로그인 후 방에 입장합니다', 'info');
+        }
       }
-    }
-  });
+    });
+  };
+  if (window.__TAURI__?.event) setupDeepLink();
+  else setTimeout(setupDeepLink, 100);
 }
 
 // 초대 링크 생성
@@ -3062,6 +3076,9 @@ async function showLobby() {
       $('adminBtn').classList.remove('hidden');
       // 관리자 알림 시작
       setTimeout(updateAdminNotifications, 1000);
+      if (!adminNotificationInterval) {
+        adminNotificationInterval = setInterval(updateAdminNotifications, 30000);
+      }
     }
   }
   
@@ -3101,41 +3118,58 @@ async function showLobby() {
 }
 
 // Reconnect audio devices without leaving room
+let reconnectingDevices = false;
 async function reconnectAudioDevices() {
-  if (!localStream) return;
+  if (!localStream || reconnectingDevices) return;
+  reconnectingDevices = true;
   
-  // Stop old tracks
-  localStream.getTracks().forEach(t => t.stop());
-  if (localStream._rawStream) {
-    localStream._rawStream.getTracks().forEach(t => t.stop());
-  }
-  
-  // Get new stream with current device settings
-  const inputDevice = $('audio-device')?.value || undefined;
-  const constraints = {
-    audio: {
-      deviceId: inputDevice ? { exact: inputDevice } : undefined,
-      sampleRate: 48000,
-      channelCount: 2,
-      echoCancellation: $('echo-cancel')?.checked ?? true,
-      noiseSuppression: $('noise-suppress')?.checked ?? true,
-      autoGainControl: $('auto-gain')?.checked ?? false
+  try {
+    // Stop old tracks
+    localStream.getTracks().forEach(t => t.stop());
+    if (localStream._rawStream) {
+      localStream._rawStream.getTracks().forEach(t => t.stop());
     }
-  };
-  
-  const rawStream = await navigator.mediaDevices.getUserMedia(constraints);
-  processedStream = await createProcessedInputStream(rawStream);
-  localStream = processedStream;
-  localStream._rawStream = rawStream;
-  
-  // Restart Tauri UDP if active
-  if (tauriInvoke && udpStreamActive) {
-    await tauriInvoke('udp_stop_stream').catch(() => {});
-    await startUdpMode();
+    
+    // Reset audio contexts
+    if (sharedAudioContext && sharedAudioContext.state !== 'closed') {
+      try { sharedAudioContext.close(); } catch {}
+    }
+    sharedAudioContext = null;
+    
+    await new Promise(r => setTimeout(r, 100));
+    
+    // Get new stream with current device settings
+    const inputDevice = $('audio-device')?.value || undefined;
+    const constraints = {
+      audio: {
+        deviceId: inputDevice ? { exact: inputDevice } : undefined,
+        sampleRate: 48000,
+        channelCount: 2,
+        echoCancellation: $('echo-cancel')?.checked ?? true,
+        noiseSuppression: $('noise-suppress')?.checked ?? true,
+        autoGainControl: $('auto-gain')?.checked ?? false
+      }
+    };
+    
+    const rawStream = await navigator.mediaDevices.getUserMedia(constraints);
+    processedStream = await createProcessedInputStream(rawStream);
+    localStream = processedStream;
+    localStream._rawStream = rawStream;
+    
+    // Restart Tauri UDP if active
+    if (actuallyTauri && udpStreamActive) {
+      await tauriInvoke('udp_stop_stream').catch(() => {});
+      await startUdpMode();
+    }
+    
+    // Update input meter
+    startInputMeter();
+  } catch (e) {
+    console.error('Audio device reconnect failed:', e);
+    toast('오디오 장치 재연결 실패', 'error');
+  } finally {
+    reconnectingDevices = false;
   }
-  
-  // Update input meter
-  startInputMeter();
 }
 
 // 안정성 설정 초기화
@@ -3267,7 +3301,7 @@ function initStabilitySettings() {
 let udpPort = null;
 
 async function initTauriFeatures() {
-  if (!tauriInvoke) return;
+  if (!actuallyTauri) return;
   
   try {
     // 오디오 호스트 목록 로드
@@ -3329,12 +3363,14 @@ async function initTauriFeatures() {
 
 // UDP 릴레이 모드 (항상 서버 릴레이 사용)
 const UDP_RELAY_PORT = 5000;
+let startingUdp = false;
 
 async function startUdpMode() {
-  if (!tauriInvoke) {
-    console.warn('Tauri not available, skipping UDP mode');
+  if (!actuallyTauri || startingUdp) {
+    if (!actuallyTauri) console.warn('Tauri not available, skipping UDP mode');
     return;
   }
+  startingUdp = true;
   
   try {
     console.log('Starting UDP mode...');
@@ -3416,24 +3452,31 @@ async function startUdpMode() {
       console.error('TCP 폴백도 실패:', tcpError);
       toast('모든 오디오 연결 실패', 'error');
     }
+  } finally {
+    startingUdp = false;
   }
 }
 
 // TCP 폴백 오디오 스트림
 let useTcpFallback = false;
 let tcpAudioInterval = null;
+let tcpHandlerRegistered = false;
 
 function startTcpAudioStream() {
-  if (!tauriInvoke) return;
+  if (!actuallyTauri) return;
   
-  // TCP 오디오 수신 핸들러
-  socket.on('tcp-audio', async (senderId, audioData) => {
-    try {
-      await tauriInvoke('tcp_receive_audio', { senderId, data: Array.from(new Uint8Array(audioData)) });
-    } catch (e) { console.error('TCP 오디오 수신 실패:', e); }
-  });
+  // TCP 오디오 수신 핸들러 (한 번만 등록)
+  if (!tcpHandlerRegistered) {
+    socket.on('tcp-audio', async (senderId, audioData) => {
+      try {
+        await tauriInvoke('tcp_receive_audio', { senderId, data: Array.from(new Uint8Array(audioData)) });
+      } catch (e) { console.error('TCP 오디오 수신 실패:', e); }
+    });
+    tcpHandlerRegistered = true;
+  }
   
   // TCP 오디오 송신 (10ms 간격)
+  if (tcpAudioInterval) clearInterval(tcpAudioInterval);
   tcpAudioInterval = setInterval(async () => {
     try {
       const audioData = await tauriInvoke('tcp_get_audio');
@@ -3450,12 +3493,14 @@ function stopTcpAudioStream() {
     tcpAudioInterval = null;
   }
   socket.off('tcp-audio');
+  tcpHandlerRegistered = false;
   useTcpFallback = false;
+  udpHealthFailCount = 0;
 }
 
 // UDP 음소거 연동
 async function setUdpMuted(muted) {
-  if (tauriInvoke) {
+  if (actuallyTauri) {
     try {
       await tauriInvoke('udp_set_muted', { muted });
     } catch (e) { console.error('UDP 음소거 설정 실패:', e); }
@@ -3466,7 +3511,7 @@ async function setUdpMuted(muted) {
 async function cleanupAudio() {
   stopUdpStatsMonitor();
   stopTcpAudioStream();
-  if (tauriInvoke) {
+  if (actuallyTauri) {
     try {
       await tauriInvoke('udp_stop_stream');
     } catch (e) { console.error('오디오 정리 실패:', e); }
@@ -3593,6 +3638,7 @@ window.setAudioMode = (mode) => {
 };
 
 $('logoutBtn').onclick = () => {
+  if (adminNotificationInterval) { clearInterval(adminNotificationInterval); adminNotificationInterval = null; }
   localStorage.removeItem('styx-user');
   localStorage.removeItem('styx-token');
   location.reload();
@@ -3817,10 +3863,8 @@ function updateAdminNotifications() {
   });
 }
 
-// 주기적으로 관리자 알림 확인 (30초마다)
-setInterval(() => {
-  if (currentUser?.isAdmin) updateAdminNotifications();
-}, 30000);
+// 관리자 알림 확인 (관리자 로그인 시 시작)
+let adminNotificationInterval = null;
 
 function loadAdminData() {
   // 관리자 패널 열 때 알림 배지 숨기기
@@ -3996,18 +4040,23 @@ $('closeAdminBtn').onclick = () => {
 };
 
 // 방 입장
+let joiningRoom = false;
 window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) => {
+  if (joiningRoom) return;
+  joiningRoom = true;
+  
   const room = roomName;
-  if (!room) return toast('방 이름을 입력하세요', 'error');
+  if (!room) { joiningRoom = false; return toast('방 이름을 입력하세요', 'error'); }
 
   let roomPassword = providedPassword || null;
   if (hasPassword && !roomPassword) {
     roomPassword = prompt('방 비밀번호를 입력하세요:');
-    if (!roomPassword) return;
+    if (!roomPassword) { joiningRoom = false; return; }
   }
 
   // 빠른 연결 상태 확인
   if (!navigator.onLine) {
+    joiningRoom = false;
     return toast('인터넷 연결을 확인하세요', 'error');
   }
   
@@ -4050,6 +4099,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     }
   } catch (e) {
     showUserFriendlyError(e, 'microphone access');
+    joiningRoom = false;
     return;
   }
 
@@ -4057,7 +4107,12 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     if (res.error) {
       localStream._rawStream?.getTracks().forEach(t => t.stop());
       localStream.getTracks().forEach(t => t.stop());
-      if (inputLimiterContext) { inputLimiterContext.close(); inputLimiterContext = null; }
+      if (inputLimiterContext && inputLimiterContext.state !== 'closed') { 
+        try { inputLimiterContext.close(); } catch {} 
+      }
+      inputLimiterContext = null;
+      sharedAudioContext = null;
+      joiningRoom = false;
       const errorMsg = {
         'Room full': '방이 가득 찼습니다',
         'Username already in room': '이미 방에 접속 중입니다',
@@ -4181,8 +4236,12 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     }
     
     startLatencyPing();
+    if (!networkQualityInterval) {
+      networkQualityInterval = setInterval(monitorNetworkQuality, 5000);
+    }
     if (actuallyTauri) startAudioMeter();
     initPttTouch();
+    joiningRoom = false;
   });
 };
 
@@ -4911,7 +4970,7 @@ function calculateSyncDelays() {
   
   // Apply delays via jitter buffer adjustment
   // For Tauri mode, we'll adjust the playback buffer
-  if (actuallyTauri && tauriInvoke) {
+  if (actuallyTauri && actuallyTauri) {
     // Convert ms to jitter buffer frames (5ms per frame)
     const frames = Math.ceil(maxRoomLatency / 5);
     tauriInvoke('set_jitter_buffer', { size: frames }).catch(e => {
@@ -4933,7 +4992,7 @@ function clearSyncDelays() {
   maxRoomLatency = 0;
   
   // Reset jitter buffer to minimum
-  if (actuallyTauri && tauriInvoke) {
+  if (actuallyTauri && actuallyTauri) {
     tauriInvoke('set_jitter_buffer', { size: 2 }).catch(() => {});
   }
 }
@@ -5035,7 +5094,7 @@ async function initiateP2P(peerId) {
 
 // Update connection status display
 function updateConnectionStatus() {
-  const statusEl = $('connection-status');
+  const statusEl = $('room-connection-status');
   if (!statusEl) return;
   
   let p2pCount = 0, relayCount = 0;
@@ -5100,7 +5159,7 @@ function startLatencyPing() {
     });
     
     // Measure UDP latency for Tauri mode
-    if (actuallyTauri && tauriInvoke) {
+    if (actuallyTauri && actuallyTauri) {
       try {
         const udpRtt = await tauriInvoke('measure_relay_latency');
         selfStats.latency = udpRtt;
@@ -5295,7 +5354,7 @@ function updateJitterBuffer(value) {
   applyJitterBuffer();
   
   // Tauri UDP 지터 버퍼도 설정
-  if (tauriInvoke) {
+  if (actuallyTauri) {
     tauriInvoke('set_jitter_buffer', { size: Math.round(jitterBuffer / 10) }).catch(() => {});
   }
 }
@@ -5332,7 +5391,7 @@ function setJitterBuffer(value) {
   applyJitterBuffer();
   
   // Tauri UDP 지터 버퍼도 설정
-  if (tauriInvoke) {
+  if (actuallyTauri) {
     tauriInvoke('set_jitter_buffer', { size: Math.round(jitterBuffer / 10) }).catch(() => {});
   }
 }
@@ -5667,25 +5726,34 @@ function updateMuteUI() {
 }
 
 // 오디오 스트림 재시작 (설정 변경 시)
+let restartingAudio = false;
 async function restartAudioStream() {
-  if (!localStream) return;
-  
-  // Stop old streams
-  const oldTracks = localStream.getAudioTracks();
-  oldTracks.forEach(t => t.stop());
-  
-  // Stop raw stream if it exists
-  if (localStream._rawStream) {
-    localStream._rawStream.getAudioTracks().forEach(t => t.stop());
-  }
-  
-  // Close old audio context
-  if (inputLimiterContext) {
-    inputLimiterContext.close();
-    inputLimiterContext = null;
-  }
+  if (!localStream || restartingAudio) return;
+  restartingAudio = true;
   
   try {
+    // Stop old streams
+    const oldTracks = localStream.getAudioTracks();
+    oldTracks.forEach(t => t.stop());
+  
+    // Stop raw stream if it exists
+    if (localStream._rawStream) {
+      localStream._rawStream.getAudioTracks().forEach(t => t.stop());
+    }
+  
+    // Close old audio context and reset shared context
+    if (inputLimiterContext && inputLimiterContext.state !== 'closed') {
+      try { inputLimiterContext.close(); } catch {}
+    }
+    inputLimiterContext = null;
+    if (sharedAudioContext && sharedAudioContext.state !== 'closed') {
+      try { sharedAudioContext.close(); } catch {}
+    }
+    sharedAudioContext = null;
+  
+    // Small delay to let audio device release
+    await new Promise(r => setTimeout(r, 100));
+  
     const rawStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
@@ -5693,7 +5761,7 @@ async function restartAudioStream() {
         noiseSuppression: $('room-noise-suppress')?.checked ?? $('noise-suppress')?.checked ?? true,
         autoGainControl: $('auto-gain')?.checked ?? true,
         sampleRate: 48000,
-        channelCount: 2, // Stereo support
+        channelCount: 2,
         latency: { ideal: 0.01 }
       }
     });
@@ -5720,9 +5788,16 @@ async function restartAudioStream() {
       startAudioMeter();
     }
     
+    toast('오디오 설정 적용됨', 'success', 2000);
+    
   } catch (e) {
     console.error('오디오 스트림 재시작 실패:', e);
-    toast('오디오 설정 변경 실패', 'error');
+    toast('오디오 설정 변경 실패 - 다시 시도해주세요', 'error');
+    // Reset contexts on error
+    sharedAudioContext = null;
+    inputLimiterContext = null;
+  } finally {
+    restartingAudio = false;
   }
 }
 
@@ -5753,6 +5828,8 @@ function leaveRoom() {
   if (udpStatsInterval) { clearInterval(udpStatsInterval); udpStatsInterval = null; }
   if (metronomeInterval) { clearInterval(metronomeInterval); metronomeInterval = null; }
   if (turnRefreshTimer) { clearTimeout(turnRefreshTimer); turnRefreshTimer = null; }
+  if (networkQualityInterval) { clearInterval(networkQualityInterval); networkQualityInterval = null; }
+  if (bandwidthStatsInterval) { clearInterval(bandwidthStatsInterval); bandwidthStatsInterval = null; }
   
   // VAD 인터벌 정리
   vadIntervals.forEach(int => clearInterval(int));
@@ -5761,6 +5838,7 @@ function leaveRoom() {
   stopMetronome();
   cleanupRecording();
   stopSpectrum(); // 스펙트럼 분석기 정리
+  if (isScreenSharing) stopScreenShare();
   
   // 모든 AudioContext 정리
   const contexts = [audioContext, metronomeAudio, peerAudioContext, inputLimiterContext, inputMonitorCtx, tunerCtx];
@@ -5779,20 +5857,12 @@ function leaveRoom() {
   metronomeAudio = null;
   peerAudioContext = null;
   inputLimiterContext = null;
+  sharedAudioContext = null;
   inputMonitorCtx = null;
   tunerCtx = null;
   processedStream = null;
   effectNodes = {};
   noiseGateWorklet = null;
-  if (peerAudioContext) {
-    try { peerAudioContext.close(); } catch {}
-    peerAudioContext = null;
-  }
-  // 입력 리미터 AudioContext 정리
-  if (inputLimiterContext) {
-    try { inputLimiterContext.close(); } catch {}
-    inputLimiterContext = null;
-  }
   
   peers.forEach(peer => {
     peer.pc.close();
@@ -5810,11 +5880,17 @@ function leaveRoom() {
   // Cleanup spatial audio and bandwidth monitoring
   spatialPanners.clear();
   connectionStats.clear();
+  qualityHistory.clear();
   
   // Cleanup P2P and sync mode state
   peerConnections.clear();
   peerLatencies.clear();
+  syncDelayBuffers.clear();
   syncMode = false;
+  sfuMode = false;
+  isRoomCreator = false;
+  currentRoomSettings = {};
+  roomCreatorUsername = '';
   maxRoomLatency = 0;
   
   latencyHistory = [];
@@ -5846,6 +5922,7 @@ function leaveRoom() {
 let testStream = null;
 let testAnalyser = null;
 let testAnimationId = null;
+let testAudioCtx = null;
 
 $('test-audio-btn').onclick = async () => {
   const btn = $('test-audio-btn');
@@ -5855,6 +5932,7 @@ $('test-audio-btn').onclick = async () => {
     testStream.getTracks().forEach(t => t.stop());
     testStream = null;
     if (testAnimationId) cancelAnimationFrame(testAnimationId);
+    if (testAudioCtx) { try { testAudioCtx.close(); } catch {} testAudioCtx = null; }
     $('mic-level').style.width = '0%';
     btn.textContent = '🎤 마이크';
     return;
@@ -5870,9 +5948,9 @@ $('test-audio-btn').onclick = async () => {
       }
     });
     
-    const ctx = new AudioContext();
-    const source = ctx.createMediaStreamSource(testStream);
-    testAnalyser = ctx.createAnalyser();
+    testAudioCtx = new AudioContext();
+    const source = testAudioCtx.createMediaStreamSource(testStream);
+    testAnalyser = testAudioCtx.createAnalyser();
     testAnalyser.fftSize = 256;
     source.connect(testAnalyser);
     
@@ -5907,7 +5985,8 @@ $('test-network-btn')?.addEventListener('click', async () => {
 });
 
 // ===== 방 생성 모달 =====
-const roomTemplates = JSON.parse(localStorage.getItem('styx-room-templates') || '{}');
+let roomTemplates = {};
+try { roomTemplates = JSON.parse(localStorage.getItem('styx-room-templates') || '{}'); } catch {}
 
 function saveRoomTemplate(name) {
   if (!name?.trim()) return toast('템플릿 이름을 입력하세요', 'error');
@@ -6056,9 +6135,8 @@ function updateRoomSetting(setting, value) {
 // 방 설정 변경 수신
 socket.on('room-settings-changed', ({ setting, value }) => {
   currentRoomSettings[setting] = value;
-  displayRoomSettings();
   
-  // 오디오 모드 변경 시 코덱 설정 업데이트
+  // Update local variables BEFORE displayRoomSettings
   if (setting === 'audioMode') {
     audioMode = value;
     peers.forEach(peer => applyAudioSettings(peer.pc));
@@ -6071,13 +6149,16 @@ socket.on('room-settings-changed', ({ setting, value }) => {
     syncMode = value;
     if (syncMode) {
       toast('🔄 동기화 모드: 모든 사용자가 동일한 타이밍에 듣습니다', 'info');
-      broadcastLatency(); // Immediately share our latency
+      broadcastLatency();
       calculateSyncDelays();
     } else {
       toast('⚡ Jam 모드: 최저 지연시간 우선', 'info');
       clearSyncDelays();
     }
   }
+  
+  // Update UI after variables are set
+  displayRoomSettings();
 });
 
 // 방 내 오디오 설정 동기화
@@ -6251,7 +6332,7 @@ function updateDiagnostics() {
   }
   
   // Packet stats
-  if (tauriInvoke) {
+  if (actuallyTauri) {
     tauriInvoke('get_udp_stats').then(stats => {
       $('diag-packets-recv').textContent = stats.packets_received;
       $('diag-packets-lost').textContent = stats.packets_lost;
@@ -6317,10 +6398,14 @@ if ($('pro-mode')) {
     localStorage.setItem('styx-pro-mode', proMode);
     // Restart audio stream to apply
     if (localStream) {
-      const rawStream = localStream._rawStream || localStream;
-      processedStream = await createProcessedInputStream(rawStream);
-      localStream = processedStream;
-      localStream._rawStream = rawStream;
+      try {
+        const rawStream = localStream._rawStream || localStream;
+        processedStream = await createProcessedInputStream(rawStream);
+        localStream = processedStream;
+        localStream._rawStream = rawStream;
+      } catch (e) {
+        console.error('Pro mode switch failed:', e);
+      }
     }
     toast(proMode ? '🎸 Pro 모드: 모든 처리 우회 (최저 지연)' : '🎛️ 일반 모드: EQ/압축/노이즈게이트 활성', 'info');
   };
@@ -6353,7 +6438,7 @@ function applyLowLatencyMode() {
   applyJitterBuffer();
   
   // Apply to Tauri UDP if available
-  if (tauriInvoke) {
+  if (actuallyTauri) {
     tauriInvoke('set_jitter_buffer', { size: lowLatencyMode ? 1 : Math.round(jitterBuffer / 10) }).catch(() => {});
   }
 }

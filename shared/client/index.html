@@ -311,15 +311,15 @@
           <!-- 템플릿 -->
           <div class="form-section template-section">
             <h4>📋 템플릿</h4>
-            <div class="form-row">
-              <select id="room-template-select" style="flex:1">
+            <div class="template-row">
+              <select id="room-template-select">
                 <option value="">-- 템플릿 선택 --</option>
               </select>
               <button type="button" onclick="loadRoomTemplate($('room-template-select').value)" class="btn-small">적용</button>
               <button type="button" onclick="deleteRoomTemplate($('room-template-select').value)" class="btn-small btn-danger">삭제</button>
             </div>
-            <div class="form-row" style="margin-top:8px">
-              <input type="text" id="new-template-name" placeholder="새 템플릿 이름" style="flex:1">
+            <div class="template-row">
+              <input type="text" id="new-template-name" placeholder="새 템플릿 이름">
               <button type="button" onclick="saveRoomTemplate($('new-template-name').value)" class="btn-small">저장</button>
             </div>
           </div>
@@ -462,7 +462,7 @@
           <div id="self-stats" class="self-stats">
             <span class="self-stat">📡 <span id="self-latency">-</span>ms</span>
             <span class="self-stat">📊 <span id="self-bandwidth">-</span>kbps</span>
-            <span class="self-stat" id="connection-status" title="연결 상태">⚪ 대기</span>
+            <span class="self-stat" id="room-connection-status" title="연결 상태">⚪ 대기</span>
           </div>
         </div>
         <div class="room-controls">

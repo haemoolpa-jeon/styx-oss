@@ -663,6 +663,9 @@ function scheduleRoomDeletion(roomName) {
     if (roomData && roomData.users.size === 0) {
       rooms.delete(roomName);
       roomDeletionTimers.delete(roomName);
+      // Cleanup SFU for this room
+      sfuRooms.delete(roomName);
+      if (sfuMixer) sfuMixer.removeMixer(roomName);
       broadcastRoomList();
       console.log(`방 삭제됨 (타임아웃): ${roomName}`);
     }
@@ -1526,10 +1529,18 @@ function addToRoom(sessionId, roomId) {
 // Helper: Remove client
 function removeUdpClient(sessionId) {
   const client = udpClients.get(sessionId);
-  if (client?.roomId && roomMembers.has(client.roomId)) {
-    roomMembers.get(client.roomId).delete(sessionId);
-    if (roomMembers.get(client.roomId).size === 0) {
-      roomMembers.delete(client.roomId);
+  if (client?.roomId) {
+    // Remove from room members
+    if (roomMembers.has(client.roomId)) {
+      roomMembers.get(client.roomId).delete(sessionId);
+      if (roomMembers.get(client.roomId).size === 0) {
+        roomMembers.delete(client.roomId);
+      }
+    }
+    // Remove from SFU mixer if active
+    if (sfuEnabled && sfuRooms.has(client.roomId) && sfuMixer) {
+      const mixer = sfuMixer.getMixer(client.roomId);
+      mixer.removePeer(sessionId);
     }
   }
   udpClients.delete(sessionId);
