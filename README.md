@@ -238,6 +238,31 @@ styx/
 - [테스트 가이드](docs/TESTING_GUIDE.md)
 - [HADES 소개](docs/HADES_STYX_소개.md)
 
+## 오픈소스 라이선스
+
+이 프로젝트는 다음 오픈소스 라이브러리를 사용합니다:
+
+### Server (Node.js)
+| 패키지 | 라이선스 | 용도 |
+|--------|----------|------|
+| [Express](https://expressjs.com/) | MIT | 웹 서버 프레임워크 |
+| [Socket.IO](https://socket.io/) | MIT | 실시간 통신 |
+| [bcrypt](https://github.com/kelektiv/node.bcrypt.js) | MIT | 비밀번호 해싱 |
+| [Helmet](https://helmetjs.github.io/) | MIT | HTTP 보안 헤더 |
+| [Zod](https://zod.dev/) | MIT | 스키마 검증 |
+| [dotenv](https://github.com/motdotla/dotenv) | BSD-2-Clause | 환경변수 관리 |
+
+### Desktop App (Rust/Tauri)
+| 크레이트 | 라이선스 | 용도 |
+|----------|----------|------|
+| [Tauri](https://tauri.app/) | MIT/Apache-2.0 | 데스크톱 앱 프레임워크 |
+| [Tokio](https://tokio.rs/) | MIT | 비동기 런타임 |
+| [cpal](https://github.com/RustAudio/cpal) | Apache-2.0 | 오디오 I/O |
+| [opus](https://crates.io/crates/opus) | MIT/Apache-2.0 | 오디오 코덱 |
+| [Serde](https://serde.rs/) | MIT/Apache-2.0 | 직렬화 |
+
+모든 라이브러리는 MIT, Apache-2.0, BSD 등 상업적 사용이 허용되는 라이선스입니다.
+
 ## 라이선스
 
 HADES 전용 - 비공개 사용
