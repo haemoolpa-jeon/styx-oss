@@ -430,40 +430,27 @@ Microphone → EQ (3-band) → [Noise Gate] → Compressor → Gain → Output
 
 ## ❌ REMAINING IMPROVEMENTS
 
-### High Priority (Latency & Quality)
+### High Priority (Latency & Stability)
 | Feature | Difficulty | Impact | Notes |
 |---------|------------|--------|-------|
+| Audio device hot-swap | Medium | ⭐⭐⭐ | Change devices without restart |
 | Configurable buffer size (Rust) | Medium | ⭐⭐⭐ | Pass buffer size from UI to cpal |
-| 24-bit audio support | Medium | ⭐⭐ | Higher dynamic range |
 | ASIO exclusive mode | Medium | ⭐⭐⭐ | Lower latency on Windows |
+| Connection diagnostics | Medium | ⭐⭐ | Jitter histogram, loss patterns |
+
+### Medium Priority (Quality of Life)
+| Feature | Difficulty | Impact | Notes |
+|---------|------------|--------|-------|
+| Preset audio profiles | Low | ⭐⭐ | Voice/Instrument/Podcast modes |
+| Session statistics export | Low | ⭐ | Post-session quality report |
 | Opus complexity tuning | Low | ⭐ | Trade CPU for quality |
 
-### Medium Priority (Features)
+### Future (Advanced Features)
 | Feature | Difficulty | Impact | Notes |
 |---------|------------|--------|-------|
 | VST plugin hosting | Very High | ⭐⭐⭐ | Load external effects in Tauri |
 | MIDI sync | High | ⭐⭐ | Sync with DAWs |
-| Multi-sample rate | Medium | ⭐ | Support 44.1/96kHz |
-| Audio device hot-swap | Medium | ⭐⭐ | Change devices without restart |
-| Connection diagnostics | Medium | ⭐⭐ | Jitter histogram, loss patterns |
-
-### Low Priority (Platform & UX)
-| Feature | Difficulty | Impact | Notes |
-|---------|------------|--------|-------|
-| PWA manifest | Low | ⭐⭐ | Installable from browser |
-| Service worker | Low | ⭐ | Offline lobby, faster loads |
 | Linux/macOS builds | Medium | ⭐⭐ | Cross-platform CI/CD |
-| Mobile apps | Very High | ⭐⭐⭐ | React Native with native audio |
-| QR code sharing | Low | ⭐ | Generate QR from invite link |
-| Preset audio profiles | Low | ⭐ | Voice/Instrument/Podcast modes |
-| Session statistics export | Low | ⭐ | Post-session quality report |
-
-### Security & Infrastructure
-| Feature | Difficulty | Impact | Notes |
-|---------|------------|--------|-------|
-| End-to-end encryption | High | ⭐⭐ | Encrypt audio packets (adds latency) |
-| Regional servers | Medium | ⭐⭐⭐ | Deploy to multiple regions |
-| Auto-update system | Medium | ⭐⭐ | Notify users of new versions |
 
 ---
 
@@ -499,28 +486,79 @@ Total:             ~30-45ms
 
 ## 📋 IMPLEMENTATION ROADMAP (Updated)
 
-### Phase 4: Platform & Distribution
-| Task | Effort | Status |
-|------|--------|--------|
-| PWA manifest + service worker | 4h | ⬜ |
-| Auto-update notification | 4h | ⬜ |
-| Linux/macOS CI builds | 8h | ⬜ |
+### Phase 4: Device & Buffer Management
+*Goal: Better hardware control and lower latency*
 
-### Phase 5: Quality of Life
-| Task | Effort | Status |
-|------|--------|--------|
-| Connection diagnostics page | 4h | ⬜ |
-| Audio device hot-swap | 4h | ⬜ |
-| Preset audio profiles | 2h | ⬜ |
-| Session statistics export | 2h | ⬜ |
+| Task | Effort | Partial? | Status |
+|------|--------|----------|--------|
+| 4.1 Audio device hot-swap | 4h | ⚠️ Detection exists, needs reconnect | ⬜ |
+| 4.2 Configurable buffer size (Rust) | 6h | ❌ Hardcoded at 480 samples | ⬜ |
+| 4.3 ASIO exclusive mode | 4h | ⚠️ Detection exists, not used | ⬜ |
 
-### Phase 6: Advanced Features (Future)
+### Phase 5: Diagnostics & Monitoring
+*Goal: Better visibility into connection quality*
+
+| Task | Effort | Partial? | Status |
+|------|--------|----------|--------|
+| 5.1 Connection diagnostics page | 4h | ⚠️ latencyHistory exists, needs UI | ⬜ |
+| 5.2 Session statistics export | 2h | ❌ Not implemented | ⬜ |
+| 5.3 Jitter/loss histogram | 3h | ❌ Not implemented | ⬜ |
+
+### Phase 6: Audio Presets & Profiles
+*Goal: Quick setup for different use cases*
+
+| Task | Effort | Partial? | Status |
+|------|--------|----------|--------|
+| 6.1 Preset audio profiles | 2h | ❌ Not implemented | ⬜ |
+| 6.2 Opus complexity tuning | 1h | ❌ Not implemented | ⬜ |
+| 6.3 Save/load custom presets | 2h | ❌ Not implemented | ⬜ |
+
+### Phase 7: Advanced (Future)
+*Goal: Pro features*
+
 | Task | Effort | Status |
 |------|--------|--------|
-| VST plugin hosting | 40h+ | ⬜ |
-| MIDI sync | 16h | ⬜ |
-| Mobile apps | 80h+ | ⬜ |
-| E2E encryption | 20h | ⬜ |
+| 7.1 VST plugin hosting | 40h+ | ⬜ |
+| 7.2 MIDI sync | 16h | ⬜ |
+| 7.3 Linux/macOS builds | 8h | ⬜ |
+
+---
+
+## 🔍 PARTIAL IMPLEMENTATIONS FOUND
+
+### Audio Device Hot-Swap
+```javascript
+// EXISTS: Device change detection (app.js:2964)
+navigator.mediaDevices.addEventListener('devicechange', async () => {
+  await loadAudioDevices();
+  toast('🔌 오디오 장치 변경 감지됨', 'warning');
+});
+// MISSING: Automatic stream reconnection
+```
+
+### ASIO Support
+```rust
+// EXISTS: ASIO detection (audio.rs:104)
+pub fn is_asio_available() -> bool { ... }
+// MISSING: ASIO host selection, exclusive mode
+```
+
+### Latency History
+```javascript
+// EXISTS: Latency tracking (app.js:1372)
+let latencyHistory = []; // 30 samples
+// EXISTS: Ping graph rendering (app.js:5242)
+// MISSING: Dedicated diagnostics page, export
+```
+
+### Buffer Size
+```rust
+// EXISTS: AudioStreamConfig struct (audio.rs:24)
+pub buffer_size: u32,
+// HARDCODED: 480 samples in peer.rs:694
+buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32)
+// MISSING: Tauri command to change, UI control
+```
 
 ---
 
