@@ -2600,6 +2600,8 @@ socket.on('connect', () => {
           showLobby();
           // URL에서 방 정보 확인
           checkInviteLink();
+          // Check for pending deep link room
+          checkPendingDeepLink();
         } else {
           // Only clear if server explicitly rejected (not on timeout/error)
           if (res && res.error) {
@@ -2690,16 +2692,52 @@ socket.io.on('reconnect', () => {
   }
 });
 
-// 초대 링크 확인
+// 초대 링크 확인 (URL params)
 function checkInviteLink() {
   const params = new URLSearchParams(window.location.search);
   const inviteRoom = params.get('room');
   if (inviteRoom && currentUser) {
     toast(`"${inviteRoom}" 방으로 초대됨`, 'info');
     setTimeout(() => joinRoom(inviteRoom, false), 500);
-    // URL 정리
     window.history.replaceState({}, '', window.location.pathname);
   }
+}
+
+// Check for pending deep link room (saved before login)
+function checkPendingDeepLink() {
+  const pendingRoom = sessionStorage.getItem('pendingRoom');
+  if (pendingRoom && currentUser) {
+    const password = sessionStorage.getItem('pendingPassword');
+    sessionStorage.removeItem('pendingRoom');
+    sessionStorage.removeItem('pendingPassword');
+    toast(`"${pendingRoom}" 방으로 초대됨`, 'info');
+    setTimeout(() => joinRoom(pendingRoom, !!password, password), 500);
+  }
+}
+
+// Deep link handler for Tauri (styx://join/roomName)
+if (actuallyTauri && window.__TAURI__?.event) {
+  window.__TAURI__.event.listen('deep-link', (event) => {
+    const url = event.payload;
+    console.log('Deep link received:', url);
+    
+    // Parse styx://join/roomName or styx://join/roomName?password=xxx
+    const match = url.match(/styx:\/\/join\/([^?]+)(\?password=(.+))?/);
+    if (match) {
+      const roomName = decodeURIComponent(match[1]);
+      const password = match[3] ? decodeURIComponent(match[3]) : null;
+      
+      if (currentUser) {
+        toast(`"${roomName}" 방으로 초대됨`, 'info');
+        setTimeout(() => joinRoom(roomName, !!password, password), 500);
+      } else {
+        // Save for after login
+        sessionStorage.setItem('pendingRoom', roomName);
+        if (password) sessionStorage.setItem('pendingPassword', password);
+        toast('로그인 후 방에 입장합니다', 'info');
+      }
+    }
+  });
 }
 
 // 초대 링크 생성
@@ -2707,13 +2745,20 @@ function createInviteLink() {
   const roomName = $('roomName')?.textContent;
   if (!roomName) return;
   
-  // Use server URL for Tauri app, otherwise use current origin
+  // Generate both web URL and deep link
   const baseUrl = serverUrl || window.location.origin;
-  const url = `${baseUrl}/?room=${encodeURIComponent(roomName)}`;
-  navigator.clipboard.writeText(url).then(() => {
+  const webUrl = `${baseUrl}/join/${encodeURIComponent(roomName)}`;
+  const deepLink = `styx://join/${encodeURIComponent(roomName)}`;
+  
+  // Copy deep link for Tauri users, web URL as fallback info
+  const inviteText = actuallyTauri 
+    ? deepLink 
+    : `${webUrl}\n\n데스크톱 앱: ${deepLink}`;
+  
+  navigator.clipboard.writeText(inviteText).then(() => {
     toast('초대 링크가 복사되었습니다', 'success');
   }).catch(() => {
-    prompt('초대 링크:', url);
+    prompt('초대 링크:', inviteText);
   });
 }
 

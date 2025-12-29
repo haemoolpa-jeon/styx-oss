@@ -600,6 +600,46 @@ setInterval(async () => {
   }
 }, 60 * 60 * 1000);
 
+// Deep link redirect page - tries to open app, falls back to download
+app.get('/join/:roomName', (req, res) => {
+  const roomName = req.params.roomName;
+  const password = req.query.password || '';
+  const deepLink = `styx://join/${encodeURIComponent(roomName)}${password ? `?password=${encodeURIComponent(password)}` : ''}`;
+  
+  res.send(`<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Styx - ${roomName} 방 참가</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; background: #08080d; color: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; text-align: center; }
+    .container { max-width: 400px; padding: 40px; }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    p { color: #a0a0b8; margin-bottom: 24px; }
+    .btn { display: inline-block; padding: 14px 28px; background: #8b7cf7; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 8px; }
+    .btn:hover { background: #9d90f9; }
+    .btn-secondary { background: #1a1a24; border: 1px solid #333; }
+    .room-name { background: #1a1a24; padding: 12px 20px; border-radius: 8px; margin: 16px 0; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎵 Styx 방 참가</h1>
+    <div class="room-name">${roomName}</div>
+    <p>Styx 앱이 설치되어 있다면 자동으로 열립니다.</p>
+    <a href="${deepLink}" class="btn">앱에서 열기</a>
+    <br>
+    <a href="https://github.com/haemoolpa-jeon/styx-oss/releases" class="btn btn-secondary">앱 다운로드</a>
+  </div>
+  <script>
+    // Try to open the app
+    setTimeout(() => { window.location.href = "${deepLink}"; }, 100);
+  </script>
+</body>
+</html>`);
+});
+
 // Serve client files: config.js from client/, rest from shared/client/
 app.use(express.static(path.join(__dirname, '../client'))); // config.js override
 app.use(express.static(path.join(__dirname, '../shared/client'))); // shared files

@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Manager, State,
+    Manager, State, Emitter,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
@@ -486,6 +486,7 @@ fn setup_firewall() -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(AppState {
             udp_port: Mutex::new(None),
             udp_stream: Mutex::new(peer::UdpStreamState::default()),
@@ -530,6 +531,22 @@ pub fn run() {
             get_bitrate,
         ])
         .setup(|app| {
+            // Handle deep links (styx://join/roomId?password=xxx)
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    if let Some(url) = event.urls().first() {
+                        log::info!("Deep link received: {}", url);
+                        if let Some(window) = handle.get_webview_window("main") {
+                            let _ = window.emit("deep-link", url.to_string());
+                            let _ = window.set_focus();
+                        }
+                    }
+                });
+            }
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
