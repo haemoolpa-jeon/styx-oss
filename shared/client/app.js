@@ -1536,8 +1536,18 @@ async function runConnectionTest() {
   
   // Tauri app - use UDP latency measurement
   if (actuallyTauri && tauriInvoke) {
+    // First detect NAT type (works without relay)
     try {
-      // Measure UDP latency multiple times
+      const natInfo = await tauriInvoke('detect_nat');
+      results.natType = natInfo.nat_type;
+      results.publicAddr = natInfo.public_addr;
+      results.network = true; // NAT detection succeeded means UDP works
+    } catch (e) {
+      console.log('NAT detection failed:', e);
+    }
+    
+    // Try UDP latency measurement (only works if relay is set up)
+    try {
       for (let i = 0; i < 5; i++) {
         const rtt = await tauriInvoke('measure_relay_latency');
         pings.push(rtt);
@@ -1549,18 +1559,9 @@ async function runConnectionTest() {
       networkTestResults.latency = Math.round(avgPing);
       networkTestResults.jitter = Math.round(jitterCalc);
       results.quality = { latency: networkTestResults.latency, jitter: networkTestResults.jitter, isWifi: false };
-      results.network = true; // UDP works
-      
-      // Also detect NAT type
-      try {
-        const natInfo = await tauriInvoke('detect_nat');
-        results.natType = natInfo.nat_type;
-        results.publicAddr = natInfo.public_addr;
-      } catch {}
     } catch (e) {
-      console.error('UDP latency test failed:', e);
-      networkTestResults.latency = 0;
-      networkTestResults.jitter = 0;
+      // Relay not set up yet - use Socket.IO ping as fallback
+      console.log('UDP latency test skipped (not in room)');
       results.quality = { latency: 0, jitter: 0, isWifi: false };
     }
   } else {
@@ -3237,15 +3238,18 @@ function startUdpStatsMonitor() {
       if (stats) {
         updateUdpStatsUI(stats);
         
+        // Get max bitrate from room settings
+        const maxBitrate = currentRoomSettings.bitrate || 128;
+        
         // Adaptive bitrate based on packet loss
         if (stats.loss_rate > 5 && currentBitrate > 48) {
           // High packet loss - reduce bitrate
           currentBitrate = Math.max(48, currentBitrate - 16);
           await tauriInvoke('set_bitrate', { bitrateKbps: currentBitrate });
           console.log(`[ADAPTIVE] Reduced bitrate to ${currentBitrate}kbps (loss: ${stats.loss_rate.toFixed(1)}%)`);
-        } else if (stats.loss_rate < 1 && currentBitrate < 128) {
-          // Low packet loss - increase bitrate gradually
-          currentBitrate = Math.min(128, currentBitrate + 8);
+        } else if (stats.loss_rate < 1 && currentBitrate < maxBitrate) {
+          // Low packet loss - increase bitrate gradually up to room max
+          currentBitrate = Math.min(maxBitrate, currentBitrate + 8);
           await tauriInvoke('set_bitrate', { bitrateKbps: currentBitrate });
         }
         lastPacketLoss = stats.loss_rate;
@@ -3904,6 +3908,8 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
             solo: false,
             isSpeaking: false
           });
+          // Attempt P2P with existing peer
+          initiateP2P(id);
         }
       });
       renderUsers();
@@ -5715,6 +5721,7 @@ socket.on('room-settings-changed', ({ setting, value }) => {
     syncMode = value;
     if (syncMode) {
       toast('🔄 동기화 모드: 모든 사용자가 동일한 타이밍에 듣습니다', 'info');
+      broadcastLatency(); // Immediately share our latency
       calculateSyncDelays();
     } else {
       toast('⚡ Jam 모드: 최저 지연시간 우선', 'info');
