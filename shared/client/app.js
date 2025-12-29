@@ -1267,25 +1267,6 @@ function initUIEnhancements() {
 }
 
 // Enhanced toast notifications with better styling
-function showEnhancedToast(message, type = 'info', duration = 3000) {
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${type} fade-in`;
-  toast.textContent = message;
-  
-  // Add status indicator
-  const indicator = document.createElement('div');
-  indicator.className = `status-indicator status-${type === 'error' ? 'offline' : type === 'success' ? 'online' : 'away'}`;
-  toast.prepend(indicator);
-  
-  document.body.appendChild(toast);
-  
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(-20px)';
-    setTimeout(() => toast.remove(), 300);
-  }, duration);
-}
-
 // Debug: Tauri 감지 상태 확인
 console.log('Tauri detection:', {
   __TAURI__: typeof window.__TAURI__,
@@ -3009,19 +2990,6 @@ function initStabilitySettings() {
   const tunerCheck = $('tuner-toggle');
   if (tunerCheck) {
     tunerCheck.onchange = () => toggleTuner(tunerCheck.checked);
-  }
-  
-  // 연결 테스트 버튼
-  const testBtn = $('test-connection-btn');
-  if (testBtn) {
-    testBtn.onclick = async () => {
-      testBtn.disabled = true;
-      testBtn.textContent = '테스트 중...';
-      const results = await runConnectionTest();
-      showTestResults(results);
-      testBtn.disabled = false;
-      testBtn.textContent = '🔍 연결 테스트';
-    };
   }
 }
 
