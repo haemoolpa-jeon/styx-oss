@@ -1328,6 +1328,26 @@ io.on('connection', (socket) => {
     cb?.({ success: true, ips: Array.from(ipWhitelist) });
   });
 
+  // SFU mode toggle (host only)
+  socket.on('set-sfu-mode', ({ enabled }, cb) => {
+    if (!socket.room || !rooms.has(socket.room)) return cb?.({ error: 'Not in room' });
+    const roomData = rooms.get(socket.room);
+    if (roomData.creatorId !== socket.id) return cb?.({ error: 'Host only' });
+    if (!sfuEnabled) return cb?.({ error: 'SFU not available on server' });
+    
+    if (enabled) {
+      sfuRooms.add(socket.room);
+      console.log(`[SFU] Enabled for room: ${socket.room}`);
+    } else {
+      sfuRooms.delete(socket.room);
+      if (sfuMixer) sfuMixer.removeMixer(socket.room);
+      console.log(`[SFU] Disabled for room: ${socket.room}`);
+    }
+    
+    io.to(socket.room).emit('sfu-mode-changed', { enabled });
+    cb?.({ success: true, enabled });
+  });
+
   socket.on('disconnect', (reason) => {
     // 연결 통계 업데이트
     serverStats.activeConnections = Math.max(0, serverStats.activeConnections - 1);
@@ -1348,6 +1368,18 @@ io.on('connection', (socket) => {
 const UDP_PORT = parseInt(process.env.UDP_PORT) || 5000;
 const udpServer = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 const SESSION_ID_LEN = 20;
+
+// SFU mode support
+let sfuEnabled = false;
+let sfuMixer = null;
+try {
+  sfuMixer = require('./sfu');
+  sfuEnabled = true;
+  console.log('[SFU] Audio mixer loaded');
+} catch (e) {
+  console.log('[SFU] Audio mixer not available (opusscript not installed)');
+}
+const sfuRooms = new Set(); // Rooms using SFU mode
 
 // Optimized data structures
 const udpClients = new Map(); // sessionId -> { address, port, roomId }
@@ -1416,6 +1448,40 @@ udpServer.on('message', (msg, rinfo) => {
   msg.copy(relayBuffer, 0, 0, SESSION_ID_LEN); // Copy sender ID
   payload.copy(relayBuffer, SESSION_ID_LEN);    // Copy payload
   
+  // SFU mode: decode, mix, send personalized mix to each peer
+  if (sfuEnabled && sfuRooms.has(client.roomId)) {
+    const mixer = sfuMixer.getMixer(client.roomId);
+    mixer.addPeer(sessionId);
+    
+    // Skip header (first 16 bytes) to get Opus payload
+    const opusPayload = payload.slice(16);
+    if (opusPayload.length > 0) {
+      mixer.decodePacket(sessionId, opusPayload);
+    }
+    
+    // Send mixed audio to each peer (excluding sender)
+    for (const otherId of members) {
+      if (otherId === sessionId) continue;
+      const other = udpClients.get(otherId);
+      if (!other || !other.address) continue;
+      
+      const mixedOpus = mixer.mixForPeer(otherId);
+      if (mixedOpus) {
+        // Build packet: sessionId + header + mixedOpus
+        const mixedPacket = Buffer.alloc(SESSION_ID_LEN + 16 + mixedOpus.length);
+        Buffer.from('SFU_MIX_________').copy(mixedPacket, 0); // SFU marker as sender
+        payload.copy(mixedPacket, SESSION_ID_LEN, 0, 16); // Copy original header
+        mixedOpus.copy(mixedPacket, SESSION_ID_LEN + 16);
+        
+        udpServer.send(mixedPacket, other.port, other.address);
+        udpStats.packetsOut++;
+        udpStats.bytesOut += mixedPacket.length;
+      }
+    }
+    return;
+  }
+  
+  // Normal relay mode
   for (const otherId of members) {
     if (otherId === sessionId) continue;
     const other = udpClients.get(otherId);

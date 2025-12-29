@@ -171,6 +171,32 @@ function toggleSpectrum() {
   }
 }
 
+// SFU mode toggle (host only)
+function toggleSfuMode() {
+  if (!isRoomCreator) {
+    toast('방장만 SFU 모드를 변경할 수 있습니다', 'warning');
+    return;
+  }
+  socket.emit('set-sfu-mode', { enabled: !sfuMode }, (res) => {
+    if (res?.error) toast(res.error, 'error');
+  });
+}
+
+function updateSfuButton() {
+  const btn = $('sfu-toggle');
+  if (btn) btn.textContent = sfuMode ? '🔀✓' : '🔀';
+}
+
+// Auto-enable SFU when room has 4+ users
+function checkAutoSfu() {
+  if (!isRoomCreator || sfuMode) return;
+  if (peers.size >= 3) { // 3 peers + self = 4 users
+    socket.emit('set-sfu-mode', { enabled: true }, (res) => {
+      if (res?.success) toast('👥 4명 이상 - SFU 모드 자동 활성화', 'info');
+    });
+  }
+}
+
 function toggleSpatialAudio() {
   spatialAudioEnabled = !spatialAudioEnabled;
   const btn = $('spatial-toggle');
@@ -5253,7 +5279,16 @@ function renderPingGraph() {
   ctx.fillText(`${current}ms`, w - 40, 15);
 }
 
+// SFU mode state
+let sfuMode = false;
+
 // 소켓 이벤트
+socket.on('sfu-mode-changed', ({ enabled }) => {
+  sfuMode = enabled;
+  toast(enabled ? '🔀 SFU 모드 활성화 (서버 믹싱)' : '🔗 P2P 모드 (직접 연결)', 'info');
+  updateSfuButton();
+});
+
 socket.on('user-joined', ({ id, username, avatar, role }) => {
   log(`새 사용자 입장: ${username} (${id}), role=${role}`);
   playSound('join');
@@ -5282,6 +5317,9 @@ socket.on('user-joined', ({ id, username, avatar, role }) => {
     
     // Attempt P2P with new peer
     initiateP2P(id);
+    
+    // Check if should auto-enable SFU
+    checkAutoSfu();
   }
 });
 
