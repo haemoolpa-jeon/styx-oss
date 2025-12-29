@@ -295,6 +295,43 @@ async fn measure_relay_latency(state: State<'_, AppState>) -> Result<u32, String
     }
 }
 
+// ===== NAT Detection =====
+
+#[derive(serde::Serialize)]
+struct NatInfo {
+    nat_type: String,
+    public_addr: String,
+}
+
+#[tauri::command]
+async fn detect_nat() -> Result<NatInfo, String> {
+    let (nat_type, public_addr) = udp::detect_nat_type(0).await?;
+    Ok(NatInfo {
+        nat_type: format!("{:?}", nat_type),
+        public_addr: public_addr.to_string(),
+    })
+}
+
+#[tauri::command]
+async fn attempt_p2p(peer_addr: String, state: State<'_, AppState>) -> Result<bool, String> {
+    let peer: std::net::SocketAddr = peer_addr.parse().map_err(|e| format!("Invalid address: {}", e))?;
+    
+    // Create a new socket for P2P attempt
+    let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.map_err(|e| e.to_string())?;
+    
+    let success = udp::hole_punch(&socket, peer).await?;
+    
+    if success {
+        // Store P2P peer address
+        let mut stream_state = state.udp_stream.lock().map_err(|_| "Lock failed")?;
+        if !stream_state.peers.contains(&peer) {
+            stream_state.peers.push(peer);
+        }
+    }
+    
+    Ok(success)
+}
+
 // ===== Bitrate Control =====
 
 #[tauri::command]
@@ -479,6 +516,8 @@ pub fn run() {
             get_peer_stats,
             setup_firewall,
             measure_relay_latency,
+            detect_nat,
+            attempt_p2p,
             // TCP fallback
             tcp_receive_audio,
             tcp_get_audio,

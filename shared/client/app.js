@@ -1306,6 +1306,11 @@ let peerLatencies = new Map(); // peerId -> latency in ms
 let maxRoomLatency = 0; // Maximum latency in room
 let syncDelayBuffers = new Map(); // peerId -> delay buffer
 
+// P2P Connection State
+let myNatType = 'Unknown';
+let myPublicAddr = null;
+let peerConnections = new Map(); // peerId -> { type: 'p2p'|'relay', addr: string }
+
 // 오디오 처리 설정
 let echoCancellation = localStorage.getItem('styx-echo') !== 'false';
 let noiseSuppression = localStorage.getItem('styx-noise') !== 'false';
@@ -3043,6 +3048,9 @@ async function startUdpMode() {
   try {
     console.log('Starting UDP mode...');
     
+    // Detect NAT type for P2P
+    await detectNatType();
+    
     // Stop any existing stream first
     try {
       await tauriInvoke('udp_stop_stream');
@@ -4551,6 +4559,112 @@ socket.on('peer-latency', ({ peerId, latency }) => {
   }
 });
 
+// ===== P2P Connection Functions =====
+
+// Detect NAT type on startup
+async function detectNatType() {
+  if (!actuallyTauri || !tauriInvoke) return;
+  
+  try {
+    const info = await tauriInvoke('detect_nat');
+    myNatType = info.nat_type;
+    myPublicAddr = info.public_addr;
+    console.log(`[P2P] NAT Type: ${myNatType}, Public: ${myPublicAddr}`);
+  } catch (e) {
+    console.error('[P2P] NAT detection failed:', e);
+    myNatType = 'Unknown';
+  }
+}
+
+// Exchange P2P endpoints with peers
+socket.on('p2p-offer', async ({ from, natType, publicAddr }) => {
+  if (!actuallyTauri || !tauriInvoke) return;
+  
+  console.log(`[P2P] Received offer from ${from}: ${natType} @ ${publicAddr}`);
+  
+  // Check if P2P is possible
+  const canP2P = canEstablishP2P(myNatType, natType);
+  
+  if (canP2P && publicAddr) {
+    // Attempt hole punch
+    try {
+      const success = await tauriInvoke('attempt_p2p', { peerAddr: publicAddr });
+      if (success) {
+        peerConnections.set(from, { type: 'p2p', addr: publicAddr });
+        socket.emit('p2p-answer', { to: from, success: true, publicAddr: myPublicAddr });
+        console.log(`[P2P] ✅ Direct connection to ${from}`);
+        updateConnectionStatus();
+        return;
+      }
+    } catch (e) {
+      console.log(`[P2P] Hole punch failed: ${e}`);
+    }
+  }
+  
+  // Fall back to relay
+  peerConnections.set(from, { type: 'relay', addr: null });
+  socket.emit('p2p-answer', { to: from, success: false });
+  console.log(`[P2P] Using relay for ${from}`);
+  updateConnectionStatus();
+});
+
+socket.on('p2p-answer', ({ from, success, publicAddr }) => {
+  if (success && publicAddr) {
+    peerConnections.set(from, { type: 'p2p', addr: publicAddr });
+    console.log(`[P2P] ✅ P2P confirmed with ${from}`);
+  } else {
+    peerConnections.set(from, { type: 'relay', addr: null });
+    console.log(`[P2P] Relay confirmed with ${from}`);
+  }
+  updateConnectionStatus();
+});
+
+// Check if P2P is possible between two NAT types
+function canEstablishP2P(myNat, peerNat) {
+  // Symmetric NAT on either side = no P2P
+  if (myNat === 'Symmetric' || peerNat === 'Symmetric') return false;
+  // Both unknown = try anyway
+  if (myNat === 'Unknown' && peerNat === 'Unknown') return true;
+  // Any combination of Open/FullCone/Restricted = P2P possible
+  return true;
+}
+
+// Initiate P2P with a new peer
+async function initiateP2P(peerId) {
+  if (!actuallyTauri || !tauriInvoke || !myPublicAddr) return;
+  
+  socket.emit('p2p-offer', { 
+    to: peerId, 
+    natType: myNatType, 
+    publicAddr: myPublicAddr 
+  });
+}
+
+// Update connection status display
+function updateConnectionStatus() {
+  const statusEl = $('connection-status');
+  if (!statusEl) return;
+  
+  let p2pCount = 0, relayCount = 0;
+  peerConnections.forEach(conn => {
+    if (conn.type === 'p2p') p2pCount++;
+    else relayCount++;
+  });
+  
+  if (p2pCount > 0 && relayCount === 0) {
+    statusEl.textContent = `🟢 P2P (${p2pCount})`;
+    statusEl.title = '모든 연결이 직접 P2P';
+  } else if (p2pCount > 0) {
+    statusEl.textContent = `🟡 혼합 (P2P:${p2pCount} 릴레이:${relayCount})`;
+    statusEl.title = '일부 P2P, 일부 릴레이';
+  } else if (relayCount > 0) {
+    statusEl.textContent = `🔵 릴레이 (${relayCount})`;
+    statusEl.title = '모든 연결이 서버 릴레이';
+  } else {
+    statusEl.textContent = '⚪ 대기';
+  }
+}
+
 function startLatencyPing() {
   if (latencyInterval) clearInterval(latencyInterval);
   if (statsInterval) clearInterval(statsInterval);
@@ -4988,6 +5102,9 @@ socket.on('user-joined', ({ id, username, avatar, role }) => {
       isSpeaking: false
     });
     renderUsers();
+    
+    // Attempt P2P with new peer
+    initiateP2P(id);
   }
 });
 

@@ -1215,6 +1215,14 @@ io.on('connection', (socket) => {
   socket.on('answer', ({ to, answer }) => io.to(to).emit('answer', { from: socket.id, answer }));
   socket.on('ice-candidate', ({ to, candidate }) => io.to(to).emit('ice-candidate', { from: socket.id, candidate }));
 
+  // P2P signaling
+  socket.on('p2p-offer', ({ to, natType, publicAddr }) => {
+    io.to(to).emit('p2p-offer', { from: socket.id, natType, publicAddr });
+  });
+  socket.on('p2p-answer', ({ to, success, publicAddr }) => {
+    io.to(to).emit('p2p-answer', { from: socket.id, success, publicAddr });
+  });
+
   // 시간 동기화 (메트로놈용)
   socket.on('time-sync', (clientTime, cb) => {
     cb(Date.now());
