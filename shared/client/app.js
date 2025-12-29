@@ -1300,6 +1300,12 @@ let audioMode = localStorage.getItem('styx-audio-mode') || 'voice'; // voice | m
 let jitterBuffer = parseInt(localStorage.getItem('styx-jitter-buffer')) || 50; // ms (낮을수록 저지연, 높을수록 안정)
 let autoAdapt = localStorage.getItem('styx-auto-adapt') !== 'false';
 
+// Sync Mode - 모든 사용자가 동일한 지연시간으로 듣도록 조정
+let syncMode = false; // Room-level setting, controlled by host
+let peerLatencies = new Map(); // peerId -> latency in ms
+let maxRoomLatency = 0; // Maximum latency in room
+let syncDelayBuffers = new Map(); // peerId -> delay buffer
+
 // 오디오 처리 설정
 let echoCancellation = localStorage.getItem('styx-echo') !== 'false';
 let noiseSuppression = localStorage.getItem('styx-noise') !== 'false';
@@ -4491,20 +4497,89 @@ function applyMixerState() {
   });
 }
 
+// ===== Sync Mode Functions =====
+
+// Calculate delay buffers to equalize latency across all peers
+function calculateSyncDelays() {
+  if (!syncMode) return;
+  
+  // Find maximum latency in room
+  maxRoomLatency = selfStats.latency || 0;
+  peerLatencies.forEach(lat => {
+    if (lat > maxRoomLatency) maxRoomLatency = lat;
+  });
+  
+  // Add 10ms buffer for jitter
+  maxRoomLatency += 10;
+  
+  console.log(`[SYNC] Max room latency: ${maxRoomLatency}ms`);
+  
+  // Calculate delay for each peer (including self)
+  const selfDelay = maxRoomLatency - (selfStats.latency || 0);
+  console.log(`[SYNC] Self delay: ${selfDelay}ms`);
+  
+  // Apply delays via jitter buffer adjustment
+  // For Tauri mode, we'll adjust the playback buffer
+  if (actuallyTauri && tauriInvoke) {
+    // Convert ms to jitter buffer frames (5ms per frame)
+    const frames = Math.ceil(maxRoomLatency / 5);
+    tauriInvoke('set_jitter_buffer', { size: frames }).catch(e => {
+      console.error('[SYNC] Failed to set jitter buffer:', e);
+    });
+  }
+  
+  // Broadcast our latency to other peers
+  socket.emit('peer-latency', { latency: selfStats.latency || 0 });
+}
+
+// Clear sync delays when switching to Jam mode
+function clearSyncDelays() {
+  syncDelayBuffers.clear();
+  maxRoomLatency = 0;
+  
+  // Reset jitter buffer to minimum
+  if (actuallyTauri && tauriInvoke) {
+    tauriInvoke('set_jitter_buffer', { size: 2 }).catch(() => {});
+  }
+}
+
+// Handle peer latency updates
+socket.on('peer-latency', ({ peerId, latency }) => {
+  peerLatencies.set(peerId, latency);
+  if (syncMode) {
+    calculateSyncDelays();
+  }
+});
+
 function startLatencyPing() {
   if (latencyInterval) clearInterval(latencyInterval);
   if (statsInterval) clearInterval(statsInterval);
   latencyHistory = [];
   
-  // Simple ping test for self latency (every 5 seconds)
-  latencyInterval = setInterval(() => {
+  // Latency measurement (every 3 seconds)
+  latencyInterval = setInterval(async () => {
+    // Measure Socket.IO latency
     const start = Date.now();
     socket.emit('ping', start, (serverTime) => {
-      const rtt = Date.now() - start;
-      selfStats.latency = rtt;
-      updateSelfStatsUI();
+      const socketRtt = Date.now() - start;
+      selfStats.socketLatency = socketRtt;
     });
-  }, 5000);
+    
+    // Measure UDP latency for Tauri mode
+    if (actuallyTauri && tauriInvoke) {
+      try {
+        const udpRtt = await tauriInvoke('measure_relay_latency');
+        selfStats.latency = udpRtt;
+        selfStats.udpLatency = udpRtt;
+      } catch (e) {
+        // Use socket latency as fallback
+        selfStats.latency = selfStats.socketLatency || 0;
+      }
+    } else {
+      selfStats.latency = selfStats.socketLatency || 0;
+    }
+    updateSelfStatsUI();
+  }, 3000);
   
   // 상세 통계 수집 (2초마다)
   statsInterval = setInterval(async () => {
@@ -5332,6 +5407,7 @@ function displayRoomSettings() {
   const s = currentRoomSettings;
   const modeLabel = s.audioMode === 'voice' ? '🎤 음성' : '🎸 악기';
   const creatorLabel = roomCreatorUsername ? ` (방장: ${roomCreatorUsername})` : '';
+  const syncLabel = syncMode ? '🔄 동기화' : '⚡ 저지연';
   
   // 방장이면 변경 가능한 UI 표시
   if (isRoomCreator || currentUser?.isAdmin) {
@@ -5340,6 +5416,12 @@ function displayRoomSettings() {
         <select id="room-mode-select" class="room-setting-select">
           <option value="voice" ${s.audioMode === 'voice' ? 'selected' : ''}>🎤 음성</option>
           <option value="music" ${s.audioMode === 'music' ? 'selected' : ''}>🎸 악기</option>
+        </select>
+      </span>
+      <span class="room-setting-item" title="동기화 모드 (모든 사용자가 동일한 타이밍에 듣기)">
+        <select id="room-sync-select" class="room-setting-select">
+          <option value="jam" ${!syncMode ? 'selected' : ''}>⚡ Jam</option>
+          <option value="sync" ${syncMode ? 'selected' : ''}>🔄 Sync</option>
         </select>
       </span>
       <span class="room-setting-item" title="비트레이트">
@@ -5354,10 +5436,12 @@ function displayRoomSettings() {
     `;
     // 변경 이벤트
     $('room-mode-select').onchange = (e) => updateRoomSetting('audioMode', e.target.value);
+    $('room-sync-select').onchange = (e) => updateRoomSetting('syncMode', e.target.value === 'sync');
     $('room-bitrate-select').onchange = (e) => updateRoomSetting('bitrate', parseInt(e.target.value));
   } else {
     container.innerHTML = `
       <span class="room-setting-item">${modeLabel}</span>
+      <span class="room-setting-item">${syncLabel}</span>
       <span class="room-setting-item">${s.bitrate || 96}kbps</span>
       <span class="room-setting-item">${s.maxUsers || 8}명${creatorLabel}</span>
     `;
@@ -5386,6 +5470,16 @@ socket.on('room-settings-changed', ({ setting, value }) => {
   }
   if (setting === 'bitrate') {
     toast(`비트레이트: ${value}kbps`, 'info');
+  }
+  if (setting === 'syncMode') {
+    syncMode = value;
+    if (syncMode) {
+      toast('🔄 동기화 모드: 모든 사용자가 동일한 타이밍에 듣습니다', 'info');
+      calculateSyncDelays();
+    } else {
+      toast('⚡ Jam 모드: 최저 지연시간 우선', 'info');
+      clearSyncDelays();
+    }
   }
 });
 

@@ -1177,15 +1177,22 @@ io.on('connection', (socket) => {
     if (!roomData) return cb?.({ error: 'Room not found' });
     if (roomData.creatorId !== socket.id && !socket.isAdmin) return cb?.({ error: 'Not authorized' });
     
-    const allowed = ['audioMode', 'bitrate', 'sampleRate'];
+    const allowed = ['audioMode', 'bitrate', 'sampleRate', 'syncMode'];
     if (!allowed.includes(setting)) return cb?.({ error: 'Invalid setting' });
     if (setting === 'audioMode' && !['voice', 'music'].includes(value)) return cb?.({ error: 'Invalid value' });
     if (setting === 'bitrate' && ![64, 96, 128, 192].includes(value)) return cb?.({ error: 'Invalid value' });
     if (setting === 'sampleRate' && ![44100, 48000].includes(value)) return cb?.({ error: 'Invalid value' });
+    if (setting === 'syncMode' && typeof value !== 'boolean') return cb?.({ error: 'Invalid value' });
     
     roomData[setting] = value;
     io.to(socket.room).emit('room-settings-changed', { setting, value });
     cb?.({ success: true });
+  });
+
+  // Peer latency broadcast for Sync Mode
+  socket.on('peer-latency', ({ latency }) => {
+    if (!socket.room) return;
+    socket.to(socket.room).emit('peer-latency', { peerId: socket.id, latency });
   });
 
   socket.on('chat', (text, cb) => {
@@ -1336,9 +1343,19 @@ udpServer.on('message', (msg, rinfo) => {
   udpStats.packetsIn++;
   udpStats.bytesIn += msg.length;
   
-  // Handle ping (health check) - payload starts with 'P'
-  if (payload.length === 1 && payload[0] === 0x50) { // 'P' = ping
-    udpServer.send(Buffer.from([0x4F]), rinfo.port, rinfo.address); // 'O' = pong
+  // Handle ping with timestamp - payload: 'P' + 8-byte timestamp
+  if (payload.length === 9 && payload[0] === 0x50) { // 'P' = ping
+    // Echo back 'O' + original timestamp for RTT calculation
+    const pong = Buffer.alloc(9);
+    pong[0] = 0x4F; // 'O' = pong
+    payload.copy(pong, 1, 1, 9); // Copy timestamp
+    udpServer.send(pong, rinfo.port, rinfo.address);
+    return;
+  }
+  
+  // Handle legacy ping (health check only)
+  if (payload.length === 1 && payload[0] === 0x50) {
+    udpServer.send(Buffer.from([0x4F]), rinfo.port, rinfo.address);
     return;
   }
   

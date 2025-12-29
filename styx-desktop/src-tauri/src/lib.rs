@@ -254,6 +254,47 @@ fn udp_start_relay_stream(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+// ===== Latency Measurement =====
+
+#[tauri::command]
+async fn measure_relay_latency(state: State<'_, AppState>) -> Result<u32, String> {
+    let relay_addr = {
+        let stream_state = state.udp_stream.lock().map_err(|_| "Lock failed")?;
+        stream_state.relay_addr.ok_or("No relay address")?
+    };
+    
+    // Create temporary socket for ping
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+    socket.set_read_timeout(Some(std::time::Duration::from_secs(2))).ok();
+    
+    // Send ping with timestamp: 'P' + 8-byte timestamp (ms)
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    
+    let mut ping = vec![0u8; 9];
+    ping[0] = 0x50; // 'P'
+    ping[1..9].copy_from_slice(&now.to_be_bytes());
+    
+    socket.send_to(&ping, relay_addr).map_err(|e| e.to_string())?;
+    
+    // Wait for pong
+    let mut buf = [0u8; 9];
+    let (len, _) = socket.recv_from(&mut buf).map_err(|e| e.to_string())?;
+    
+    if len == 9 && buf[0] == 0x4F {
+        let sent_time = u64::from_be_bytes([buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8]]);
+        let recv_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        Ok((recv_time - sent_time) as u32)
+    } else {
+        Err("Invalid pong response".to_string())
+    }
+}
+
 // ===== Bitrate Control =====
 
 #[tauri::command]
@@ -437,6 +478,7 @@ pub fn run() {
             get_udp_stats,
             get_peer_stats,
             setup_firewall,
+            measure_relay_latency,
             // TCP fallback
             tcp_receive_audio,
             tcp_get_audio,
