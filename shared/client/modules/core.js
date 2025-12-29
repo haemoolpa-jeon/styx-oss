@@ -54,5 +54,24 @@ export const state = {
   duckingEnabled: localStorage.getItem('styx-ducking') === 'true',
 };
 
-// Avatar URL helper
+// Utility functions
 export const avatarUrl = (path) => path ? (path.startsWith('/') ? serverUrl + path : path) : '';
+
+export const escapeHtml = (text) => {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+};
+
+export const formatTime = (ms) => {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+};
+
+export const downloadBlob = (blob, filename) => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};

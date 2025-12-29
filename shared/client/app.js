@@ -2317,10 +2317,9 @@ function addRecordingMarker(label = '') {
 }
 
 function formatTime(ms) {
+  if (M.core?.formatTime) return M.core.formatTime(ms);
   const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, '0')}`;
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
 function exportMarkers(filename) {
@@ -2423,6 +2422,7 @@ function startRecording() {
 
 function downloadTrack(chunks, name) {
   const blob = new Blob(chunks, { type: 'audio/webm' });
+  if (M.core?.downloadBlob) return M.core.downloadBlob(blob, `styx-${name}.webm`);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `styx-${name}.webm`;
@@ -4458,6 +4458,7 @@ function addChatMessage(msg) {
 }
 
 function escapeHtml(text) {
+  if (M.core?.escapeHtml) return M.core.escapeHtml(text);
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
