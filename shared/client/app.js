@@ -806,11 +806,13 @@ const builtInPresets = {
 let customPresets = JSON.parse(localStorage.getItem('styx-custom-presets') || '{}');
 
 function applyAudioPreset(preset) {
-  if (M.audio?.applyAudioPreset) return M.audio.applyAudioPreset(builtInPresets[preset] || customPresets[preset]);
   if (preset === 'custom') return;
   
-  const p = builtInPresets[preset] || customPresets[preset];
+  const allPresets = M.settings?.getPresets ? M.settings.getPresets() : { ...builtInPresets, ...customPresets };
+  const p = allPresets[preset];
   if (!p) return;
+  
+  if (M.audio?.applyAudioPreset) return M.audio.applyAudioPreset(p);
   
   inputEffects = { ...inputEffects, ...p };
   
@@ -867,12 +869,15 @@ function updatePresetSelect() {
   const select = $('audio-preset');
   if (!select) return;
   
+  const presets = M.settings?.getPresets ? M.settings.getPresets() : { ...builtInPresets, ...customPresets };
+  const customNames = Object.keys(presets).filter(k => !['voice', 'instrument', 'podcast'].includes(k));
+  
   select.innerHTML = `
     <option value="custom">사용자 정의</option>
     <option value="voice">🎤 음성</option>
     <option value="instrument">🎸 악기</option>
     <option value="podcast">🎙️ 팟캐스트</option>
-    ${Object.keys(customPresets).map(name => `<option value="${name}">⭐ ${name}</option>`).join('')}
+    ${customNames.map(name => `<option value="${name}">⭐ ${name}</option>`).join('')}
   `;
 }
 let effectNodes = {};
@@ -5653,9 +5658,12 @@ function updateRoleUI() {
 // 음소거
 // 음소거 UI 업데이트
 function updateMuteUI() {
-  if (M.ui?.updateMuteUI) return M.ui.updateMuteUI();
-  $('muteBtn').textContent = isMuted ? '🔇' : '🎤';
-  $('muteBtn').classList.toggle('muted', isMuted);
+  // Don't delegate - uses local isMuted state
+  const btn = $('muteBtn');
+  if (btn) {
+    btn.textContent = isMuted ? '🔇' : '🎤';
+    btn.classList.toggle('muted', isMuted);
+  }
 }
 
 // 오디오 스트림 재시작 (설정 변경 시)
@@ -5940,7 +5948,8 @@ function deleteRoomTemplate(name) {
 function updateTemplateSelect() {
   const sel = $('room-template-select');
   if (!sel) return;
-  const names = Object.keys(roomTemplates);
+  const templates = M.settings?.getRoomTemplates ? M.settings.getRoomTemplates() : roomTemplates;
+  const names = Object.keys(templates);
   sel.innerHTML = '<option value="">-- 템플릿 선택 --</option>' + 
     names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
 }
