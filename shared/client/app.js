@@ -727,28 +727,28 @@ socket.io.on('reconnect_failed', () => {
 });
 
 function showReconnectProgress(attempt = 1) {
+  if (M.ui?.showReconnectProgress) return M.ui.showReconnectProgress(attempt);
   const overlay = $('reconnect-overlay');
   if (!overlay) return;
-  
   overlay.classList.remove('hidden');
   const countEl = $('reconnect-count');
   if (countEl) countEl.textContent = attempt;
-  
   const progress = (attempt / 10) * 100;
   const progressBar = overlay.querySelector('.progress-bar');
   if (progressBar) progressBar.style.width = progress + '%';
 }
 
 function updateReconnectProgress() {
+  if (M.ui?.updateReconnectProgress) return M.ui.updateReconnectProgress();
   const overlay = $('reconnect-overlay');
   if (!overlay || overlay.classList.contains('hidden')) return;
-  
   const progress = (reconnectAttempt / 10) * 100;
   const progressBar = overlay.querySelector('.progress-bar');
   if (progressBar) progressBar.style.width = progress + '%';
 }
 
 function hideReconnectProgress() {
+  if (M.ui?.hideReconnectProgress) return M.ui.hideReconnectProgress();
   const overlay = $('reconnect-overlay');
   if (overlay) overlay.classList.add('hidden');
   reconnectAttempt = 0;
@@ -5372,6 +5372,7 @@ function autoAdjustJitter() {
 
 // Real-time connection quality indicator
 function updateQualityIndicator(jitter = 0, packetLoss = 0) {
+  // Module version doesn't have all the local state, use local implementation
   const indicator = $('quality-indicator');
   if (!indicator) return;
   
