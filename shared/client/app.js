@@ -4581,10 +4581,6 @@ function calculateSyncDelays() {
   
   console.log(`[SYNC] Max room latency: ${maxRoomLatency}ms`);
   
-  // Calculate delay for each peer (including self)
-  const selfDelay = maxRoomLatency - (selfStats.latency || 0);
-  console.log(`[SYNC] Self delay: ${selfDelay}ms`);
-  
   // Apply delays via jitter buffer adjustment
   // For Tauri mode, we'll adjust the playback buffer
   if (actuallyTauri && tauriInvoke) {
@@ -4594,9 +4590,13 @@ function calculateSyncDelays() {
       console.error('[SYNC] Failed to set jitter buffer:', e);
     });
   }
-  
-  // Broadcast our latency to other peers
-  socket.emit('peer-latency', { latency: selfStats.latency || 0 });
+}
+
+// Broadcast our latency (called separately, not in calculateSyncDelays to avoid loops)
+function broadcastLatency() {
+  if (syncMode && selfStats.latency) {
+    socket.emit('peer-latency', { latency: selfStats.latency });
+  }
 }
 
 // Clear sync delays when switching to Jam mode
@@ -4690,7 +4690,13 @@ function canEstablishP2P(myNat, peerNat) {
 
 // Initiate P2P with a new peer
 async function initiateP2P(peerId) {
-  if (!actuallyTauri || !tauriInvoke || !myPublicAddr) return;
+  if (!actuallyTauri || !tauriInvoke) return;
+  
+  // Wait for NAT detection if not done yet
+  if (!myPublicAddr) {
+    await detectNatType();
+  }
+  if (!myPublicAddr) return; // Still no address, skip P2P
   
   socket.emit('p2p-offer', { 
     to: peerId, 
@@ -4793,6 +4799,7 @@ function startLatencyPing() {
       selfStats.latency = selfStats.socketLatency || 0;
     }
     updateSelfStatsUI();
+    broadcastLatency(); // Broadcast for sync mode
   }, 3000);
   
   // 상세 통계 수집 (2초마다)

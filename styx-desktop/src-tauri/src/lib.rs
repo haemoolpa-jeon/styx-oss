@@ -316,13 +316,16 @@ async fn detect_nat() -> Result<NatInfo, String> {
 async fn attempt_p2p(peer_addr: String, state: State<'_, AppState>) -> Result<bool, String> {
     let peer: std::net::SocketAddr = peer_addr.parse().map_err(|e| format!("Invalid address: {}", e))?;
     
-    // Create a new socket for P2P attempt
+    // Note: This tests if P2P is possible, but actual P2P audio routing
+    // would require using the same socket for both hole punch and audio.
+    // Currently, audio still goes through relay even if P2P test succeeds.
+    // TODO: Implement true P2P audio routing in a future version.
     let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.map_err(|e| e.to_string())?;
     
     let success = udp::hole_punch(&socket, peer).await?;
     
     if success {
-        // Store P2P peer address
+        // Store P2P peer address for future use
         let mut stream_state = state.udp_stream.lock().map_err(|_| "Lock failed")?;
         if !stream_state.peers.contains(&peer) {
             stream_state.peers.push(peer);
