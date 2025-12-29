@@ -278,6 +278,9 @@ function startBandwidthMonitoring() {
               
               connectionStats.set(peerId, newStats);
               
+              // Quality prediction - track trends
+              predictQualityIssues(peerId, newStats, currentStats);
+              
               // Simple bandwidth adaptation - adjust audio processing based on connection quality
               adaptAudioQuality(peerId, newStats);
             } else {
@@ -293,6 +296,39 @@ function startBandwidthMonitoring() {
       }
     }
   }, 2000); // Every 2 seconds
+}
+
+// Quality prediction - warn before problems occur
+const qualityHistory = new Map(); // peerId -> {jitter: [], loss: []}
+let lastQualityWarning = 0;
+
+function predictQualityIssues(peerId, newStats, oldStats) {
+  if (!qualityHistory.has(peerId)) {
+    qualityHistory.set(peerId, { jitter: [], loss: [] });
+  }
+  const history = qualityHistory.get(peerId);
+  
+  // Track last 5 samples
+  history.jitter.push(newStats.jitter);
+  if (history.jitter.length > 5) history.jitter.shift();
+  
+  const lossRate = oldStats.packetsLost ? 
+    (newStats.packetsLost - oldStats.packetsLost) / ((newStats.bytesReceived - oldStats.bytesReceived) / 100 || 1) : 0;
+  history.loss.push(lossRate);
+  if (history.loss.length > 5) history.loss.shift();
+  
+  // Detect worsening trend
+  if (history.jitter.length >= 3) {
+    const recent = history.jitter.slice(-3);
+    const isIncreasing = recent[2] > recent[1] && recent[1] > recent[0];
+    const avgJitter = recent.reduce((a, b) => a + b, 0) / 3;
+    
+    const now = Date.now();
+    if (isIncreasing && avgJitter > 15 && now - lastQualityWarning > 10000) {
+      lastQualityWarning = now;
+      toast('⚠️ 연결 품질 저하 감지 - 버퍼 증가 권장', 'warning');
+    }
+  }
 }
 
 function adaptAudioQuality(peerId, stats) {
@@ -873,21 +909,29 @@ function monitorNetworkQuality() {
 
 function adaptToNetworkQuality(quality) {
   const settings = {
-    good: { bitrate: 96, jitterBuffer: 40, sampleRate: 48000 },
-    fair: { bitrate: 64, jitterBuffer: 60, sampleRate: 44100 },
-    poor: { bitrate: 32, jitterBuffer: 100, sampleRate: 22050 }
+    good: { bitrate: 96, jitterBuffer: 30, mono: false },
+    fair: { bitrate: 64, jitterBuffer: 50, mono: false },
+    poor: { bitrate: 32, jitterBuffer: 80, mono: true }
   };
   
   const config = settings[quality];
   if (!config) return;
   
-  // 비트레이트 조정
+  // Graceful degradation - adjust settings to prevent dropout
   if (tauriInvoke) {
     tauriInvoke('set_bitrate', { bitrate: config.bitrate }).catch(() => {});
-    tauriInvoke('set_jitter_buffer', { size: Math.round(config.jitterBuffer / 10) }).catch(() => {});
+    tauriInvoke('set_jitter_buffer', { size: Math.round(config.jitterBuffer / 5) }).catch(() => {});
   }
   
-  toast(`네트워크 품질: ${quality} - 설정 자동 조정됨`, 'info', 3000);
+  // Auto-increase jitter buffer on poor quality
+  if (quality === 'poor' && !proMode && !lowLatencyMode) {
+    jitterBuffer = Math.max(jitterBuffer, config.jitterBuffer);
+    if ($('jitter-slider')) $('jitter-slider').value = jitterBuffer;
+    if ($('jitter-value')) $('jitter-value').textContent = jitterBuffer + 'ms';
+  }
+  
+  const labels = { good: '양호', fair: '보통', poor: '불안정' };
+  toast(`📶 ${labels[quality]} - ${quality === 'poor' ? '버퍼 증가됨' : '최적화됨'}`, 'info', 2000);
 }
 
 // 5초마다 네트워크 품질 모니터링

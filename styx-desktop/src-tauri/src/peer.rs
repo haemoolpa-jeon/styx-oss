@@ -12,19 +12,23 @@ use crate::udp::AudioPacketHeader;
 
 const FRAME_SIZE: usize = 480; // 5ms @ 48kHz stereo (240 samples per channel) - reduced for lower latency
 const MAX_PACKET_SIZE: usize = 1500;
-const MIN_JITTER_BUFFER: usize = 2;  // 10ms minimum (5ms * 2 frames)
+const MIN_JITTER_BUFFER: usize = 1;  // 5ms minimum (1 frame)
 const PLAYBACK_BUFFER_CAP: usize = 9600; // 100ms @ 48kHz stereo
 const MAX_JITTER_BUFFER: usize = 20; // 100ms maximum (5ms * 20 frames)
 const KEEPALIVE_INTERVAL_MS: u64 = 5000; // 5초마다 keepalive
 
-// 적응형 지터 버퍼
+// NetEQ-style adaptive jitter buffer
 pub struct JitterBuffer {
     buffer: BTreeMap<u32, Vec<f32>>,
     next_seq: u32,
     target_size: usize,
-    // 적응형 크기 조절용 통계
+    // Arrival time tracking for variance calculation
+    expected_interval_ms: i64,
+    last_arrival: i64,
+    // Statistics
     late_packets: u32,
     total_packets: u32,
+    jitter_estimate: f32, // Exponential moving average of jitter
 }
 
 impl JitterBuffer {
@@ -32,9 +36,12 @@ impl JitterBuffer {
         Self { 
             buffer: BTreeMap::new(), 
             next_seq: 0, 
-            target_size: initial_size,
+            target_size: initial_size.max(MIN_JITTER_BUFFER),
+            expected_interval_ms: 5, // 5ms frame
+            last_arrival: 0,
             late_packets: 0,
             total_packets: 0,
+            jitter_estimate: 0.0,
         }
     }
     
@@ -51,15 +58,29 @@ impl JitterBuffer {
     }
     
     pub fn push(&mut self, seq: u32, samples: Vec<f32>) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        
         self.total_packets += 1;
         
-        // 너무 오래된 패킷 (이미 재생됨)
+        // Track inter-arrival jitter (RFC 3550 style)
+        if self.last_arrival > 0 {
+            let interval = now - self.last_arrival;
+            let deviation = (interval - self.expected_interval_ms).abs() as f32;
+            // Exponential moving average: jitter = jitter + (|D| - jitter) / 16
+            self.jitter_estimate += (deviation - self.jitter_estimate) / 16.0;
+        }
+        self.last_arrival = now;
+        
+        // Too old packet (already played)
         if self.next_seq > 0 && seq < self.next_seq.wrapping_sub(self.target_size as u32 * 2) {
             self.late_packets += 1;
             return;
         }
         
-        // 버퍼 오버플로우 방지
+        // Prevent buffer overflow
         while self.buffer.len() >= self.target_size * 2 {
             if let Some(&oldest) = self.buffer.keys().next() {
                 self.buffer.remove(&oldest);
@@ -67,8 +88,8 @@ impl JitterBuffer {
         }
         self.buffer.insert(seq, samples);
         
-        // 적응형 크기 조절 (100패킷마다)
-        if self.total_packets % 100 == 0 {
+        // Adaptive sizing every 50 packets
+        if self.total_packets % 50 == 0 {
             self.adapt_size();
         }
     }
@@ -78,27 +99,39 @@ impl JitterBuffer {
         
         let late_ratio = self.late_packets as f32 / self.total_packets as f32;
         
-        if late_ratio > 0.05 && self.target_size < MAX_JITTER_BUFFER {
-            // 5% 이상 늦은 패킷 → 버퍼 증가
-            self.target_size += 1;
-        } else if late_ratio < 0.01 && self.target_size > MIN_JITTER_BUFFER {
-            // 1% 미만 → 버퍼 감소 (지연 줄이기)
-            self.target_size -= 1;
+        // NetEQ-style: target = 2 * jitter_estimate / frame_duration
+        let jitter_frames = (self.jitter_estimate / self.expected_interval_ms as f32 * 2.0).ceil() as usize;
+        let jitter_target = jitter_frames.max(MIN_JITTER_BUFFER).min(MAX_JITTER_BUFFER);
+        
+        // Blend late packet ratio with jitter estimate
+        if late_ratio > 0.03 {
+            // >3% late → increase buffer
+            self.target_size = (self.target_size + 1).min(MAX_JITTER_BUFFER);
+        } else if late_ratio < 0.005 && self.target_size > jitter_target {
+            // <0.5% late and above jitter target → decrease
+            self.target_size = (self.target_size - 1).max(MIN_JITTER_BUFFER);
+        } else {
+            // Slowly converge to jitter-based target
+            if self.target_size < jitter_target {
+                self.target_size += 1;
+            } else if self.target_size > jitter_target + 2 {
+                self.target_size -= 1;
+            }
         }
         
-        // 통계 리셋
+        // Reset stats
         self.late_packets = 0;
         self.total_packets = 0;
     }
     
     pub fn pop(&mut self) -> Option<Vec<f32>> {
-        // 정상 순서 패킷
+        // Normal sequence packet
         if let Some(samples) = self.buffer.remove(&self.next_seq) {
             self.next_seq = self.next_seq.wrapping_add(1);
             return Some(samples);
         }
         
-        // 버퍼가 충분히 찼으면 가장 오래된 것 반환 (순서 건너뛰기)
+        // If buffer is sufficiently full, return oldest (skip sequence)
         if self.buffer.len() >= self.target_size / 2 {
             if let Some(&seq) = self.buffer.keys().next() {
                 self.next_seq = seq.wrapping_add(1);
@@ -106,6 +139,10 @@ impl JitterBuffer {
             }
         }
         None
+    }
+    
+    pub fn jitter_ms(&self) -> f32 {
+        self.jitter_estimate
     }
 }
 
@@ -260,6 +297,8 @@ pub fn start_send_loop(
     is_muted: Arc<AtomicBool>,
     sequence: Arc<AtomicU32>,
     packets_sent: Arc<AtomicU32>,
+    packets_lost: Arc<AtomicU32>,
+    packets_received: Arc<AtomicU32>,
     input_device_name: Option<String>,
 ) -> Result<(), String> {
     let host = cpal::default_host();
@@ -330,6 +369,8 @@ pub fn start_send_loop(
             Err(_) => return,
         };
         let mut frame_buffer = Vec::with_capacity(FRAME_SIZE);
+        let mut frame_count = 0u32;
+        let mut last_loss_update = 0u32;
         
         while let Some(samples) = rx.recv().await {
             frame_buffer.extend(samples);
@@ -341,6 +382,21 @@ pub fn start_send_loop(
             
             while frame_buffer.len() >= FRAME_SIZE {
                 let frame: Vec<f32> = frame_buffer.drain(..FRAME_SIZE).collect();
+                
+                // Adaptive FEC: update every 200 frames (~1 second)
+                frame_count += 1;
+                if frame_count - last_loss_update >= 200 {
+                    let lost = packets_lost.load(Ordering::Relaxed);
+                    let recv = packets_received.load(Ordering::Relaxed);
+                    if recv > 0 {
+                        let loss_pct = (lost as f32 / (recv + lost) as f32 * 100.0).min(100.0) as i32;
+                        // Clamp to reasonable range for Opus FEC
+                        let fec_pct = loss_pct.max(0).min(50);
+                        encoder.set_packet_loss_perc(fec_pct).ok();
+                    }
+                    last_loss_update = frame_count;
+                }
+                
                 if let Ok(opus_data) = encode_frame(&mut encoder, &frame) {
                     let seq = sequence.fetch_add(1, Ordering::SeqCst);
                     let header = AudioPacketHeader {

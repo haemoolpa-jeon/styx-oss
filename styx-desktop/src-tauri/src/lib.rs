@@ -176,6 +176,8 @@ fn udp_start_stream(state: State<'_, AppState>) -> Result<(), String> {
         stream_state.is_muted.clone(),
         stream_state.sequence.clone(),
         stream_state.packets_sent.clone(),
+        stream_state.packets_lost.clone(),
+        stream_state.packets_received.clone(),
         input_device,
     )?;
     
@@ -389,6 +391,7 @@ struct UdpStats {
     is_running: bool,
     jitter_buffer_size: usize,
     jitter_buffer_target: usize,
+    jitter_estimate_ms: f32,
 }
 
 #[tauri::command]
@@ -403,13 +406,14 @@ fn get_udp_stats(state: State<'_, AppState>) -> UdpStats {
         0.0
     };
     
-    let (jitter_size, jitter_target) = stream_state.jitter_buffers.lock()
+    let (jitter_size, jitter_target, jitter_est) = stream_state.jitter_buffers.lock()
         .map(|jb| {
             let size: usize = jb.values().map(|b| b.len()).sum();
             let target: usize = jb.values().map(|b| b.target_size()).sum();
-            (size, target)
+            let est: f32 = jb.values().map(|b| b.jitter_ms()).sum::<f32>() / jb.len().max(1) as f32;
+            (size, target, est)
         })
-        .unwrap_or((0, 0));
+        .unwrap_or((0, 0, 0.0));
     
     UdpStats {
         packets_sent: sent,
@@ -420,6 +424,7 @@ fn get_udp_stats(state: State<'_, AppState>) -> UdpStats {
         is_running: stream_state.is_running.load(Ordering::Relaxed),
         jitter_buffer_size: jitter_size,
         jitter_buffer_target: jitter_target,
+        jitter_estimate_ms: jitter_est,
     }
 }
 
