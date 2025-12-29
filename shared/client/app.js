@@ -3201,6 +3201,8 @@ async function cleanupAudio() {
 // UDP 연결 품질 모니터링
 let udpStatsInterval = null;
 let udpHealthFailCount = 0;
+let currentBitrate = 96; // Default bitrate in kbps
+let lastPacketLoss = 0;
 
 function startUdpStatsMonitor() {
   if (!tauriInvoke || udpStatsInterval) return;
@@ -3212,6 +3214,19 @@ function startUdpStatsMonitor() {
       const stats = await tauriInvoke('get_udp_stats');
       if (stats) {
         updateUdpStatsUI(stats);
+        
+        // Adaptive bitrate based on packet loss
+        if (stats.loss_rate > 5 && currentBitrate > 48) {
+          // High packet loss - reduce bitrate
+          currentBitrate = Math.max(48, currentBitrate - 16);
+          await tauriInvoke('set_bitrate', { bitrateKbps: currentBitrate });
+          console.log(`[ADAPTIVE] Reduced bitrate to ${currentBitrate}kbps (loss: ${stats.loss_rate.toFixed(1)}%)`);
+        } else if (stats.loss_rate < 1 && currentBitrate < 128) {
+          // Low packet loss - increase bitrate gradually
+          currentBitrate = Math.min(128, currentBitrate + 8);
+          await tauriInvoke('set_bitrate', { bitrateKbps: currentBitrate });
+        }
+        lastPacketLoss = stats.loss_rate;
         
         // Health check: if no packets received for 5 seconds, switch to TCP
         if (stats.is_running && stats.packets_received === 0) {
@@ -3238,9 +3253,8 @@ function startUdpStatsMonitor() {
       }
     } catch (e) {
       console.error('UDP 통계 조회 실패:', e);
-      // Don't crash the interval, just log the error
     }
-  }, 500); // Reduced frequency to 500ms to reduce load
+  }, 1000); // Check every second for adaptive bitrate
 }
 
 function updateInputLevelUI(level) {
@@ -3723,6 +3737,14 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
   // 빠른 연결 상태 확인
   if (!navigator.onLine) {
     return toast('인터넷 연결을 확인하세요', 'error');
+  }
+  
+  // WiFi detection and warning
+  if (navigator.connection) {
+    const conn = navigator.connection;
+    if (conn.type === 'wifi' || conn.effectiveType === '3g' || conn.effectiveType === '2g') {
+      toast('⚠️ WiFi/모바일 연결 감지 - 유선 연결 권장', 'warning', 5000);
+    }
   }
   
   // RTCPeerConnection 지원 확인
@@ -4864,9 +4886,21 @@ function startLatencyPing() {
 }
 
 function updateSelfStatsUI() {
-  if ($('self-latency')) $('self-latency').textContent = selfStats.latency ? selfStats.latency + 'ms' : '-';
-  if ($('self-bandwidth')) $('self-bandwidth').textContent = selfStats.bandwidth ? selfStats.bandwidth + 'kbps' : '-';
-  if ($('self-loss')) $('self-loss').textContent = selfStats.packetsLost ? selfStats.packetsLost.toFixed(1) + '%' : '0%';
+  const latencyEl = $('self-latency');
+  const bandwidthEl = $('self-bandwidth');
+  
+  if (latencyEl) {
+    const lat = selfStats.latency || 0;
+    latencyEl.textContent = lat > 0 ? lat : '-';
+    // Color code latency
+    if (lat > 100) latencyEl.style.color = '#ff4757';
+    else if (lat > 50) latencyEl.style.color = '#ffa502';
+    else latencyEl.style.color = '#2ed573';
+  }
+  
+  if (bandwidthEl) {
+    bandwidthEl.textContent = currentBitrate || selfStats.bandwidth || '-';
+  }
 }
 
 // 지연 보상: 가장 느린 피어에 맞춰 다른 피어들에게 딜레이 추가

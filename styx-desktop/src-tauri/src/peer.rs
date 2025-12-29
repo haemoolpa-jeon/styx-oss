@@ -206,6 +206,7 @@ pub fn create_encoder_with_bitrate(bitrate_kbps: u32) -> Result<Encoder, String>
     encoder.set_inband_fec(true).ok();
     encoder.set_packet_loss_perc(5).ok();
     encoder.set_vbr(false).ok(); // CBR for consistent latency
+    // Note: Application::LowDelay already optimizes for low latency
     Ok(encoder)
 }
 
@@ -742,12 +743,25 @@ pub fn start_relay_loop(
         };
         
         let pb = playback_buffer.clone();
+        let mut fade_out = 1.0f32; // For smooth underrun handling
         let stream = match device.build_output_stream(
             &config,
             move |data: &mut [f32], _| {
                 if let Ok(mut buf) = pb.lock() {
+                    let buf_len = buf.len();
                     for sample in data.iter_mut() {
-                        *sample = buf.pop_front().unwrap_or(0.0);
+                        if let Some(s) = buf.pop_front() {
+                            *sample = s * fade_out;
+                            fade_out = 1.0; // Reset fade when we have data
+                        } else {
+                            // Buffer underrun - fade out smoothly
+                            *sample = 0.0;
+                            fade_out = (fade_out * 0.95).max(0.0);
+                        }
+                    }
+                    // Warn if buffer is getting low
+                    if buf_len < FRAME_SIZE && buf_len > 0 {
+                        fade_out = 0.8; // Start fading early
                     }
                 }
             },
