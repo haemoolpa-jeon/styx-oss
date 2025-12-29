@@ -13,6 +13,7 @@ use crate::udp::AudioPacketHeader;
 const FRAME_SIZE: usize = 480; // 5ms @ 48kHz stereo (240 samples per channel) - reduced for lower latency
 const MAX_PACKET_SIZE: usize = 1500;
 const MIN_JITTER_BUFFER: usize = 2;  // 10ms minimum (5ms * 2 frames)
+const PLAYBACK_BUFFER_CAP: usize = 9600; // 100ms @ 48kHz stereo
 const MAX_JITTER_BUFFER: usize = 20; // 100ms maximum (5ms * 20 frames)
 const KEEPALIVE_INTERVAL_MS: u64 = 5000; // 5초마다 keepalive
 
@@ -661,6 +662,9 @@ pub fn start_relay_loop(
         let copy_len = session_send.len().min(20);
         padded_session[..copy_len].copy_from_slice(&session_send[..copy_len]);
         
+        let mut last_keepalive = std::time::Instant::now();
+        let keepalive_interval = std::time::Duration::from_secs(5);
+        
         while is_running_send.load(Ordering::SeqCst) {
             if let Ok(samples) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
                 // Calculate input level
@@ -668,7 +672,17 @@ pub fn start_relay_loop(
                 let level = (rms * 200.0).min(100.0) as u32;
                 input_level_send.store(level, Ordering::Relaxed);
                 
-                if is_muted_send.load(Ordering::SeqCst) { continue; }
+                if is_muted_send.load(Ordering::SeqCst) {
+                    // Send keepalive when muted to maintain NAT mapping
+                    if last_keepalive.elapsed() >= keepalive_interval {
+                        let mut keepalive = vec![0u8; 21];
+                        keepalive[..20].copy_from_slice(&padded_session);
+                        keepalive[20] = 0x50; // 'P' for ping
+                        let _ = std_socket_send.send_to(&keepalive, relay_addr);
+                        last_keepalive = std::time::Instant::now();
+                    }
+                    continue;
+                }
                 
                 if let Ok(encoded) = encode_frame(&mut encoder, &samples) {
                     let seq = sequence_send.fetch_add(1, Ordering::SeqCst);
@@ -753,6 +767,7 @@ pub fn start_relay_loop(
         let _stream = stream;
         
         let mut buf = vec![0u8; 2000];
+        let mut last_seq: u32 = 0;
         const SESSION_ID_LEN: usize = 20;
         
         while is_running_recv.load(Ordering::SeqCst) {
@@ -774,9 +789,25 @@ pub fn start_relay_loop(
                     // Validate payload length matches header declaration
                     let expected_total_len = SESSION_ID_LEN + AudioPacketHeader::SIZE + header.payload_len as usize;
                     if len != expected_total_len {
-                        eprintln!("Relay packet length mismatch: got {}, expected {}", len, expected_total_len);
                         continue;
                     }
+                    
+                    // Packet loss detection and PLC
+                    let expected_seq = last_seq.wrapping_add(1);
+                    if last_seq > 0 && header.sequence > expected_seq {
+                        let lost = header.sequence.wrapping_sub(expected_seq) as usize;
+                        if lost > 0 && lost < 10 {
+                            // Generate PLC for lost packets
+                            for _ in 0..lost {
+                                if let Ok(plc_samples) = decode_plc(&mut decoder) {
+                                    if let Ok(mut pb) = playback_buffer.lock() {
+                                        pb.extend(plc_samples);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    last_seq = header.sequence;
                     
                     let payload = &buf[SESSION_ID_LEN + AudioPacketHeader::SIZE..len];
                     
@@ -786,7 +817,7 @@ pub fn start_relay_loop(
                         if let Ok(mut pb) = playback_buffer.lock() {
                             pb.extend(samples);
                             // Prevent buffer overflow (100ms max)
-                            while pb.len() > 9600 { pb.pop_front(); } // 100ms @ 48kHz stereo = 9,600 samples
+                            while pb.len() > PLAYBACK_BUFFER_CAP { pb.pop_front(); }
                         }
                     }
                 }

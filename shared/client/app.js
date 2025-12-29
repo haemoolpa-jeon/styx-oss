@@ -2843,6 +2843,19 @@ async function showLobby() {
   await loadAudioDevices();
   loadRoomList();
   
+  // Listen for audio device changes
+  if (navigator.mediaDevices?.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', async () => {
+      console.log('[AUDIO] Device change detected');
+      await loadAudioDevices();
+      
+      // If in room, warn user
+      if (socket.room) {
+        toast('🔌 오디오 장치 변경 감지됨', 'warning');
+      }
+    });
+  }
+  
   // 새로고침 후 자동 재입장
   if (lastRoom) {
     setTimeout(() => joinRoom(lastRoom, !!lastRoomPassword, lastRoomPassword), 500);
@@ -4665,10 +4678,36 @@ function updateConnectionStatus() {
   }
 }
 
+// Attempt to recover degraded connection
+async function attemptConnectionRecovery() {
+  if (!actuallyTauri || !tauriInvoke) return;
+  
+  try {
+    // Stop current stream
+    await tauriInvoke('udp_stop_stream');
+    await new Promise(r => setTimeout(r, 200));
+    
+    // Restart UDP mode
+    await startUdpMode();
+    toast('✅ 연결 복구 완료', 'success');
+  } catch (e) {
+    console.error('[RECOVERY] Failed:', e);
+    toast('❌ 연결 복구 실패, TCP로 전환', 'error');
+    
+    // Fall back to TCP
+    useTcpFallback = true;
+    socket.emit('tcp-bind-room', { roomId: socket.room });
+    startTcpAudioStream();
+  }
+}
+
 function startLatencyPing() {
   if (latencyInterval) clearInterval(latencyInterval);
   if (statsInterval) clearInterval(statsInterval);
   latencyHistory = [];
+  
+  let consecutiveFailures = 0;
+  const MAX_FAILURES = 5;
   
   // Latency measurement (every 3 seconds)
   latencyInterval = setInterval(async () => {
@@ -4677,6 +4716,7 @@ function startLatencyPing() {
     socket.emit('ping', start, (serverTime) => {
       const socketRtt = Date.now() - start;
       selfStats.socketLatency = socketRtt;
+      consecutiveFailures = 0; // Reset on success
     });
     
     // Measure UDP latency for Tauri mode
@@ -4685,9 +4725,23 @@ function startLatencyPing() {
         const udpRtt = await tauriInvoke('measure_relay_latency');
         selfStats.latency = udpRtt;
         selfStats.udpLatency = udpRtt;
+        consecutiveFailures = 0;
+        
+        // Quality warning
+        if (udpRtt > 150) {
+          toast('⚠️ 네트워크 지연이 높습니다', 'warning', 3000);
+        }
       } catch (e) {
-        // Use socket latency as fallback
+        consecutiveFailures++;
         selfStats.latency = selfStats.socketLatency || 0;
+        
+        // Auto-recovery attempt
+        if (consecutiveFailures >= MAX_FAILURES) {
+          console.warn('[QUALITY] Connection degraded, attempting recovery...');
+          toast('🔄 연결 복구 중...', 'warning');
+          attemptConnectionRecovery();
+          consecutiveFailures = 0;
+        }
       }
     } else {
       selfStats.latency = selfStats.socketLatency || 0;
