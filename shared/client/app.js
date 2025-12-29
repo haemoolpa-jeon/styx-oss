@@ -6269,6 +6269,7 @@ function exportSessionStats() {
   };
   
   const blob = new Blob([JSON.stringify(stats, null, 2)], { type: 'application/json' });
+  if (M.core?.downloadBlob) return M.core.downloadBlob(blob, `styx-session-${new Date().toISOString().slice(0, 10)}.json`) || toast('📥 세션 통계 내보내기 완료', 'success');
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
