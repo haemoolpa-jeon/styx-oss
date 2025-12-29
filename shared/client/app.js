@@ -1,10 +1,6 @@
 // Styx 클라이언트 - HADES 실시간 오디오 협업
 // WebRTC P2P 오디오 + 안정성 중심 설계
 
-// Use bundled ES modules if available
-const M = window.StyxModules || {};
-const hasModules = !!M.core;
-
 // 접근성 개선 시스템
 const accessibility = {
   highContrast: false,
@@ -1810,7 +1806,6 @@ function showTestResults(results) {
 
 // 토스트 메시지
 function toast(message, type = 'info', duration = 3000) {
-  if (hasModules && M.ui?.toast) return M.ui.toast(message, type, duration);
   const container = $('toast-container');
   if (!container) return;
   const el = document.createElement('div');
