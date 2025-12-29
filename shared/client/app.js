@@ -3134,9 +3134,7 @@ async function startUdpMode() {
       
       udpSuccess = true;
       toast('UDP 오디오 연결됨', 'success');
-      console.log('Skipping stats monitor to prevent crashes...');
-      // Temporarily disable stats monitor
-      // startUdpStatsMonitor();
+      startUdpStatsMonitor(); // Enable for adaptive bitrate
       console.log('✅ UDP setup complete');
     } catch (e) {
       console.error('UDP 실패, TCP 폴백:', e);
@@ -4791,7 +4789,7 @@ function startLatencyPing() {
         if (consecutiveFailures >= MAX_FAILURES) {
           console.warn('[QUALITY] Connection degraded, attempting recovery...');
           toast('🔄 연결 복구 중...', 'warning');
-          attemptConnectionRecovery();
+          attemptConnectionRecovery().catch(e => console.error('[RECOVERY] Error:', e));
           consecutiveFailures = 0;
         }
       }
@@ -5458,6 +5456,12 @@ function leaveRoom() {
   // Cleanup spatial audio and bandwidth monitoring
   spatialPanners.clear();
   connectionStats.clear();
+  
+  // Cleanup P2P and sync mode state
+  peerConnections.clear();
+  peerLatencies.clear();
+  syncMode = false;
+  maxRoomLatency = 0;
   
   latencyHistory = [];
   
