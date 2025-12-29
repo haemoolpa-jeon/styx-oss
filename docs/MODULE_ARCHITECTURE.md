@@ -43,6 +43,102 @@ shared/client/
 | M.settings | saveCustomPreset, deleteCustomPreset, saveRoomTemplate, getRoomTemplates, deleteRoomTemplate |
 | M.network | getQualityGrade |
 
+## Remaining Functions (157 total)
+
+### Accessibility (7 functions) - Low complexity
+- loadAccessibilitySettings, applyAccessibilitySettings, addScreenReaderSupport
+- announceToScreenReader, toggleHighContrast, toggleScreenReaderMode, toggleReducedMotion
+- saveAccessibilitySettings
+
+### Audio Processing (15 functions) - Medium complexity
+- startAudioMeter, startSpectrum, stopSpectrum, drawSpectrum
+- startNoiseLearning, finishLearning, loadNoiseProfile, updateNoiseDisplay
+- toggleNoiseProfile, toggleRouting, updateRouting, applyRoutingToStream
+- setupSpatialAudio, toggleSpatialAudio, getPeerAudioContext
+
+### Recording (8 functions) - Medium complexity
+- startRecording, stopRecording, toggleRecording, cleanupRecording
+- addRecordingMarker, exportMarkers, downloadTrack, audioBufferToWav, exportClickTrack
+
+### Metronome (2 functions) - Low complexity
+- startMetronome, stopMetronome
+
+### Network/WebRTC (25 functions) - HIGH complexity, tightly coupled
+- createPeerConnection, recreatePeerConnection, checkConnectionType
+- detectNatType, canEstablishP2P, initiateP2P, attemptConnectionRecovery
+- updateConnectionStatus, startLatencyPing, broadcastLatency
+- startBandwidthMonitoring, stopBandwidthMonitoring, predictQualityIssues, adaptAudioQuality
+- monitorNetworkQuality, adaptToNetworkQuality
+- updateTurnCredentials, scheduleTurnRefresh, optimizeOpusSdp
+- applyAudioSettings, applyAudioSettingsToAll, runConnectionTest, showTestResults
+
+### UDP/TCP (Tauri) (10 functions) - Medium complexity
+- startUdpMode, setUdpMuted, cleanupAudio, startUdpStatsMonitor, stopUdpStatsMonitor
+- updateUdpStatsUI, updatePeerStatsUI, startTcpAudioStream, stopTcpAudioStream
+- initTauriFeatures
+
+### Room Management (15 functions) - HIGH complexity, socket-dependent
+- showLobby, loadRoomList, renderRoomList, closeRoomFromLobby
+- leaveRoom, closeRoom, createInviteLink, checkInviteLink
+- displayRoomSettings, updateRoomSetting, syncRoomAudioSettings
+- saveRoomTemplate, loadRoomTemplate, deleteRoomTemplate, updateTemplateSelect
+
+### User/Peer Management (12 functions) - HIGH complexity
+- renderUsers, applyMixerState, updateRoleUI, togglePeerMute
+- startVAD, applyDucking, calculateSyncDelays, clearSyncDelays
+- applyDelayCompensation, updateSelfStatsUI, searchUsers, renderUserList
+
+### Settings/State (12 functions) - Medium complexity
+- collectSettings, applySettings, scheduleSettingsSave, saveCurrentSettings
+- autoDetectOptimalSettings, initStabilitySettings, applyLowLatencyMode
+- setJitterBuffer, updateJitterBuffer, applyJitterBuffer, autoAdjustJitter, trackJitter
+
+### UI/DOM (20 functions) - Medium complexity
+- initUIEnhancements, enhanceKeyboardNavigation, executeShortcut
+- showUserFriendlyError, handleCriticalError, addGlobalListener, cleanupGlobalListeners
+- switchTab, openDiagnostics, closeDiagnostics, updateDiagnostics
+- renderPingGraph, updatePresetSelect, showAuthMsg
+- toggleFullscreen, toggleInputMonitor, toggleTuner, detectPitch, freqToNote
+
+### Admin (10 functions) - Medium complexity
+- checkAdminAccess, hideAdminFeaturesInTauri, initMonitoring, startMonitoring, stopMonitoring
+- loadHealthData, loadMetricsData, refreshLogs, clearLogs, addSystemLog
+- loadAdminData, updateAdminNotifications
+
+### Screen Share (4 functions) - Medium complexity
+- startScreenShare, stopScreenShare, createScreenShareConnection
+
+### SFU (3 functions) - Low complexity
+- toggleSfuMode, updateSfuButton, checkAutoSfu
+
+### Chat (3 functions) - Low complexity
+- sendChat, addChatMessage, playSound
+
+### Misc Utilities (11 functions)
+- getServerTime, syncServerTime, getOptimalBitrate
+- adjustMasterVolume, adjustInputVolume, updateThemeIcon
+- autoRejoin, reconnectAudioDevices, checkPendingDeepLink
+
+## Recommended Migration Order
+
+### Phase 1 - Easy wins (Low risk)
+1. Accessibility functions → new `accessibility.js` module
+2. Chat functions → new `chat.js` module  
+3. SFU functions → add to `network.js`
+4. Metronome functions → new `metronome.js` module
+
+### Phase 2 - Medium complexity
+1. Recording functions → expand `recording.js`
+2. Audio processing → expand `audio.js`
+3. Admin functions → new `admin.js` module
+4. Settings functions → expand `settings.js`
+
+### Phase 3 - Requires refactoring (High risk)
+1. **State management** - Create central store for peers, socket, streams
+2. **Socket service** - Decouple event handlers from UI
+3. **WebRTC service** - Abstract peer connection lifecycle
+4. **Room service** - Centralize room state management
+
 ## Building Modules
 
 ```bash
@@ -50,17 +146,6 @@ cd shared/client
 npm install
 npm run build  # outputs styx-modules.js
 ```
-
-## Future Work
-
-To fully modularize app.js, these architectural changes are needed:
-
-1. **State Management** - Extract global state (peers, socket, streams) into a store
-2. **Socket Service** - Decouple 50+ socket event handlers from UI
-3. **WebRTC Service** - Abstract peer connection management
-4. **UI Components** - Split renderUsers, renderRoomList, etc.
-
-This is a major rewrite (~2-3 days) and should be done when there's time for thorough testing.
 
 ## Adding New Module Functions
 
