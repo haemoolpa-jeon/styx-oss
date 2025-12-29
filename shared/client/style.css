@@ -157,6 +157,11 @@ small {
 .btn::before, .btn-icon::before, .btn-small::before {
   content: '';
   position: absolute;
+  inset: 0;
+  background: transparent;
+  border-radius: inherit;
+}
+
 /* Loading state */
 .loading {
   position: relative;
