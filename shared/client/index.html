@@ -626,26 +626,6 @@
   </div>
 
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <script type="module">
-    // ES Module imports - gradual migration
-    import { toast, initTheme, toggleTheme, updateMuteUI, updateQualityIndicator, showReconnectProgress, hideReconnectProgress } from './modules/ui.js';
-    import { getSetting, setSetting, loadAllSettings, collectSettings, applySettings, getPresets, saveCustomPreset } from './modules/settings.js';
-    import { getSharedAudioContext, createProcessedInputStream, updateInputEffect, applyAudioPreset } from './modules/audio.js';
-    import { toggleRecording, startRecording, stopRecording, exportClickTrack } from './modules/recording.js';
-    import { $, state, log, serverUrl, actuallyTauri, tauriInvoke, avatarUrl } from './modules/core.js';
-    
-    // Expose to global scope for app.js compatibility
-    window.styxModules = {
-      toast, initTheme, toggleTheme, updateMuteUI, updateQualityIndicator,
-      showReconnectProgress, hideReconnectProgress,
-      getSetting, setSetting, loadAllSettings, collectSettings, applySettings,
-      getPresets, saveCustomPreset,
-      getSharedAudioContext, createProcessedInputStream, updateInputEffect, applyAudioPreset,
-      toggleRecording, startRecording, stopRecording, exportClickTrack,
-      $, state, log, serverUrl, actuallyTauri, tauriInvoke, avatarUrl
-    };
-    window.styxModulesLoaded = true;
-  </script>
   <script src="app.js"></script>
 </body>
 </html>
