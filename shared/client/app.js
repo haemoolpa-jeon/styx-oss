@@ -5653,6 +5653,7 @@ function updateRoleUI() {
 // 음소거
 // 음소거 UI 업데이트
 function updateMuteUI() {
+  if (M.ui?.updateMuteUI) return M.ui.updateMuteUI();
   $('muteBtn').textContent = isMuted ? '🔇' : '🎤';
   $('muteBtn').classList.toggle('muted', isMuted);
 }
@@ -5910,14 +5911,15 @@ function saveRoomTemplate(name) {
     bpm: parseInt($('new-room-bpm')?.value, 10) || 120,
     isPrivate: $('new-room-private')?.checked || false
   };
-  roomTemplates[name] = settings;
-  localStorage.setItem('styx-room-templates', JSON.stringify(roomTemplates));
+  if (M.settings?.saveRoomTemplate) M.settings.saveRoomTemplate(name, settings);
+  else { roomTemplates[name] = settings; localStorage.setItem('styx-room-templates', JSON.stringify(roomTemplates)); }
   updateTemplateSelect();
   toast(`템플릿 "${name}" 저장됨`, 'success');
 }
 
 function loadRoomTemplate(name) {
-  const t = roomTemplates[name];
+  const templates = M.settings?.getRoomTemplates ? M.settings.getRoomTemplates() : roomTemplates;
+  const t = templates[name];
   if (!t) return;
   if ($('new-room-max-users')) $('new-room-max-users').value = t.maxUsers;
   if ($('new-room-audio-mode')) $('new-room-audio-mode').value = t.audioMode;
@@ -5929,8 +5931,8 @@ function loadRoomTemplate(name) {
 }
 
 function deleteRoomTemplate(name) {
-  delete roomTemplates[name];
-  localStorage.setItem('styx-room-templates', JSON.stringify(roomTemplates));
+  if (M.settings?.deleteRoomTemplate) M.settings.deleteRoomTemplate(name);
+  else { delete roomTemplates[name]; localStorage.setItem('styx-room-templates', JSON.stringify(roomTemplates)); }
   updateTemplateSelect();
   toast(`템플릿 "${name}" 삭제됨`, 'info');
 }
