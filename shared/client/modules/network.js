@@ -155,10 +155,9 @@ export async function setBitrate(kbps) {
 
 // Connection quality assessment
 export function getQualityGrade(latency, packetLoss, jitter) {
-  if (latency < 50 && packetLoss < 1 && jitter < 10) return 'excellent';
-  if (latency < 100 && packetLoss < 3 && jitter < 20) return 'good';
-  if (latency < 200 && packetLoss < 5 && jitter < 40) return 'fair';
-  return 'poor';
+  if (packetLoss > 5 || latency > 200 || jitter > 50) return { grade: 'poor', label: '불안정', color: '#ff4757' };
+  if (packetLoss > 2 || latency > 100 || jitter > 30) return { grade: 'fair', label: '보통', color: '#ffa502' };
+  return { grade: 'good', label: '좋음', color: '#2ed573' };
 }
 
 // SDP optimization for Opus

@@ -150,15 +150,16 @@ const connectionStats = new Map(); // peer ID -> stats
 let bandwidthStatsInterval = null;
 
 function initSpectrum() {
+  if (M.audio?.initSpectrum) return M.audio.initSpectrum();
   spectrumCanvas = $('spectrum-canvas');
   if (!spectrumCanvas) return;
-  
   spectrumCtx = spectrumCanvas.getContext('2d');
   spectrumCanvas.width = 200;
   spectrumCanvas.height = 60;
 }
 
 function toggleSpectrum() {
+  if (M.audio?.toggleSpectrum) return M.audio.toggleSpectrum();
   spectrumEnabled = !spectrumEnabled;
   const canvas = $('spectrum-canvas');
   const btn = $('spectrum-toggle');
@@ -1604,6 +1605,7 @@ const $ = id => document.getElementById(id);
 
 // 연결 품질 등급
 function getQualityGrade(latency, packetLoss, jitter) {
+  if (M.network?.getQualityGrade) return M.network.getQualityGrade(latency, packetLoss, jitter);
   if (packetLoss > 5 || latency > 200 || jitter > 50) return { grade: 'poor', label: '불안정', color: '#ff4757' };
   if (packetLoss > 2 || latency > 100 || jitter > 30) return { grade: 'fair', label: '보통', color: '#ffa502' };
   return { grade: 'good', label: '좋음', color: '#2ed573' };
