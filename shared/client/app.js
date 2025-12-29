@@ -640,14 +640,12 @@ function enhanceKeyboardNavigation() {
 // 디버그 모드 (프로덕션에서는 false)
 const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const log = (...args) => DEBUG && console.log(...args);
-const logError = (...args) => DEBUG ? console.error(...args) : null; // Silent in production
 
 const serverUrl = window.STYX_SERVER_URL || '';
 const socket = io(serverUrl, { reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 10 });
 
 // Reconnection progress tracking
 let reconnectAttempt = 0;
-let reconnectOverlay = null;
 
 socket.io.on('reconnect_attempt', (attempt) => {
   reconnectAttempt = attempt;
@@ -1296,15 +1294,12 @@ let peerConnections = new Map(); // peerId -> { type: 'p2p'|'relay', addr: strin
 let echoCancellation = localStorage.getItem('styx-echo') !== 'false';
 let noiseSuppression = localStorage.getItem('styx-noise') !== 'false';
 let aiNoiseCancellation = localStorage.getItem('styx-ai-noise') === 'true'; // Off by default (adds latency)
-let noiseGateNode = null;
 let pttMode = localStorage.getItem('styx-ptt') === 'true';
 let pttKey = localStorage.getItem('styx-ptt-key') || 'Space';
 let isPttActive = false;
 
 // 오디오 프로세싱 노드
 let gainNode = null;
-let compressorNode = null;
-let noiseGateInterval = null;
 let latencyHistory = []; // 핑 그래프용
 let serverTimeOffset = 0; // 서버 시간과 클라이언트 시간 차이 (ms)
 
@@ -3249,13 +3244,6 @@ function startUdpStatsMonitor() {
       console.error('UDP 통계 조회 실패:', e);
     }
   }, 1000); // Check every second for adaptive bitrate
-}
-
-function updateInputLevelUI(level) {
-  const meter = $('audio-meter');
-  if (!meter) return;
-  meter.style.width = level + '%';
-  meter.style.background = level > 80 ? '#ff4757' : level > 50 ? '#ffa502' : '#2ed573';
 }
 
 function stopUdpStatsMonitor() {
