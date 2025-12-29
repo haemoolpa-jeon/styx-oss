@@ -793,17 +793,20 @@ document.addEventListener('click', function resumeAudio() {
 // 입력 오디오에 리미터/컴프레서 + EQ 적용 (저지연)
 let inputEffects = { eqLow: 0, eqMid: 0, eqHigh: 0, inputVolume: 120, compressionRatio: 4 };
 
-// Audio presets
-const audioPresets = {
-  voice: { eqLow: -3, eqMid: 2, eqHigh: 1, inputVolume: 130, compressionRatio: 6, noiseGate: true },
-  instrument: { eqLow: 0, eqMid: 0, eqHigh: 0, inputVolume: 100, compressionRatio: 2, noiseGate: false },
-  podcast: { eqLow: -2, eqMid: 3, eqHigh: 2, inputVolume: 140, compressionRatio: 5, noiseGate: true }
+// Audio presets (built-in + custom)
+const builtInPresets = {
+  voice: { eqLow: -3, eqMid: 2, eqHigh: 1, inputVolume: 130, compressionRatio: 6 },
+  instrument: { eqLow: 0, eqMid: 0, eqHigh: 0, inputVolume: 100, compressionRatio: 2 },
+  podcast: { eqLow: -2, eqMid: 3, eqHigh: 2, inputVolume: 140, compressionRatio: 5 }
 };
+let customPresets = JSON.parse(localStorage.getItem('styx-custom-presets') || '{}');
 
 function applyAudioPreset(preset) {
-  if (preset === 'custom' || !audioPresets[preset]) return;
+  if (preset === 'custom') return;
   
-  const p = audioPresets[preset];
+  const p = builtInPresets[preset] || customPresets[preset];
+  if (!p) return;
+  
   inputEffects = { ...inputEffects, ...p };
   
   // Update UI
@@ -821,7 +824,38 @@ function applyAudioPreset(preset) {
   updateInputEffect('compressionRatio', p.compressionRatio);
   
   localStorage.setItem('styx-effects', JSON.stringify(inputEffects));
-  toast(`🎛️ ${preset === 'voice' ? '음성' : preset === 'instrument' ? '악기' : '팟캐스트'} 프리셋 적용`, 'success');
+  toast(`🎛️ ${preset} 프리셋 적용`, 'success');
+}
+
+function saveCustomPreset() {
+  const name = prompt('프리셋 이름을 입력하세요:');
+  if (!name || name.trim() === '') return;
+  
+  customPresets[name] = { ...inputEffects };
+  localStorage.setItem('styx-custom-presets', JSON.stringify(customPresets));
+  updatePresetSelect();
+  toast(`💾 "${name}" 프리셋 저장됨`, 'success');
+}
+
+function deleteCustomPreset(name) {
+  if (!customPresets[name]) return;
+  delete customPresets[name];
+  localStorage.setItem('styx-custom-presets', JSON.stringify(customPresets));
+  updatePresetSelect();
+  toast(`🗑️ "${name}" 프리셋 삭제됨`, 'info');
+}
+
+function updatePresetSelect() {
+  const select = $('audio-preset');
+  if (!select) return;
+  
+  select.innerHTML = `
+    <option value="custom">사용자 정의</option>
+    <option value="voice">🎤 음성</option>
+    <option value="instrument">🎸 악기</option>
+    <option value="podcast">🎙️ 팟캐스트</option>
+    ${Object.keys(customPresets).map(name => `<option value="${name}">⭐ ${name}</option>`).join('')}
+  `;
 }
 let effectNodes = {};
 let noiseGateWorklet = null;
@@ -2262,6 +2296,7 @@ function initPttTouch() {
 let recordingAudioCtx = null;
 let multitrackRecorders = new Map(); // 멀티트랙: peerId -> { recorder, chunks, username }
 let multitrackMode = localStorage.getItem('styx-multitrack') === 'true';
+let loopbackMode = localStorage.getItem('styx-loopback') === 'true';
 let recordingMarkers = []; // { time: ms, label: string }
 let recordingStartTime = 0;
 
@@ -2325,6 +2360,26 @@ function startRecording() {
     });
     
     toast(`멀티트랙 녹음 시작 (${multitrackRecorders.size}개 트랙)`, 'info');
+  } else if (loopbackMode) {
+    // 루프백: 내가 듣는 것만 녹음 (로컬 제외)
+    recordingAudioCtx = new AudioContext();
+    const dest = recordingAudioCtx.createMediaStreamDestination();
+    
+    peers.forEach(peer => {
+      if (peer.audioEl?.srcObject) {
+        recordingAudioCtx.createMediaStreamSource(peer.audioEl.srcObject).connect(dest);
+      }
+    });
+    
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      if (recordingAudioCtx) { recordingAudioCtx.close().catch(() => {}); recordingAudioCtx = null; }
+      downloadTrack(recordedChunks, `${timestamp}_loopback`);
+    };
+    mediaRecorder.start();
+    toast('루프백 녹음 시작 (내가 듣는 소리)', 'info');
   } else {
     // 기존: 믹스다운 녹음
     recordingAudioCtx = new AudioContext();
@@ -4298,6 +4353,81 @@ function stopMetronome() {
   $('metronome-toggle').classList.remove('playing');
 }
 
+// Export click track as audio file
+function exportClickTrack() {
+  const bpm = parseInt($('bpm-input')?.value) || 120;
+  const bars = parseInt(prompt('몇 마디를 내보낼까요?', '8')) || 8;
+  const beats = bars * BEATS_PER_BAR;
+  const interval = 60 / bpm;
+  const duration = beats * interval;
+  
+  const offlineCtx = new OfflineAudioContext(2, 48000 * duration, 48000);
+  
+  for (let i = 0; i < beats; i++) {
+    const isAccent = i % BEATS_PER_BAR === 0;
+    const osc = offlineCtx.createOscillator();
+    const gain = offlineCtx.createGain();
+    osc.connect(gain);
+    gain.connect(offlineCtx.destination);
+    osc.frequency.value = isAccent ? 1200 : 800;
+    const startTime = i * interval;
+    gain.gain.setValueAtTime(isAccent ? 0.4 : 0.25, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, startTime + 0.08);
+    osc.start(startTime);
+    osc.stop(startTime + 0.08);
+  }
+  
+  offlineCtx.startRendering().then(buffer => {
+    const wav = audioBufferToWav(buffer);
+    const blob = new Blob([wav], { type: 'audio/wav' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `click-${bpm}bpm-${bars}bars.wav`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast(`🎵 클릭 트랙 내보내기 완료 (${bpm}BPM, ${bars}마디)`, 'success');
+  });
+}
+
+// Convert AudioBuffer to WAV
+function audioBufferToWav(buffer) {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const format = 1; // PCM
+  const bitDepth = 16;
+  const bytesPerSample = bitDepth / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const dataLength = buffer.length * blockAlign;
+  const bufferLength = 44 + dataLength;
+  const arrayBuffer = new ArrayBuffer(bufferLength);
+  const view = new DataView(arrayBuffer);
+  
+  const writeString = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+  writeString(0, 'RIFF');
+  view.setUint32(4, bufferLength - 8, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataLength, true);
+  
+  let offset = 44;
+  for (let i = 0; i < buffer.length; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const sample = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
+      view.setInt16(offset, sample * 0x7FFF, true);
+      offset += 2;
+    }
+  }
+  return arrayBuffer;
+}
+
 // 채팅
 $('sendBtn').onclick = sendChat;
 $('chat-text').onkeypress = (e) => { if (e.key === 'Enter') sendChat(); };
@@ -6258,7 +6388,21 @@ if ($('multitrack-mode')) {
   $('multitrack-mode').onchange = () => {
     multitrackMode = $('multitrack-mode').checked;
     localStorage.setItem('styx-multitrack', multitrackMode);
+    if (multitrackMode) loopbackMode = false;
+    if ($('loopback-mode')) $('loopback-mode').checked = false;
     toast(multitrackMode ? '멀티트랙: 각 참가자별 개별 파일 저장' : '믹스다운: 전체 믹스 저장', 'info');
+  };
+}
+
+// 루프백 녹음 모드
+if ($('loopback-mode')) {
+  $('loopback-mode').checked = loopbackMode;
+  $('loopback-mode').onchange = () => {
+    loopbackMode = $('loopback-mode').checked;
+    localStorage.setItem('styx-loopback', loopbackMode);
+    if (loopbackMode) multitrackMode = false;
+    if ($('multitrack-mode')) $('multitrack-mode').checked = false;
+    toast(loopbackMode ? '루프백: 내가 듣는 소리만 녹음' : '믹스다운: 전체 믹스 저장', 'info');
   };
 }
 
