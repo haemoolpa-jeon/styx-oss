@@ -12,7 +12,7 @@ use crate::udp::AudioPacketHeader;
 
 const FRAME_SIZE: usize = 480; // 5ms @ 48kHz stereo (240 samples per channel) - reduced for lower latency
 const MAX_PACKET_SIZE: usize = 1500;
-const MIN_JITTER_BUFFER: usize = 1;  // 5ms minimum (1 frame)
+const MIN_JITTER_BUFFER: usize = 0;  // Allow zero buffer for excellent connections
 const PLAYBACK_BUFFER_CAP: usize = 9600; // 100ms @ 48kHz stereo
 const MAX_JITTER_BUFFER: usize = 20; // 100ms maximum (5ms * 20 frames)
 const KEEPALIVE_INTERVAL_MS: u64 = 5000; // 5초마다 keepalive
@@ -140,15 +140,18 @@ impl JitterBuffer {
         if late_ratio > 0.03 {
             // >3% late → increase buffer
             self.target_size = (self.target_size + 1).min(MAX_JITTER_BUFFER);
+        } else if late_ratio < 0.001 && self.jitter_estimate < 2.0 {
+            // Excellent connection (<0.1% late, <2ms jitter) → allow zero buffer
+            self.target_size = 0;
         } else if late_ratio < 0.005 && self.target_size > jitter_target {
             // <0.5% late and above jitter target → decrease
-            self.target_size = (self.target_size - 1).max(MIN_JITTER_BUFFER);
+            self.target_size = self.target_size.saturating_sub(1);
         } else {
             // Slowly converge to jitter-based target
             if self.target_size < jitter_target {
                 self.target_size += 1;
             } else if self.target_size > jitter_target + 2 {
-                self.target_size -= 1;
+                self.target_size = self.target_size.saturating_sub(1);
             }
         }
         
@@ -421,9 +424,9 @@ pub fn start_send_loop(
                     let lost = packets_lost.load(Ordering::Relaxed);
                     let recv = packets_received.load(Ordering::Relaxed);
                     if recv > 0 {
-                        let loss_pct = (lost as f32 / (recv + lost) as f32 * 100.0).min(100.0) as i32;
-                        // Clamp to reasonable range for Opus FEC
-                        let fec_pct = loss_pct.max(0).min(50);
+                        let loss_pct = (lost as f32 / (recv + lost) as f32 * 100.0).min(100.0);
+                        // Add headroom for burst loss: FEC% = loss * 1.5 + 5 (minimum 5%)
+                        let fec_pct = ((loss_pct * 1.5 + 5.0) as i32).max(5).min(50);
                         encoder.set_packet_loss_perc(fec_pct).ok();
                     }
                     last_loss_update = frame_count;

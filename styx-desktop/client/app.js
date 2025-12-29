@@ -3546,8 +3546,9 @@ function startUdpStatsMonitor() {
           await tauriInvoke('set_bitrate', { bitrateKbps: currentBitrate });
           console.log(`[ADAPTIVE] Reduced bitrate to ${currentBitrate}kbps (loss: ${stats.loss_rate.toFixed(1)}%)`);
         } else if (stats.loss_rate < 1 && currentBitrate < maxBitrate) {
-          // Low packet loss - increase bitrate gradually up to room max
-          currentBitrate = Math.min(maxBitrate, currentBitrate + 8);
+          // Low packet loss - increase bitrate (faster when loss = 0)
+          const increment = stats.loss_rate === 0 ? 16 : 8;
+          currentBitrate = Math.min(maxBitrate, currentBitrate + increment);
           await tauriInvoke('set_bitrate', { bitrateKbps: currentBitrate });
         }
         lastPacketLoss = stats.loss_rate;

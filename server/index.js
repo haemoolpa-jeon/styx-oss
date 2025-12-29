@@ -1451,8 +1451,12 @@ udpServer.on('message', (msg, rinfo) => {
   msg.copy(relayBuffer, 0, 0, SESSION_ID_LEN); // Copy sender ID
   payload.copy(relayBuffer, SESSION_ID_LEN);    // Copy payload
   
-  // SFU mode: decode, mix, send personalized mix to each peer
-  if (sfuEnabled && sfuRooms.has(client.roomId)) {
+  // Hybrid mode: Only use SFU mixing for rooms with 5+ members
+  // Small rooms use simple relay for lower latency
+  const useSfuMixing = sfuEnabled && sfuRooms.has(client.roomId) && members.size >= 5;
+  
+  if (useSfuMixing) {
+    // SFU mode: decode, mix, send personalized mix to each peer
     const mixer = sfuMixer.getMixer(client.roomId);
     mixer.addPeer(sessionId);
     
@@ -1484,7 +1488,7 @@ udpServer.on('message', (msg, rinfo) => {
     return;
   }
   
-  // Normal relay mode
+  // Normal relay mode (for small rooms or when SFU disabled)
   for (const otherId of members) {
     if (otherId === sessionId) continue;
     const other = udpClients.get(otherId);
