@@ -3908,8 +3908,6 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
             solo: false,
             isSpeaking: false
           });
-          // Attempt P2P with existing peer
-          initiateP2P(id);
         }
       });
       renderUsers();
@@ -3919,6 +3917,10 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     if (actuallyTauri) {
       try {
         await startUdpMode();
+        // After UDP is set up, attempt P2P with existing peers
+        if (res.users) {
+          res.users.forEach(({ id }) => initiateP2P(id));
+        }
       } catch (udpError) {
         console.error('UDP 시작 실패:', udpError);
         toast('오디오 연결 중 오류 발생', 'warning');
