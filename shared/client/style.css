@@ -1618,6 +1618,14 @@ input[type="range"]::-webkit-slider-thumb:hover {
   .lobby-card h3 { font-size: 15px; margin-bottom: 14px; }
 }
 
+.slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @media (max-width: 1200px) {
   #lobby { padding: 0 16px 16px; }
   .lobby-header { padding: 12px 16px; gap: 12px; }

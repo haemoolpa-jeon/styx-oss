@@ -2769,7 +2769,7 @@ async function initTauriFeatures() {
     const hostSelect = $('tauri-audio-host');
     if (hostSelect && hosts.length) {
       hostSelect.innerHTML = hosts.map(h => `<option value="${h}">${h}</option>`).join('');
-      $('tauri-audio-row').style.display = 'flex';
+      if ($('tauri-audio-row')) $('tauri-audio-row').style.display = 'flex';
     }
     
     // 오디오 장치 목록 로드
@@ -2798,7 +2798,7 @@ async function initTauriFeatures() {
         const size = parseInt(e.target.value);
         localStorage.setItem('styx-buffer-size', size);
         const result = await tauriInvoke('set_buffer_size', { size });
-        $('buffer-size-value').textContent = `${size} (${(size/48).toFixed(1)}ms)`;
+        if ($('buffer-size-value')) $('buffer-size-value').textContent = `${size} (${(size/48).toFixed(1)}ms)`;
         toast(`버퍼 크기: ${size} 샘플 - 재시작 시 적용`, 'info');
       };
     }
@@ -5999,20 +5999,12 @@ if ($('loopback-mode')) {
 
 // 고급 설정 패널 토글
 function toggleAdvancedPanel() {
-  console.log('toggleAdvancedPanel called');
   const panel = $('advanced-settings-panel');
-  console.log('panel:', panel);
-  if (panel) {
-    panel.classList.toggle('hidden');
-    console.log('panel hidden:', panel.classList.contains('hidden'));
-  }
+  if (panel) panel.classList.toggle('hidden');
   $('effects-panel')?.classList.add('hidden');
 }
 
-$('advanced-settings-btn')?.addEventListener('click', () => {
-  console.log('advanced-settings-btn clicked');
-  toggleAdvancedPanel();
-});
+$('advanced-settings-btn')?.addEventListener('click', toggleAdvancedPanel);
 
 // 연결 모드 변경
 document.querySelectorAll('input[name="connection-mode"]').forEach(radio => {
@@ -6103,7 +6095,6 @@ function initAdvancedPanel() {
   if ($('adv-auto-gain')) $('adv-auto-gain').checked = autoGainControl;
   
   // 통화 모드
-  if ($('adv-ptt-mode')) $('adv-ptt-mode').checked = pttMode;
   if ($('adv-vad-mode')) $('adv-vad-mode').checked = vadEnabled;
   if ($('adv-input-monitor')) $('adv-input-monitor').checked = inputMonitorEnabled;
   
@@ -6129,16 +6120,6 @@ function initAdvancedPanel() {
 }
 
 // 새 고급 패널 핸들러
-$('adv-ptt-mode')?.addEventListener('change', (e) => {
-  pttMode = e.target.checked;
-  localStorage.setItem('styx-ptt', pttMode);
-  if (pttMode && localStream) {
-    localStream.getAudioTracks().forEach(t => t.enabled = false);
-    isMuted = true;
-    updateMuteUI();
-  }
-});
-
 $('adv-vad-mode')?.addEventListener('change', (e) => {
   vadEnabled = e.target.checked;
   localStorage.setItem('styx-vad', vadEnabled);
@@ -6180,11 +6161,19 @@ $('adv-auto-adapt')?.addEventListener('change', (e) => {
   localStorage.setItem('styx-auto-adapt', autoAdapt);
 });
 
+document.querySelectorAll('input[name="adv-performance"]').forEach(radio => {
+  radio.addEventListener('change', (e) => {
+    const mode = e.target.value;
+    lowLatencyMode = mode === 'low-latency';
+    proMode = mode === 'pro';
+    localStorage.setItem('styx-low-latency', lowLatencyMode);
+    localStorage.setItem('styx-pro-mode', proMode);
+  });
+});
+
 // 오디오 이펙트 패널 (EQ만)
 $('effects-toggle')?.addEventListener('click', () => {
-  console.log('effects-toggle clicked');
   const panel = $('effects-panel');
-  console.log('effects panel:', panel);
   if (panel) panel.classList.toggle('hidden');
   $('advanced-settings-panel')?.classList.add('hidden');
 });
