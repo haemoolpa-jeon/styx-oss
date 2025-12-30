@@ -4698,6 +4698,7 @@ function startLatencyPing() {
           peer.latency = Math.round(rtt);
           peer.packetLoss = lossRate;
           peer.jitter = jitter;
+          if (jitter > 0) trackJitter(jitter);
           const prevQuality = peer.quality?.grade;
           peer.quality = getQualityGrade(rtt, lossRate, jitter);
           
@@ -4757,8 +4758,9 @@ function startLatencyPing() {
     autoAdjustJitter();
     
     // 핑 그래프용 히스토리 저장
-    if (count > 0) {
-      latencyHistory.push(Math.round(avgLatency / count));
+    const latency = selfStats.latency || selfStats.socketLatency || 0;
+    if (latency > 0) {
+      latencyHistory.push(Math.round(latency));
       if (latencyHistory.length > 30) latencyHistory.shift();
       renderPingGraph();
     }
