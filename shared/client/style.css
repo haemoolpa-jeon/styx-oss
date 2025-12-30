@@ -538,7 +538,120 @@ button { cursor: pointer; border: none; font-family: inherit; transition: all 0.
 .download-banner p { color: var(--text-secondary); margin-bottom: 16px; font-size: 13px; }
 .download-banner .btn-primary { display: inline-block; padding: 10px 20px; text-decoration: none; }
 
-/* Audio Settings */
+/* Audio Settings - Reorganized */
+.settings-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-section:last-of-type { border-bottom: none; margin-bottom: 0; }
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 600px) { .settings-row { grid-template-columns: 1fr; } }
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+@media (max-width: 500px) { .checkbox-grid { grid-template-columns: 1fr; } }
+
+.tooltip-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
+}
+.tooltip-label:hover {
+  color: var(--text-primary);
+  border-color: var(--border-light);
+  background: var(--bg-hover);
+}
+.tooltip-label input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* Performance Mode Radio Cards */
+.performance-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+@media (max-width: 600px) { .performance-options { grid-template-columns: 1fr; } }
+
+.radio-card {
+  display: block;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.radio-card:hover { border-color: var(--border-light); }
+.radio-card input { display: none; }
+.radio-card input:checked + .radio-card-content { color: var(--accent); }
+.radio-card:has(input:checked) { border-color: var(--accent); background: var(--accent-glow); }
+.radio-card-content { display: flex; flex-direction: column; gap: 4px; }
+.radio-card-title { font-size: 14px; font-weight: 600; }
+.radio-card-desc { font-size: 11px; color: var(--text-secondary); }
+
+/* Advanced Settings Collapsible */
+.advanced-settings {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.advanced-toggle {
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+.advanced-toggle::-webkit-details-marker { display: none; }
+.advanced-toggle::before { content: '▶ '; font-size: 10px; }
+.advanced-settings[open] .advanced-toggle::before { content: '▼ '; }
+.advanced-toggle:hover { color: var(--text-primary); }
+.advanced-content {
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.advanced-content h5 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 8px 0;
+  text-transform: uppercase;
+}
+.auto-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: 8px;
+}
+.tauri-only { padding-top: 12px; border-top: 1px solid var(--border); }
+
+/* Legacy - keep for compatibility */
 .audio-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
 @media (max-width: 900px) { .audio-grid { grid-template-columns: 1fr; } }
 .audio-col { display: flex; flex-direction: column; gap: 14px; }

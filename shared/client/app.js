@@ -6189,13 +6189,7 @@ function syncRoomAudioSettings() {
     const lobby = $(lobbyId), room = $(roomId);
     if (lobby && room) room.checked = lobby.checked;
   };
-  syncCheckbox('echo-cancel', 'room-echo-cancel');
-  syncCheckbox('noise-suppress', 'room-noise-suppress');
-  syncCheckbox('ai-noise', 'room-ai-noise');
   syncCheckbox('ptt-mode', 'room-ptt-mode');
-  syncCheckbox('vad-mode', 'room-vad-mode');
-  syncCheckbox('auto-adapt', 'room-auto-adapt');
-  syncCheckbox('ducking-mode', 'room-ducking');
   syncCheckbox('auto-jitter', 'room-auto-jitter');
   
   // Sync jitter slider
@@ -6220,30 +6214,6 @@ if ($('room-audio-output')) {
     peers.forEach(peer => {
       if (peer.audioEl?.setSinkId) peer.audioEl.setSinkId(selectedOutputId).catch(() => {});
     });
-  };
-}
-
-if ($('room-echo-cancel')) {
-  $('room-echo-cancel').onchange = async () => { 
-    echoCancellation = $('room-echo-cancel').checked;
-    localStorage.setItem('styx-echo', echoCancellation);
-    if (localStream) await restartAudioStream(); 
-  };
-}
-
-if ($('room-noise-suppress')) {
-  $('room-noise-suppress').onchange = async () => { 
-    noiseSuppression = $('room-noise-suppress').checked;
-    localStorage.setItem('styx-noise', noiseSuppression);
-    if (localStream) await restartAudioStream(); 
-  };
-}
-
-if ($('room-ai-noise')) {
-  $('room-ai-noise').onchange = async () => {
-    aiNoiseCancellation = $('room-ai-noise').checked;
-    localStorage.setItem('styx-ai-noise', aiNoiseCancellation);
-    if (localStream) await restartAudioStream();
   };
 }
 
@@ -6385,25 +6355,77 @@ function trackJitter(jitter) {
   if (jitterHistory.length > 100) jitterHistory.shift();
 }
 
-// 저지연 모드 토글
+// Performance Mode (unified radio buttons)
+function initPerformanceMode() {
+  const radios = document.querySelectorAll('input[name="performance-mode"]');
+  if (!radios.length) return;
+  
+  // Set initial state
+  let currentMode = 'normal';
+  if (proMode) currentMode = 'pro';
+  else if (lowLatencyMode) currentMode = 'low-latency';
+  
+  radios.forEach(radio => {
+    if (radio.value === currentMode) radio.checked = true;
+    radio.onchange = async () => {
+      const mode = radio.value;
+      
+      // Reset all modes
+      lowLatencyMode = false;
+      proMode = false;
+      
+      if (mode === 'low-latency') {
+        lowLatencyMode = true;
+      } else if (mode === 'pro') {
+        proMode = true;
+        lowLatencyMode = true; // Pro includes low-latency
+      }
+      
+      localStorage.setItem('styx-low-latency', lowLatencyMode);
+      localStorage.setItem('styx-pro-mode', proMode);
+      
+      applyLowLatencyMode();
+      
+      // Restart audio stream for pro mode
+      if (localStream && mode === 'pro') {
+        try {
+          const rawStream = localStream._rawStream || localStream;
+          processedStream = await createProcessedInputStream(rawStream);
+          localStream = processedStream;
+          localStream._rawStream = rawStream;
+        } catch (e) {
+          console.error('Mode switch failed:', e);
+        }
+      }
+      
+      const messages = {
+        'normal': '🎵 일반 모드: 균형 잡힌 품질',
+        'low-latency': '⚡ 저지연 모드: 빠른 응답',
+        'pro': '🎸 Pro 모드: 최저 지연'
+      };
+      toast(messages[mode], 'info');
+    };
+  });
+}
+initPerformanceMode();
+
+// Legacy checkbox handlers (for backward compatibility)
 if ($('low-latency-mode')) {
   $('low-latency-mode').checked = lowLatencyMode;
   $('low-latency-mode').onchange = () => {
     lowLatencyMode = $('low-latency-mode').checked;
     localStorage.setItem('styx-low-latency', lowLatencyMode);
     applyLowLatencyMode();
-    toast(lowLatencyMode ? '⚡ 저지연 모드 활성화 (10ms 버퍼)' : '📊 일반 모드 (50ms 버퍼)', 'info');
+    toast(lowLatencyMode ? '⚡ 저지연 모드 활성화' : '📊 일반 모드', 'info');
   };
   applyLowLatencyMode();
 }
 
-// Pro 모드 토글 (모든 오디오 처리 우회)
 if ($('pro-mode')) {
   $('pro-mode').checked = proMode;
   $('pro-mode').onchange = async () => {
     proMode = $('pro-mode').checked;
     localStorage.setItem('styx-pro-mode', proMode);
-    // Restart audio stream to apply
     if (localStream) {
       try {
         const rawStream = localStream._rawStream || localStream;
@@ -6414,7 +6436,7 @@ if ($('pro-mode')) {
         console.error('Pro mode switch failed:', e);
       }
     }
-    toast(proMode ? '🎸 Pro 모드: 모든 처리 우회 (최저 지연)' : '🎛️ 일반 모드: EQ/압축/노이즈게이트 활성', 'info');
+    toast(proMode ? '🎸 Pro 모드 활성화' : '🎛️ 일반 모드', 'info');
   };
 }
 
@@ -6427,7 +6449,7 @@ if ($('dtx-toggle')) {
     if (actuallyTauri) {
       tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(() => {});
     }
-    toast(dtxEnabled ? '📉 DTX 켜짐: 무음 시 대역폭 절약' : '📉 DTX 꺼짐', 'info');
+    toast(dtxEnabled ? '📉 DTX 켜짐' : '📉 DTX 꺼짐', 'info');
   };
 }
 
@@ -6498,36 +6520,6 @@ if ($('room-auto-jitter')) {
     $('room-jitter-slider').disabled = autoJitter;
   };
   $('room-jitter-slider').disabled = autoJitter;
-}
-
-// 방 내 VAD
-if ($('room-vad-mode')) {
-  $('room-vad-mode').checked = vadEnabled;
-  $('room-vad-mode').onchange = () => {
-    vadEnabled = $('room-vad-mode').checked;
-    localStorage.setItem('styx-vad', vadEnabled);
-    if ($('vad-mode')) $('vad-mode').checked = vadEnabled;
-  };
-}
-
-// 방 내 자동 품질
-if ($('room-auto-adapt')) {
-  $('room-auto-adapt').checked = autoAdapt;
-  $('room-auto-adapt').onchange = () => {
-    autoAdapt = $('room-auto-adapt').checked;
-    localStorage.setItem('styx-auto-adapt', autoAdapt);
-    if ($('auto-adapt')) $('auto-adapt').checked = autoAdapt;
-  };
-}
-
-// 방 내 자동 볼륨 (덕킹)
-if ($('room-ducking')) {
-  $('room-ducking').checked = duckingEnabled;
-  $('room-ducking').onchange = () => {
-    duckingEnabled = $('room-ducking').checked;
-    localStorage.setItem('styx-ducking', duckingEnabled);
-    if ($('ducking-mode')) $('ducking-mode').checked = duckingEnabled;
-  };
 }
 
 // 지연 보상

@@ -146,81 +146,142 @@
         <!-- 오디오 설정 (데스크톱 앱 전용) -->
         <section id="audio-settings-section" class="lobby-card">
           <h3>🎧 오디오 설정</h3>
-          <div class="audio-grid">
-            <div class="audio-col">
+          
+          <!-- 기본 설정: 장치 선택 -->
+          <div class="settings-section">
+            <h4 class="settings-section-title">📱 장치</h4>
+            <div class="settings-row">
               <div class="form-field">
                 <label>🎤 입력 장치</label>
-                <select id="audio-device"></select>
+                <select id="audio-device" title="마이크 또는 오디오 인터페이스를 선택하세요"></select>
               </div>
               <div class="form-field">
                 <label>🔊 출력 장치</label>
-                <select id="audio-output"></select>
+                <select id="audio-output" title="스피커 또는 헤드폰을 선택하세요"></select>
               </div>
             </div>
-            <div class="audio-col">
-              <div class="checkbox-group">
-                <label><input type="checkbox" id="echo-cancel" checked> 에코 제거</label>
-                <label><input type="checkbox" id="noise-suppress" checked> 잡음 제거</label>
-                <label><input type="checkbox" id="ai-noise"> 🤖 AI 노이즈 제거 <small>(+지연)</small></label>
-                <label><input type="checkbox" id="auto-gain" checked> 자동 음량</label>
-                <label><input type="checkbox" id="ptt-mode"> 눌러서 말하기 (Space)</label>
-                <label><input type="checkbox" id="vad-mode" checked> 말할 때 표시</label>
-                <label><input type="checkbox" id="ducking-mode"> 자동 볼륨 낮춤</label>
-                <label><input type="checkbox" id="input-monitor"> 🎧 입력 모니터링</label>
-                <label><input type="checkbox" id="tuner-toggle"> 🎸 튜너</label>
-                <label><input type="checkbox" id="auto-adapt" checked> 자동 품질 조절</label>
-              </div>
-              <div id="tuner-display" class="tuner-display hidden"></div>
+            <div class="test-buttons">
+              <button id="test-audio-btn" class="btn-test" title="마이크가 제대로 작동하는지 테스트합니다">🎤 마이크 테스트</button>
+              <button id="test-network-btn" class="btn-test" title="네트워크 연결 품질을 측정합니다">📡 네트워크 테스트</button>
             </div>
-            <div class="audio-col">
-              <div class="form-field">
-                <label>📊 버퍼 <span id="jitter-value">50ms</span> <label class="auto-jitter-label"><input type="checkbox" id="auto-jitter" checked> 자동</label></label>
-                <input type="range" id="jitter-slider" min="5" max="150" value="50" step="5">
-              </div>
-              <div class="form-field">
-                <label class="low-latency-label"><input type="checkbox" id="low-latency-mode"> ⚡ 저지연 모드 <small>(ASIO + 유선랜 권장)</small></label>
-              </div>
-              <div class="form-field">
-                <label class="low-latency-label"><input type="checkbox" id="pro-mode"> 🎸 Pro 모드 <small>(모든 처리 우회, 최저 지연)</small></label>
-              </div>
-              <div class="form-field">
-                <label class="low-latency-label"><input type="checkbox" id="dtx-toggle"> 📉 DTX <small>(무음 시 대역폭 절약)</small></label>
-              </div>
-              <div class="form-field">
-                <label class="low-latency-label"><input type="checkbox" id="comfort-noise-toggle"> 🔇 컴포트 노이즈 <small>(무음 시 저레벨 노이즈)</small></label>
-              </div>
-              <div class="test-buttons">
-                <button id="test-audio-btn" class="btn-test">🎤 마이크</button>
-                <button id="test-network-btn" class="btn-test">📡 네트워크</button>
-              </div>
-              <div class="mic-meter">
-                <div id="mic-level"></div>
-              </div>
-              <div id="test-results" class="test-results hidden"></div>
-              <span id="test-status" class="test-status"></span>
+            <div class="mic-meter"><div id="mic-level"></div></div>
+            <div id="test-results" class="test-results hidden"></div>
+            <span id="test-status" class="test-status"></span>
+          </div>
+
+          <!-- 음질 설정 -->
+          <div class="settings-section">
+            <h4 class="settings-section-title">🎵 음질</h4>
+            <div class="checkbox-grid">
+              <label class="tooltip-label" title="상대방 스피커 소리가 마이크로 들어가는 것을 방지합니다">
+                <input type="checkbox" id="echo-cancel" checked> 에코 제거
+              </label>
+              <label class="tooltip-label" title="배경 소음(에어컨, 키보드 등)을 줄여줍니다">
+                <input type="checkbox" id="noise-suppress" checked> 잡음 제거
+              </label>
+              <label class="tooltip-label" title="AI 기반 고급 노이즈 제거 (약간의 지연 추가)">
+                <input type="checkbox" id="ai-noise"> 🤖 AI 노이즈 제거
+              </label>
+              <label class="tooltip-label" title="마이크 입력 볼륨을 자동으로 조절합니다">
+                <input type="checkbox" id="auto-gain" checked> 자동 음량
+              </label>
             </div>
           </div>
-          <!-- Tauri 앱 전용 설정 -->
-          <div id="tauri-settings" style="display:none; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);">
-            <div id="tauri-audio-row" class="form-field" style="display:none;">
-              <label>🎛️ 오디오 드라이버</label>
-              <select id="tauri-audio-host"></select>
-              <span id="tauri-audio-hint" class="hint"></span>
+
+          <!-- 통화 모드 -->
+          <div class="settings-section">
+            <h4 class="settings-section-title">🗣️ 통화 모드</h4>
+            <div class="checkbox-grid">
+              <label class="tooltip-label" title="스페이스바를 누르고 있을 때만 마이크가 켜집니다">
+                <input type="checkbox" id="ptt-mode"> 눌러서 말하기 (Space)
+              </label>
+              <label class="tooltip-label" title="말하고 있을 때 프로필에 표시됩니다">
+                <input type="checkbox" id="vad-mode" checked> 말할 때 표시
+              </label>
+              <label class="tooltip-label" title="내 마이크 소리를 실시간으로 들을 수 있습니다">
+                <input type="checkbox" id="input-monitor"> 🎧 입력 모니터링
+              </label>
             </div>
-            <div class="form-field">
-              <label>🔧 버퍼 크기 <span id="buffer-size-value">480 (10ms)</span></label>
-              <select id="buffer-size-select">
-                <option value="64">64 (1.3ms) - 최저 지연</option>
-                <option value="128">128 (2.7ms) - 저지연</option>
-                <option value="256">256 (5.3ms) - 균형</option>
-                <option value="480" selected>480 (10ms) - 안정</option>
-                <option value="960">960 (20ms) - 최고 안정</option>
-              </select>
-              <span class="hint">낮을수록 지연↓ 불안정↑ (재시작 필요)</span>
-            </div>
-            <div id="udp-stats-badge" class="stats-badge hidden"></div>
-            <canvas id="ping-graph" width="200" height="60" style="display:none;"></canvas>
           </div>
+
+          <!-- 성능 모드 -->
+          <div class="settings-section">
+            <h4 class="settings-section-title">⚡ 성능</h4>
+            <div class="performance-options">
+              <label class="radio-card tooltip-label" title="일반적인 사용에 적합한 균형 잡힌 설정">
+                <input type="radio" name="performance-mode" value="normal" checked>
+                <span class="radio-card-content">
+                  <span class="radio-card-title">🎵 일반</span>
+                  <span class="radio-card-desc">균형 잡힌 품질과 지연</span>
+                </span>
+              </label>
+              <label class="radio-card tooltip-label" title="지연시간을 최소화합니다. 유선 연결 권장">
+                <input type="radio" name="performance-mode" value="low-latency">
+                <span class="radio-card-content">
+                  <span class="radio-card-title">⚡ 저지연</span>
+                  <span class="radio-card-desc">빠른 응답, 유선 권장</span>
+                </span>
+              </label>
+              <label class="radio-card tooltip-label" title="모든 오디오 처리를 우회합니다. ASIO 드라이버 권장">
+                <input type="radio" name="performance-mode" value="pro">
+                <span class="radio-card-content">
+                  <span class="radio-card-title">🎸 Pro</span>
+                  <span class="radio-card-desc">최저 지연, ASIO 권장</span>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 고급 설정 (접이식) -->
+          <details class="advanced-settings">
+            <summary class="advanced-toggle">⚙️ 고급 설정</summary>
+            <div class="advanced-content">
+              <div class="form-field">
+                <label title="네트워크 지연 변동을 흡수하는 버퍼 크기">
+                  📊 지터 버퍼 <span id="jitter-value">50ms</span>
+                  <label class="auto-label"><input type="checkbox" id="auto-jitter" checked> 자동</label>
+                </label>
+                <input type="range" id="jitter-slider" min="5" max="150" value="50" step="5" title="낮을수록 지연↓, 끊김 위험↑">
+              </div>
+              
+              <div class="checkbox-grid">
+                <label class="tooltip-label" title="무음 구간에서 패킷 전송을 중단하여 대역폭을 절약합니다">
+                  <input type="checkbox" id="dtx-toggle"> 📉 DTX (대역폭 절약)
+                </label>
+                <label class="tooltip-label" title="무음 구간에 저레벨 노이즈를 생성하여 자연스러운 전환을 만듭니다">
+                  <input type="checkbox" id="comfort-noise-toggle"> 🔇 컴포트 노이즈
+                </label>
+                <label class="tooltip-label" title="네트워크 상태에 따라 자동으로 품질을 조절합니다">
+                  <input type="checkbox" id="auto-adapt" checked> 🔄 자동 품질 조절
+                </label>
+                <label class="tooltip-label" title="다른 사람이 말할 때 자동으로 볼륨을 낮춥니다">
+                  <input type="checkbox" id="ducking-mode"> 🔉 자동 볼륨 낮춤
+                </label>
+              </div>
+
+              <!-- Tauri 앱 전용 설정 -->
+              <div id="tauri-settings" class="tauri-only hidden">
+                <h5>🖥️ 데스크톱 전용</h5>
+                <div id="tauri-audio-row" class="form-field hidden">
+                  <label title="오디오 드라이버를 선택합니다. ASIO가 가장 낮은 지연을 제공합니다">🎛️ 오디오 드라이버</label>
+                  <select id="tauri-audio-host"></select>
+                </div>
+                <div class="form-field">
+                  <label title="오디오 버퍼 크기. 낮을수록 지연↓, 불안정↑">🔧 버퍼 크기</label>
+                  <select id="buffer-size-select">
+                    <option value="64">64 (1.3ms) - 최저 지연</option>
+                    <option value="128">128 (2.7ms) - 저지연</option>
+                    <option value="256">256 (5.3ms) - 균형</option>
+                    <option value="480" selected>480 (10ms) - 안정</option>
+                    <option value="960">960 (20ms) - 최고 안정</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <div id="udp-stats-badge" class="stats-badge hidden"></div>
+          <canvas id="ping-graph" width="200" height="60" style="display:none;"></canvas>
         </section>
 
         <!-- 방 목록 -->
@@ -279,13 +340,6 @@
                 <select id="new-room-audio-mode">
                   <option value="voice">🎤 음성 (저지연)</option>
                   <option value="music">🎸 악기 (고품질)</option>
-                </select>
-              </div>
-              <div class="form-field">
-                <label>샘플레이트</label>
-                <select id="new-room-sample-rate">
-                  <option value="48000" selected>48 kHz (권장)</option>
-                  <option value="44100">44.1 kHz</option>
                 </select>
               </div>
             </div>
@@ -494,13 +548,7 @@
 
       <div class="room-toolbar">
         <div class="toolbar-section">
-          <label class="toolbar-check"><input type="checkbox" id="room-echo-cancel" checked> 에코 제거</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-noise-suppress" checked> 잡음 제거</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-ai-noise"> 🤖 AI 노이즈</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-ptt-mode"> 눌러서 말하기</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-vad-mode" checked> 말할 때 표시</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-auto-adapt" checked> 자동 품질</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-ducking"> 자동 볼륨</label>
+          <label class="toolbar-check"><input type="checkbox" id="room-ptt-mode"> PTT</label>
           <label class="toolbar-check"><input type="checkbox" id="delay-compensation"> 지연 맞추기</label>
           <label class="toolbar-check"><input type="checkbox" id="multitrack-mode"> 멀티트랙</label>
           <label class="toolbar-check"><input type="checkbox" id="loopback-mode"> 루프백</label>
@@ -557,52 +605,9 @@
             <div class="effect-row"><span>중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
             <div class="effect-row"><span>고음</span><input type="range" id="eq-high" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
             <div class="effect-row"><span>압축</span><input type="range" id="compression-ratio" min="1" max="8" value="4" step="0.5"><span class="effect-val">4:1</span></div>
-            <div class="effect-row spectrum-row">
-              <span>스펙트럼</span>
-              <button id="spectrum-toggle" class="btn-small">📊</button>
-              <canvas id="spectrum-canvas" width="200" height="60" class="spectrum-canvas hidden"></canvas>
-            </div>
-            <div class="effect-row spatial-row">
-              <span>공간음향</span>
-              <button id="spatial-toggle" class="btn-small">🎧</button>
-            </div>
-            <div class="effect-row sfu-row">
-              <span>SFU</span>
-              <button id="sfu-toggle" class="btn-small" onclick="toggleSfuMode()" title="서버 믹싱 (4명+ 권장)">🔀</button>
-            </div>
             <div class="effect-row diag-row">
               <span>진단</span>
               <button id="diag-toggle" class="btn-small" onclick="openDiagnostics()" title="연결 진단">🔍</button>
-            </div>
-            <div class="effect-row bandwidth-row">
-              <span>대역폭</span>
-              <button id="bandwidth-toggle" class="btn-small">📊</button>
-            </div>
-            <div class="effect-row routing-row">
-              <span>라우팅</span>
-              <button id="routing-toggle" class="btn-small">🔀</button>
-              <div id="routing-matrix" class="routing-matrix hidden">
-                <div class="routing-control">
-                  <span>입력 → 출력</span>
-                  <select id="input-routing">
-                    <option value="stereo">스테레오</option>
-                    <option value="left">왼쪽만</option>
-                    <option value="right">오른쪽만</option>
-                    <option value="mono">모노 믹스</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-            <div class="effect-row noise-profile-row">
-              <span>노이즈 프로파일</span>
-              <button id="noise-profile-toggle" class="btn-small">🎯</button>
-              <div id="noise-profile-panel" class="noise-profile-panel hidden">
-                <div class="profile-control">
-                  <button id="learn-noise" class="btn-small">학습</button>
-                  <span id="noise-level">-</span>
-                  <button id="reset-profile" class="btn-small">리셋</button>
-                </div>
-              </div>
             </div>
           </div>
         </div>
