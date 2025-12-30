@@ -261,22 +261,8 @@ async function autoDetectOptimalSettings() {
 }
 
 // 개선된 에러 메시지
-function showUserFriendlyError(error, context) {
-  const errorMessages = {
-    'NotAllowedError': '마이크 권한이 거부되었습니다. 브라우저 설정에서 마이크 권한을 허용해주세요.',
-    'NotFoundError': '마이크를 찾을 수 없습니다. 마이크가 연결되어 있는지 확인해주세요.',
-    'NotReadableError': '마이크에 접근할 수 없습니다. 다른 앱에서 마이크를 사용 중일 수 있습니다.',
-    'OverconstrainedError': '마이크 설정이 지원되지 않습니다. 다른 마이크를 선택해보세요.',
-    'SecurityError': '보안 오류가 발생했습니다. HTTPS 연결을 사용해주세요.',
-    'AbortError': '마이크 접근이 중단되었습니다.',
-    'TypeError': '설정 오류가 발생했습니다. 페이지를 새로고침해주세요.',
-    'NetworkError': '네트워크 연결에 문제가 있습니다. 인터넷 연결을 확인해주세요.',
-    'timeout': '연결 시간이 초과되었습니다. 네트워크 상태를 확인해주세요.'
-  };
-  
-  const message = errorMessages[error.name] || errorMessages[error] || `알 수 없는 오류가 발생했습니다: ${error.message || error}`;
-  toast(message, 'error', 8000);
-}
+// 사용자 친화적 에러 (from utils.js module)
+const { showUserFriendlyError, getQualityGrade, formatTime, downloadBlob } = window.StyxUtils || {};
 
 // 페이지 로드 시 자동 설정 감지 실행
 document.addEventListener('DOMContentLoaded', () => {
@@ -820,62 +806,8 @@ function toggleInputMonitor(enabled) {
   }
 }
 
-// Instrument tuner
-let tunerEnabled = false;
-let tunerCtx = null;
-let tunerAnalyser = null;
-let tunerInterval = null;
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-
-function toggleTuner(enabled) {
-  tunerEnabled = enabled;
-  const display = $('tuner-display');
-  
-  if (enabled && localStream) {
-    if (!tunerCtx) tunerCtx = new AudioContext();
-    tunerAnalyser = tunerCtx.createAnalyser();
-    tunerAnalyser.fftSize = 4096;
-    tunerCtx.createMediaStreamSource(localStream).connect(tunerAnalyser);
-    
-    const buffer = new Float32Array(tunerAnalyser.fftSize);
-    tunerInterval = setInterval(() => {
-      tunerAnalyser.getFloatTimeDomainData(buffer);
-      const freq = detectPitch(buffer, tunerCtx.sampleRate);
-      if (freq && display) {
-        const note = freqToNote(freq);
-        display.innerHTML = `<span class="note">${note.name}</span><span class="cents">${note.cents > 0 ? '+' : ''}${note.cents}¢</span>`;
-        display.className = Math.abs(note.cents) < 10 ? 'tuner-display in-tune' : 'tuner-display';
-      }
-    }, 50);
-    if (display) display.classList.remove('hidden');
-  } else {
-    if (tunerInterval) { clearInterval(tunerInterval); tunerInterval = null; }
-    if (display) { display.classList.add('hidden'); display.innerHTML = ''; }
-  }
-}
-
-function detectPitch(buffer, sampleRate) {
-  let maxCorr = 0, bestOffset = -1;
-  const minFreq = 60, maxFreq = 1000;
-  const minOffset = Math.floor(sampleRate / maxFreq);
-  const maxOffset = Math.floor(sampleRate / minFreq);
-  
-  for (let offset = minOffset; offset < maxOffset; offset++) {
-    let corr = 0;
-    for (let i = 0; i < buffer.length - offset; i++) {
-      corr += buffer[i] * buffer[i + offset];
-    }
-    if (corr > maxCorr) { maxCorr = corr; bestOffset = offset; }
-  }
-  return bestOffset > 0 ? sampleRate / bestOffset : null;
-}
-
-function freqToNote(freq) {
-  const semitone = 12 * Math.log2(freq / 440) + 69;
-  const note = Math.round(semitone);
-  const cents = Math.round((semitone - note) * 100);
-  return { name: NOTE_NAMES[note % 12] + Math.floor(note / 12 - 1), cents };
-}
+// Instrument tuner (from tuner.js module)
+const { toggleTuner, cleanupTuner, detectPitch, freqToNote } = window.StyxTuner || {};
 
 // 추가 기능
 let isOnline = navigator.onLine;
@@ -949,13 +881,8 @@ let currentQualityLevel = localStorage.getItem('styx-quality-level') || 'auto';
 
 const $ = id => document.getElementById(id);
 
-// 연결 품질 등급
-function getQualityGrade(latency, packetLoss, jitter) {
-  if (M.network?.getQualityGrade) return M.network.getQualityGrade(latency, packetLoss, jitter);
-  if (packetLoss > 5 || latency > 200 || jitter > 50) return { grade: 'poor', label: '불안정', color: '#ff4757' };
-  if (packetLoss > 2 || latency > 100 || jitter > 30) return { grade: 'fair', label: '보통', color: '#ffa502' };
-  return { grade: 'good', label: '좋음', color: '#2ed573' };
-}
+// 연결 품질 등급 (from utils.js module)
+// getQualityGrade imported above
 
 // ===== 연결 테스트 + 네트워크 품질 측정 =====
 let networkTestResults = { latency: 0, jitter: 0, isWifi: false };
@@ -1152,20 +1079,8 @@ function showTestResults(results) {
   }
 }
 
-// 토스트 메시지 - delegates to module
-function toast(message, type = 'info', duration = 3000) {
-  if (M.ui?.toast) return M.ui.toast(message, type, duration);
-  const container = $('toast-container');
-  if (!container) return;
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.textContent = message;
-  container.appendChild(el);
-  setTimeout(() => {
-    el.classList.add('hide');
-    setTimeout(() => el.remove(), 300);
-  }, duration);
-}
+// 토스트 메시지 (from toast.js module)
+// toast function is now global from toast.js
 
 // ===== 테마 (from theme.js module) =====
 const { initTheme, toggleTheme, updateThemeIcon } = window.StyxTheme || {};
