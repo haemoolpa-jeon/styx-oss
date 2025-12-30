@@ -314,6 +314,7 @@ pub fn decode_frame(decoder: &mut Decoder, data: &[u8]) -> Result<Vec<f32>, Stri
 }
 
 // 패킷 손실 시 PLC (Packet Loss Concealment)
+/// Decode with Opus built-in PLC (Packet Loss Concealment)
 pub fn decode_plc(decoder: &mut Decoder) -> Result<Vec<f32>, String> {
     let mut pcm = vec![0f32; FRAME_SIZE];
     let len = decoder.decode_float(&[], &mut pcm, true)
@@ -584,8 +585,21 @@ pub fn start_recv_loop(
                                 }
                                 
                                 if let Some(decoder) = decoders.get_mut(&addr) {
-                                    for _ in 0..lost {
-                                        if let Ok(plc_samples) = decode_plc(decoder) {
+                                    for i in 0..lost {
+                                        if let Ok(mut plc_samples) = decode_plc(decoder) {
+                                            // Apply fade-out for consecutive losses
+                                            let fade_factor = match i {
+                                                0 => 1.0,
+                                                1 => 0.8,
+                                                2 => 0.5,
+                                                3 => 0.3,
+                                                _ => 0.1,
+                                            };
+                                            if fade_factor < 1.0 {
+                                                for sample in plc_samples.iter_mut() {
+                                                    *sample *= fade_factor;
+                                                }
+                                            }
                                             if let Ok(mut jb) = jitter_buffers.lock() {
                                                 jb.entry(addr)
                                                     .or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER))
@@ -938,9 +952,22 @@ pub fn start_relay_loop(
                     if last_seq > 0 && header.sequence > expected_seq {
                         let lost = header.sequence.wrapping_sub(expected_seq) as usize;
                         if lost > 0 && lost < 10 {
-                            // Generate PLC for lost packets
-                            for _ in 0..lost {
-                                if let Ok(plc_samples) = decode_plc(&mut decoder) {
+                            // Generate PLC for lost packets with fade-out
+                            for i in 0..lost {
+                                if let Ok(mut plc_samples) = decode_plc(&mut decoder) {
+                                    // Apply fade-out for consecutive losses
+                                    let fade_factor = match i {
+                                        0 => 1.0,
+                                        1 => 0.8,
+                                        2 => 0.5,
+                                        3 => 0.3,
+                                        _ => 0.1,
+                                    };
+                                    if fade_factor < 1.0 {
+                                        for sample in plc_samples.iter_mut() {
+                                            *sample *= fade_factor;
+                                        }
+                                    }
                                     if let Ok(mut pb) = playback_buffer.lock() {
                                         pb.extend(plc_samples);
                                     }
