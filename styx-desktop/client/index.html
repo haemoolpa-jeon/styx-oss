@@ -336,8 +336,8 @@
             <h4>오디오 설정</h4>
             <div class="form-row">
               <div class="form-field">
-                <label>오디오 모드</label>
-                <select id="new-room-audio-mode">
+                <label title="음성: 저지연 최적화 / 악기: 고음질 풀레인지">오디오 모드</label>
+                <select id="new-room-audio-mode" title="음성 모드는 대화에, 악기 모드는 음악 연주에 적합">
                   <option value="voice">🎤 음성 (저지연)</option>
                   <option value="music">🎸 악기 (고품질)</option>
                 </select>
@@ -345,8 +345,8 @@
             </div>
             <div class="form-row">
               <div class="form-field">
-                <label>비트레이트</label>
-                <select id="new-room-bitrate">
+                <label title="높을수록 음질↑ 대역폭 사용↑">비트레이트</label>
+                <select id="new-room-bitrate" title="64kbps: 음성용 / 96kbps: 일반 / 128~192kbps: 악기/음악">
                   <option value="64">64 kbps (저대역폭)</option>
                   <option value="96" selected>96 kbps (권장)</option>
                   <option value="128">128 kbps (고품질)</option>
@@ -354,8 +354,8 @@
                 </select>
               </div>
               <div class="form-field">
-                <label>기본 BPM</label>
-                <input type="number" id="new-room-bpm" value="120" min="30" max="300" placeholder="120">
+                <label title="메트로놈 기본 템포">기본 BPM</label>
+                <input type="number" id="new-room-bpm" value="120" min="30" max="300" placeholder="120" title="30~300 BPM">
               </div>
             </div>
           </div>
@@ -548,20 +548,20 @@
 
       <div class="room-toolbar">
         <div class="toolbar-section">
-          <label class="toolbar-check"><input type="checkbox" id="room-ptt-mode"> PTT</label>
-          <label class="toolbar-check"><input type="checkbox" id="delay-compensation"> 지연 맞추기</label>
-          <label class="toolbar-check"><input type="checkbox" id="multitrack-mode"> 멀티트랙</label>
-          <label class="toolbar-check"><input type="checkbox" id="loopback-mode"> 루프백</label>
+          <label class="toolbar-check" title="Push-to-Talk: 스페이스바를 누르고 있을 때만 마이크 활성화"><input type="checkbox" id="room-ptt-mode"> PTT</label>
+          <label class="toolbar-check" title="지연 보상: 모든 참가자의 오디오를 동기화 (지연 증가)"><input type="checkbox" id="delay-compensation"> 지연 맞추기</label>
+          <label class="toolbar-check" title="멀티트랙: 각 참가자를 별도 파일로 녹음"><input type="checkbox" id="multitrack-mode"> 멀티트랙</label>
+          <label class="toolbar-check" title="루프백: 내 마이크 소리를 들을 수 있음 (모니터링)"><input type="checkbox" id="loopback-mode"> 루프백</label>
         </div>
         <div class="toolbar-section">
-          <span class="toolbar-label">버퍼:</span>
-          <input type="range" id="room-jitter-slider" min="5" max="150" value="50" step="5" class="toolbar-slider">
+          <span class="toolbar-label" title="네트워크 지연 변동을 흡수하는 버퍼. 낮을수록 지연↓ 끊김↑">버퍼:</span>
+          <input type="range" id="room-jitter-slider" min="5" max="150" value="50" step="5" class="toolbar-slider" title="5~150ms 조절 가능">
           <span id="room-jitter-value" class="toolbar-value">50ms</span>
-          <label class="toolbar-check"><input type="checkbox" id="room-auto-jitter" checked> 자동</label>
+          <label class="toolbar-check" title="네트워크 상태에 따라 자동으로 버퍼 크기 조절"><input type="checkbox" id="room-auto-jitter" checked> 자동</label>
         </div>
         <div class="toolbar-section tauri-only" id="bitrate-section" style="display:none;">
-          <span class="toolbar-label">음질:</span>
-          <select id="bitrate-select" class="toolbar-select">
+          <span class="toolbar-label" title="Opus 인코더 비트레이트. 높을수록 음질↑ 대역폭↑">음질:</span>
+          <select id="bitrate-select" class="toolbar-select" title="48kbps: 음성용 / 96kbps: 권장 / 192kbps: 고음질 악기">
             <option value="48">48kbps (저용량)</option>
             <option value="64">64kbps</option>
             <option value="96" selected>96kbps (권장)</option>
@@ -591,8 +591,8 @@
           <button id="effects-toggle" class="btn-icon" title="EQ">🎛️</button>
           <div id="effects-panel" class="effects-panel hidden">
             <div class="effect-row preset-row">
-              <span>프리셋</span>
-              <select id="audio-preset" onchange="applyAudioPreset(this.value)">
+              <span title="EQ와 압축 설정을 한번에 적용">프리셋</span>
+              <select id="audio-preset" onchange="applyAudioPreset(this.value)" title="음성: 명료한 대화 / 악기: 풀레인지 / 팟캐스트: 따뜻한 음색">
                 <option value="custom">사용자 정의</option>
                 <option value="voice">🎤 음성</option>
                 <option value="instrument">🎸 악기</option>
@@ -600,11 +600,11 @@
               </select>
               <button class="btn-small" onclick="saveCustomPreset()" title="현재 설정 저장">💾</button>
             </div>
-            <div class="effect-row"><span>입력</span><input type="range" id="input-volume" min="0" max="200" value="120"><span class="effect-val">120%</span></div>
-            <div class="effect-row"><span>저음</span><input type="range" id="eq-low" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
-            <div class="effect-row"><span>중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
-            <div class="effect-row"><span>고음</span><input type="range" id="eq-high" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
-            <div class="effect-row"><span>압축</span><input type="range" id="compression-ratio" min="1" max="8" value="4" step="0.5"><span class="effect-val">4:1</span></div>
+            <div class="effect-row"><span title="마이크 입력 볼륨 조절">입력</span><input type="range" id="input-volume" min="0" max="200" value="120" title="100% 이상은 증폭 (클리핑 주의)"><span class="effect-val">120%</span></div>
+            <div class="effect-row"><span title="저음역 (베이스) 조절">저음</span><input type="range" id="eq-low" min="-12" max="12" value="0" title="250Hz 이하"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span title="중음역 (보컬/악기) 조절">중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0" title="250Hz~4kHz"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span title="고음역 (선명도) 조절">고음</span><input type="range" id="eq-high" min="-12" max="12" value="0" title="4kHz 이상"><span class="effect-val">0dB</span></div>
+            <div class="effect-row"><span title="다이나믹 레인지 압축 (음량 균일화)">압축</span><input type="range" id="compression-ratio" min="1" max="8" value="4" step="0.5" title="1:1=없음 / 4:1=보통 / 8:1=강함"><span class="effect-val">4:1</span></div>
             <div class="effect-row diag-row">
               <span>진단</span>
               <button id="diag-toggle" class="btn-small" onclick="openDiagnostics()" title="연결 진단">🔍</button>
