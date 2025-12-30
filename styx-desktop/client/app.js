@@ -3595,8 +3595,8 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
 
     // Clear any existing peers from previous room
     peers.forEach(peer => {
-      peer.pc.close();
-      peer.audioEl.remove();
+      if (peer.pc?.close) peer.pc.close();
+      if (peer.audioEl) peer.audioEl.remove();
     });
     peers.clear();
     usersGrid.innerHTML = '';
@@ -4055,7 +4055,7 @@ function recreatePeerConnection(peerId, username, avatar) {
   
   // 기존 연결 정리
   try {
-    oldPeer.pc.close();
+    if (oldPeer.pc?.close) oldPeer.pc.close();
     if (oldPeer.audioNodes) {
       oldPeer.audioNodes.source.disconnect();
     }
@@ -5318,8 +5318,8 @@ function leaveRoom() {
   noiseGateWorklet = null;
   
   peers.forEach(peer => {
-    peer.pc.close();
-    peer.audioEl.remove();
+    if (peer.pc?.close) peer.pc.close();
+    if (peer.audioEl) peer.audioEl.remove();
     // 오디오 노드 연결 해제
     if (peer.audioNodes) {
       try {
