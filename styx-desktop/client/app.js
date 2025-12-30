@@ -3662,12 +3662,12 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       updateMuteUI();
     }
 
-    // Tauri앱: 기존 사용자들을 peers Map에 추가
-    if (actuallyTauri && res.users) {
+    // 기존 사용자들을 peers Map에 추가
+    if (res.users) {
       res.users.forEach(({ id, username, avatar, role }) => {
         if (!peers.has(id)) {
           peers.set(id, {
-            pc: { connectionState: 'connected' }, // Fake PC for UI compatibility
+            pc: { connectionState: actuallyTauri ? 'connected' : 'new' },
             username,
             avatar,
             role: role || 'performer',
@@ -3677,7 +3677,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
             packetLoss: 0,
             jitter: 0,
             bitrate: 0,
-            quality: { grade: 'good', label: 'UDP', color: '#2ed573' },
+            quality: { grade: actuallyTauri ? 'good' : 'fair', label: actuallyTauri ? 'UDP' : '관전', color: actuallyTauri ? '#2ed573' : '#ffa502' },
             pan: 0,
             muted: false,
             solo: false,
@@ -5068,10 +5068,9 @@ socket.on('user-joined', ({ id, username, avatar, role }) => {
   playSound('join');
   toast(`${username} 입장`, 'info', 2000);
   
-  // Tauri 앱에서는 UDP 모드로 피어 추가 (WebRTC 없이)
-  if (actuallyTauri && !peers.has(id)) {
+  if (!peers.has(id)) {
     peers.set(id, {
-      pc: { connectionState: 'connected' }, // Fake PC for UI compatibility
+      pc: { connectionState: actuallyTauri ? 'connected' : 'new' },
       username,
       avatar,
       role,
@@ -5081,7 +5080,7 @@ socket.on('user-joined', ({ id, username, avatar, role }) => {
       packetLoss: 0,
       jitter: 0,
       bitrate: 0,
-      quality: { grade: 'good', label: 'UDP', color: '#2ed573' },
+      quality: { grade: actuallyTauri ? 'good' : 'fair', label: actuallyTauri ? 'UDP' : '관전', color: actuallyTauri ? '#2ed573' : '#ffa502' },
       pan: 0,
       muted: false,
       solo: false,
@@ -5089,8 +5088,8 @@ socket.on('user-joined', ({ id, username, avatar, role }) => {
     });
     renderUsers();
     
-    // Attempt P2P with new peer
-    initiateP2P(id);
+    // Tauri: Attempt P2P with new peer
+    if (actuallyTauri) initiateP2P(id);
   }
 });
 
