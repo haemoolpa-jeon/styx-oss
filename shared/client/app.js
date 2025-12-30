@@ -920,6 +920,7 @@ let peerConnections = new Map(); // peerId -> { type: 'p2p'|'relay', addr: strin
 let echoCancellation = localStorage.getItem('styx-echo') !== 'false';
 let noiseSuppression = localStorage.getItem('styx-noise') !== 'false';
 let aiNoiseCancellation = localStorage.getItem('styx-ai-noise') === 'true'; // Off by default (adds latency)
+let autoGainControl = localStorage.getItem('styx-auto-gain') !== 'false';
 let pttMode = localStorage.getItem('styx-ptt') === 'true';
 let pttKey = localStorage.getItem('styx-ptt-key') || 'Space';
 let isPttActive = false;
