@@ -97,9 +97,6 @@ let metronomeInterval = null;
 let metronomeAudio = null;
 let metronomeLocalStop = false; // Track if user locally stopped metronome
 let sessionRestored = false;
-let mediaRecorder = null;
-let recordedChunks = [];
-let isRecording = false;
 let inputLimiterContext = null; // 입력 리미터용 AudioContext
 let processedStream = null; // 리미터 적용된 스트림
 
@@ -1489,8 +1486,9 @@ socket.on('connect', () => {
   // 세션 복구 (최초 연결 시에만)
   if (!sessionRestored) {
     sessionRestored = true;
-    const savedUser = localStorage.getItem('styx-user');
-    const savedToken = localStorage.getItem('styx-token');
+    // Check localStorage first, then sessionStorage
+    const savedUser = localStorage.getItem('styx-user') || sessionStorage.getItem('styx-user');
+    const savedToken = localStorage.getItem('styx-token') || sessionStorage.getItem('styx-token');
     
     if (savedUser && savedToken) {
       socket.emit('restore-session', { username: savedUser, token: savedToken }, res => {
@@ -1507,6 +1505,8 @@ socket.on('connect', () => {
             console.log('Session restore failed:', res.error);
             localStorage.removeItem('styx-user');
             localStorage.removeItem('styx-token');
+            sessionStorage.removeItem('styx-user');
+            sessionStorage.removeItem('styx-token');
           } else {
             // Retry on next connect if no response
             sessionRestored = false;
@@ -1578,8 +1578,8 @@ socket.io.on('reconnect', () => {
   updateTurnCredentials();
   
   // 세션 복구 후 방 재입장
-  const savedUser = localStorage.getItem('styx-user');
-  const savedToken = localStorage.getItem('styx-token');
+  const savedUser = localStorage.getItem('styx-user') || sessionStorage.getItem('styx-user');
+  const savedToken = localStorage.getItem('styx-token') || sessionStorage.getItem('styx-token');
   
   if (savedUser && savedToken && lastRoom) {
     socket.emit('restore-session', { username: savedUser, token: savedToken }, res => {
@@ -1724,8 +1724,17 @@ $('loginBtn').onclick = () => {
       return showAuthMsg(errorMsg, true);
     }
     currentUser = res.user;
-    localStorage.setItem('styx-user', username);
-    localStorage.setItem('styx-token', res.token);
+    // Save credentials only if "remember me" is checked
+    if ($('remember-me')?.checked) {
+      localStorage.setItem('styx-user', username);
+      localStorage.setItem('styx-token', res.token);
+    } else {
+      // Use sessionStorage for current session only
+      sessionStorage.setItem('styx-user', username);
+      sessionStorage.setItem('styx-token', res.token);
+      localStorage.removeItem('styx-user');
+      localStorage.removeItem('styx-token');
+    }
     addSystemLog(`User login: ${username} (Admin: ${res.user.isAdmin})`);
     showLobby();
   });
