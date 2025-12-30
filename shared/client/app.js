@@ -2804,18 +2804,18 @@ async function initTauriFeatures() {
     }
     
     // 비트레이트 UI 표시 및 초기화
-    $('bitrate-section').style.display = 'flex';
+    if ($('bitrate-section')) $('bitrate-section').style.display = 'flex';
     const savedBitrate = localStorage.getItem('styx-bitrate') || '96';
-    $('bitrate-select').value = savedBitrate;
+    if ($('bitrate-select')) {
+      $('bitrate-select').value = savedBitrate;
+      $('bitrate-select').onchange = async (e) => {
+        const bitrate = parseInt(e.target.value);
+        localStorage.setItem('styx-bitrate', bitrate);
+        await tauriInvoke('set_bitrate', { bitrateKbps: bitrate });
+        toast(`음질 변경: ${bitrate}kbps`, 'info');
+      };
+    }
     await tauriInvoke('set_bitrate', { bitrateKbps: parseInt(savedBitrate) });
-    
-    // 비트레이트 변경 핸들러
-    $('bitrate-select').onchange = async (e) => {
-      const bitrate = parseInt(e.target.value);
-      localStorage.setItem('styx-bitrate', bitrate);
-      await tauriInvoke('set_bitrate', { bitrateKbps: bitrate });
-      toast(`음질 변경: ${bitrate}kbps (재연결 시 적용)`, 'info');
-    };
   } catch (e) {
     console.error('Tauri 초기화 오류:', e);
   }
