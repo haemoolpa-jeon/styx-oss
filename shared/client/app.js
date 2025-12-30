@@ -1826,7 +1826,7 @@ function startRecording() {
     multitrackRecorders.clear();
     
     // 로컬 오디오
-    if (localStream) {
+    if (localStream && currentUser) {
       const rec = new MediaRecorder(localStream, { mimeType: 'audio/webm' });
       const chunks = [];
       rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
@@ -3636,8 +3636,10 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       $('closeRoomBtn')?.classList.add('hidden');
     }
     
-    document.querySelector('#my-card .card-avatar').style.backgroundImage = 
-      currentUser.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
+    const myCardAvatar = document.querySelector('#my-card .card-avatar');
+    if (myCardAvatar) {
+      myCardAvatar.style.backgroundImage = currentUser?.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
+    }
 
     chatMessages.innerHTML = '';
     res.messages?.forEach(addChatMessage);
@@ -4368,14 +4370,16 @@ function renderUsers() {
     };
     
     // 뮤트 버튼
-    card.querySelector('[data-action="mute"]').onclick = () => {
+    const muteBtn = card.querySelector('[data-action="mute"]');
+    if (muteBtn) muteBtn.onclick = () => {
       peer.muted = !peer.muted;
       applyMixerState();
       renderUsers();
     };
     
     // 솔로 버튼
-    card.querySelector('[data-action="solo"]').onclick = () => {
+    const soloBtn = card.querySelector('[data-action="solo"]');
+    if (soloBtn) soloBtn.onclick = () => {
       peer.solo = !peer.solo;
       applyMixerState();
       renderUsers();
@@ -4383,7 +4387,7 @@ function renderUsers() {
     
     // 팬 슬라이더
     const panSlider = card.querySelector('.pan-slider');
-    panSlider.oninput = () => {
+    if (panSlider) panSlider.oninput = () => {
       peer.pan = parseInt(panSlider.value);
       if (peer.panNode) peer.panNode.pan.value = peer.pan / 100;
     };
