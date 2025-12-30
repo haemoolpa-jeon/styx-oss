@@ -111,7 +111,6 @@ function getPeerAudioContext() {
 document.addEventListener('click', function resumeAudio() {
   if (peerAudioContext?.state === 'suspended') peerAudioContext.resume();
   if (inputMonitorCtx?.state === 'suspended') inputMonitorCtx.resume();
-  if (tunerCtx?.state === 'suspended') tunerCtx.resume();
 }, { once: false });
 
 // 입력 오디오에 리미터/컴프레서 + EQ 적용 (저지연)
@@ -4477,7 +4476,6 @@ function leaveRoom() {
   if (latencyInterval) { clearInterval(latencyInterval); latencyInterval = null; }
   if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
   if (meterInterval) { clearInterval(meterInterval); meterInterval = null; }
-  if (tunerInterval) { clearInterval(tunerInterval); tunerInterval = null; }
   if (tcpAudioInterval) { clearInterval(tcpAudioInterval); tcpAudioInterval = null; }
   if (udpStatsInterval) { clearInterval(udpStatsInterval); udpStatsInterval = null; }
   if (metronomeInterval) { clearInterval(metronomeInterval); metronomeInterval = null; }
@@ -4490,10 +4488,12 @@ function leaveRoom() {
   
   stopMetronome();
   cleanupRecording();
+  if (cleanupTuner) cleanupTuner();
+  if (cleanupSound) cleanupSound();
   if (isScreenSharing) stopScreenShare();
   
   // 모든 AudioContext 정리
-  const contexts = [audioContext, metronomeAudio, peerAudioContext, inputLimiterContext, inputMonitorCtx, tunerCtx];
+  const contexts = [audioContext, metronomeAudio, peerAudioContext, inputLimiterContext, inputMonitorCtx];
   contexts.forEach(ctx => {
     if (ctx && ctx.state !== 'closed') {
       try { 
@@ -4511,7 +4511,6 @@ function leaveRoom() {
   inputLimiterContext = null;
   sharedAudioContext = null;
   inputMonitorCtx = null;
-  tunerCtx = null;
   processedStream = null;
   effectNodes = {};
   noiseGateWorklet = null;
@@ -5185,25 +5184,29 @@ if ($('delay-compensation')) {
 
 // 멀티트랙 녹음 모드
 if ($('multitrack-mode')) {
-  $('multitrack-mode').checked = multitrackMode;
+  $('multitrack-mode').checked = window.StyxRecording?.multitrackMode || false;
   $('multitrack-mode').onchange = () => {
-    multitrackMode = $('multitrack-mode').checked;
-    localStorage.setItem('styx-multitrack', multitrackMode);
-    if (multitrackMode) loopbackMode = false;
-    if ($('loopback-mode')) $('loopback-mode').checked = false;
-    toast(multitrackMode ? '멀티트랙: 각 참가자별 개별 파일 저장' : '믹스다운: 전체 믹스 저장', 'info');
+    const enabled = $('multitrack-mode').checked;
+    window.StyxRecording?.setMultitrackMode?.(enabled);
+    if (enabled) {
+      window.StyxRecording?.setLoopbackMode?.(false);
+      if ($('loopback-mode')) $('loopback-mode').checked = false;
+    }
+    toast(enabled ? '멀티트랙: 각 참가자별 개별 파일 저장' : '믹스다운: 전체 믹스 저장', 'info');
   };
 }
 
 // 루프백 녹음 모드
 if ($('loopback-mode')) {
-  $('loopback-mode').checked = loopbackMode;
+  $('loopback-mode').checked = window.StyxRecording?.loopbackMode || false;
   $('loopback-mode').onchange = () => {
-    loopbackMode = $('loopback-mode').checked;
-    localStorage.setItem('styx-loopback', loopbackMode);
-    if (loopbackMode) multitrackMode = false;
-    if ($('multitrack-mode')) $('multitrack-mode').checked = false;
-    toast(loopbackMode ? '루프백: 내가 듣는 소리만 녹음' : '믹스다운: 전체 믹스 저장', 'info');
+    const enabled = $('loopback-mode').checked;
+    window.StyxRecording?.setLoopbackMode?.(enabled);
+    if (enabled) {
+      window.StyxRecording?.setMultitrackMode?.(false);
+      if ($('multitrack-mode')) $('multitrack-mode').checked = false;
+    }
+    toast(enabled ? '루프백: 내가 듣는 소리만 녹음' : '믹스다운: 전체 믹스 저장', 'info');
   };
 }
 
