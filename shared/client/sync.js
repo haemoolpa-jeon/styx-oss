@@ -115,7 +115,12 @@ function clearSyncDelays() {
   }
 }
 
+let syncHandlersInitialized = false;
+
 function initSyncSocketHandlers() {
+  if (syncHandlersInitialized) return; // Prevent duplicate registration
+  syncHandlersInitialized = true;
+  
   const socket = window.socket;
   const peerLatencies = window.peerLatencies;
   
