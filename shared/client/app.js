@@ -1174,10 +1174,19 @@ const { initKeyboardShortcuts, initPttTouch, registerAction, addGlobalListener, 
 
 // ===== 녹음 (from recording.js module) =====
 const { startRecording, stopRecording, toggleRecording, cleanupRecording, addRecordingMarker } = window.StyxRecording || {};
-// Expose globals for module
-window.localStream = null;
-window.peers = null;
-window.currentUser = null;
+
+// Expose globals for modules using getters (dynamic access)
+Object.defineProperties(window, {
+  localStream: { get: () => localStream, configurable: true },
+  peers: { get: () => peers, configurable: true },
+  currentUser: { get: () => currentUser, configurable: true },
+  isMuted: { get: () => isMuted, configurable: true },
+  isRecording: { get: () => window.StyxRecording?.isRecording || false, configurable: true },
+  renderUsers: { get: () => renderUsers, configurable: true },
+  pttMode: { get: () => pttMode, configurable: true },
+  isPttActive: { get: () => isPttActive, set: (v) => isPttActive = v, configurable: true },
+  pttKey: { get: () => pttKey, configurable: true }
+});
 
 // ===== 화면 공유 =====
 let screenStream = null;
@@ -3646,13 +3655,17 @@ function applyMixerState() {
 
 // ===== Sync Mode (from sync.js module) =====
 const { calibrateDeviceLatency, calculateSyncDelays, broadcastLatency, clearSyncDelays, initSyncSocketHandlers } = window.StyxSync || {};
-// Expose globals for sync module
-window.syncMode = false;
-window.selfStats = null;
-window.peerLatencies = null;
-window.jitterBuffer = null;
-window.actuallyTauri = null;
-window.tauriInvoke = null;
+
+// Expose sync-related globals using getters
+Object.defineProperties(window, {
+  syncMode: { get: () => syncMode, set: (v) => syncMode = v, configurable: true },
+  selfStats: { get: () => selfStats, configurable: true },
+  peerLatencies: { get: () => peerLatencies, configurable: true },
+  jitterBuffer: { get: () => jitterBuffer, configurable: true },
+  actuallyTauri: { get: () => actuallyTauri, configurable: true },
+  tauriInvoke: { get: () => tauriInvoke, configurable: true },
+  socket: { get: () => socket, configurable: true }
+});
 
 // ===== P2P Connection Functions =====
 
@@ -5471,3 +5484,11 @@ function scheduleSettingsSave() {
     socket.emit('save-settings', { settings: collectSettings() });
   }, 10000);
 }
+window.scheduleSettingsSave = scheduleSettingsSave;
+
+// Immediate settings save (for keyboard shortcut)
+function saveCurrentSettings() {
+  socket.emit('save-settings', { settings: collectSettings() });
+  toast('설정이 저장되었습니다', 'success', 2000);
+}
+window.saveCurrentSettings = saveCurrentSettings;
