@@ -5,8 +5,6 @@ let estimatedDeviceLatency = 20; // ms, default estimate
 let syncDelayBuffers = new Map();
 let maxRoomLatency = 0;
 
-const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-
 async function calibrateDeviceLatency() {
   const localStream = window.localStream;
   if (!localStream) return;
@@ -111,7 +109,7 @@ function clearSyncDelays() {
   maxRoomLatency = 0;
   
   if (actuallyTauri) {
-    tauriInvoke('set_jitter_buffer', { size: 2 }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
+    tauriInvoke('set_jitter_buffer', { size: 2 }).catch(e => { if (window.DEBUG) console.debug('Silent error:', e); });
   }
 }
 

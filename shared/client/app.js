@@ -19,6 +19,7 @@ function updateSfuButton() {
 
 // 디버그 모드 (프로덕션에서는 false)
 const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+window.DEBUG = DEBUG;
 const log = (...args) => DEBUG && console.log(...args);
 
 // Audio constants

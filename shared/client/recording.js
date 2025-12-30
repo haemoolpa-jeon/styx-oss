@@ -11,7 +11,7 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
 
-const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const DEBUG = window.DEBUG ?? (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
 function formatTime(ms) {
   const M = window.StyxModules || {};
