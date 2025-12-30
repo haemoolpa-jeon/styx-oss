@@ -170,6 +170,12 @@ function enhanceKeyboardNavigation() {
 const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const log = (...args) => DEBUG && console.log(...args);
 
+// Audio constants
+const SAMPLE_RATE = 48000;
+const LATENCY_PING_INTERVAL = 3000;
+const STATS_INTERVAL = 2000;
+const QUALITY_CHECK_INTERVAL = 5000;
+
 const serverUrl = window.STYX_SERVER_URL || '';
 const socket = io(serverUrl, { reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 10 });
 
@@ -495,8 +501,8 @@ function adaptToNetworkQuality(quality) {
   
   // Graceful degradation - adjust settings to prevent dropout
   if (actuallyTauri) {
-    tauriInvoke('set_bitrate', { bitrate: config.bitrate }).catch(() => {});
-    tauriInvoke('set_jitter_buffer', { size: Math.round(config.jitterBuffer / 5) }).catch(() => {});
+    tauriInvoke('set_bitrate', { bitrate: config.bitrate }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
+    tauriInvoke('set_jitter_buffer', { size: Math.round(config.jitterBuffer / 5) }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
   }
   
   // Auto-increase jitter buffer on poor quality
@@ -558,7 +564,7 @@ let sharedAudioContext = null;
 function getSharedAudioContext() {
   if (M.audio?.getSharedAudioContext) return M.audio.getSharedAudioContext();
   if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
-    sharedAudioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
+    sharedAudioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: SAMPLE_RATE });
   }
   if (sharedAudioContext.state === 'suspended') sharedAudioContext.resume();
   return sharedAudioContext;
@@ -1863,7 +1869,7 @@ function startRecording() {
     mediaRecorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
     mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
     mediaRecorder.onstop = () => {
-      if (recordingAudioCtx) { recordingAudioCtx.close().catch(() => {}); recordingAudioCtx = null; }
+      if (recordingAudioCtx) { recordingAudioCtx.close().catch(e => { if (DEBUG) console.debug('Silent error:', e); }); recordingAudioCtx = null; }
       downloadTrack(recordedChunks, `${timestamp}_loopback`);
     };
     mediaRecorder.start();
@@ -1886,7 +1892,7 @@ function startRecording() {
     mediaRecorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
     mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
     mediaRecorder.onstop = () => {
-      if (recordingAudioCtx) { recordingAudioCtx.close().catch(() => {}); recordingAudioCtx = null; }
+      if (recordingAudioCtx) { recordingAudioCtx.close().catch(e => { if (DEBUG) console.debug('Silent error:', e); }); recordingAudioCtx = null; }
       downloadTrack(recordedChunks, `${timestamp}_mix`);
     };
     mediaRecorder.start();
@@ -1949,7 +1955,7 @@ function cleanupRecording() {
       mediaRecorder.stop();
     }
   }
-  if (recordingAudioCtx) { recordingAudioCtx.close().catch(() => {}); recordingAudioCtx = null; }
+  if (recordingAudioCtx) { recordingAudioCtx.close().catch(e => { if (DEBUG) console.debug('Silent error:', e); }); recordingAudioCtx = null; }
   isRecording = false;
 }
 
@@ -2609,7 +2615,7 @@ async function reconnectAudioDevices() {
     const constraints = {
       audio: {
         deviceId: inputDevice ? { exact: inputDevice } : undefined,
-        sampleRate: 48000,
+        sampleRate: SAMPLE_RATE,
         channelCount: 2,
         echoCancellation: $('echo-cancel')?.checked ?? true,
         noiseSuppression: $('noise-suppress')?.checked ?? true,
@@ -2624,7 +2630,7 @@ async function reconnectAudioDevices() {
     
     // Restart Tauri UDP if active
     if (actuallyTauri && udpStreamActive) {
-      await tauriInvoke('udp_stop_stream').catch(() => {});
+      await tauriInvoke('udp_stop_stream').catch(e => { if (DEBUG) console.debug('Silent error:', e); });
       await startUdpMode();
     }
     
@@ -2799,7 +2805,7 @@ async function initTauriFeatures() {
     const bufferSelect = $('buffer-size-select');
     if (bufferSelect) {
       bufferSelect.value = savedBufferSize;
-      await tauriInvoke('set_buffer_size', { size: parseInt(savedBufferSize) }).catch(() => {});
+      await tauriInvoke('set_buffer_size', { size: parseInt(savedBufferSize) }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
       bufferSelect.onchange = async (e) => {
         const size = parseInt(e.target.value);
         localStorage.setItem('styx-buffer-size', size);
@@ -2886,8 +2892,8 @@ async function startUdpMode() {
       console.log('✅ UDP relay stream started successfully');
       
       // Apply optional audio settings
-      await tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(() => {});
-      await tauriInvoke('set_comfort_noise', { enabled: comfortNoiseEnabled }).catch(() => {});
+      await tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
+      await tauriInvoke('set_comfort_noise', { enabled: comfortNoiseEnabled }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
       
       // Wait a moment before starting stats monitor
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -3161,7 +3167,7 @@ async function loadAudioDevices() {
         selectedOutputId = outputSelect.value;
         peers.forEach(peer => {
           if (peer.audioEl?.setSinkId) {
-            peer.audioEl.setSinkId(selectedOutputId).catch(() => {});
+            peer.audioEl.setSinkId(selectedOutputId).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
           }
         });
       };
@@ -3550,7 +3556,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
       echoCancellation: $('echo-cancel')?.checked ?? true,
       noiseSuppression: $('noise-suppress')?.checked ?? true,
       autoGainControl: $('auto-gain')?.checked ?? true,
-      sampleRate: 48000,
+      sampleRate: SAMPLE_RATE,
       channelCount: 2, // Stereo support
       latency: { ideal: 0.01 }
     }
@@ -4094,7 +4100,7 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
 
   // 출력 장치 설정
   if (selectedOutputId && audioEl.setSinkId) {
-    audioEl.setSinkId(selectedOutputId).catch(() => {});
+    audioEl.setSinkId(selectedOutputId).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
   }
 
   const savedVolume = volumeStates.get(peerId) ?? 100;
@@ -4524,7 +4530,7 @@ function clearSyncDelays() {
   
   // Reset jitter buffer to minimum
   if (actuallyTauri && actuallyTauri) {
-    tauriInvoke('set_jitter_buffer', { size: 2 }).catch(() => {});
+    tauriInvoke('set_jitter_buffer', { size: 2 }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
   }
 }
 
@@ -4802,7 +4808,7 @@ function startLatencyPing() {
                 
                 if (newBitrate !== currentBitrate) {
                   params.encodings[0].maxBitrate = Math.round(newBitrate);
-                  sender.setParameters(params).catch(() => {});
+                  sender.setParameters(params).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
                 }
               }
             }
@@ -4888,7 +4894,7 @@ function updateJitterBuffer(value) {
   
   // Tauri UDP 지터 버퍼도 설정
   if (actuallyTauri) {
-    tauriInvoke('set_jitter_buffer', { size: Math.round(jitterBuffer / 10) }).catch(() => {});
+    tauriInvoke('set_jitter_buffer', { size: Math.round(jitterBuffer / 10) }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
   }
 }
 
@@ -4925,7 +4931,7 @@ function setJitterBuffer(value) {
   
   // Tauri UDP 지터 버퍼도 설정
   if (actuallyTauri) {
-    tauriInvoke('set_jitter_buffer', { size: Math.round(jitterBuffer / 10) }).catch(() => {});
+    tauriInvoke('set_jitter_buffer', { size: Math.round(jitterBuffer / 10) }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
   }
 }
 
@@ -5282,7 +5288,7 @@ async function restartAudioStream() {
         echoCancellation: $('room-echo-cancel')?.checked ?? $('echo-cancel')?.checked ?? true,
         noiseSuppression: $('room-noise-suppress')?.checked ?? $('noise-suppress')?.checked ?? true,
         autoGainControl: $('auto-gain')?.checked ?? true,
-        sampleRate: 48000,
+        sampleRate: SAMPLE_RATE,
         channelCount: 2,
         latency: { ideal: 0.01 }
       }
@@ -5725,7 +5731,7 @@ if ($('room-audio-output')) {
   $('room-audio-output').onchange = (e) => {
     selectedOutputId = e.target.value;
     peers.forEach(peer => {
-      if (peer.audioEl?.setSinkId) peer.audioEl.setSinkId(selectedOutputId).catch(() => {});
+      if (peer.audioEl?.setSinkId) peer.audioEl.setSinkId(selectedOutputId).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
     });
   };
 }
@@ -5833,7 +5839,7 @@ function updateDiagnostics() {
       $('diag-packets-recv').textContent = stats.packets_received;
       $('diag-packets-lost').textContent = stats.packets_lost;
       $('diag-loss-rate').textContent = stats.loss_rate.toFixed(2);
-    }).catch(() => {});
+    }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
   }
 }
 
@@ -5966,7 +5972,7 @@ if ($('dtx-toggle')) {
     dtxEnabled = $('dtx-toggle').checked;
     localStorage.setItem('styx-dtx', dtxEnabled);
     if (actuallyTauri) {
-      tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(() => {});
+      tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
     }
     toast(dtxEnabled ? '📉 DTX 켜짐' : '📉 DTX 꺼짐', 'info');
   };
@@ -5979,7 +5985,7 @@ if ($('comfort-noise-toggle')) {
     comfortNoiseEnabled = $('comfort-noise-toggle').checked;
     localStorage.setItem('styx-comfort-noise', comfortNoiseEnabled);
     if (actuallyTauri) {
-      tauriInvoke('set_comfort_noise', { enabled: comfortNoiseEnabled }).catch(() => {});
+      tauriInvoke('set_comfort_noise', { enabled: comfortNoiseEnabled }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
     }
     toast(comfortNoiseEnabled ? '🔇 컴포트 노이즈 켜짐' : '🔇 컴포트 노이즈 꺼짐', 'info');
   };
@@ -6013,7 +6019,7 @@ function applyLowLatencyMode() {
   
   // Apply to Tauri UDP if available
   if (actuallyTauri) {
-    tauriInvoke('set_jitter_buffer', { size: lowLatencyMode ? 1 : Math.round(jitterBuffer / 10) }).catch(() => {});
+    tauriInvoke('set_jitter_buffer', { size: lowLatencyMode ? 1 : Math.round(jitterBuffer / 10) }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
   }
 }
 
@@ -6226,13 +6232,13 @@ $('adv-auto-jitter')?.addEventListener('change', (e) => {
 $('adv-dtx')?.addEventListener('change', (e) => {
   dtxEnabled = e.target.checked;
   localStorage.setItem('styx-dtx', dtxEnabled);
-  if (actuallyTauri) tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(() => {});
+  if (actuallyTauri) tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
 });
 
 $('adv-comfort-noise')?.addEventListener('change', (e) => {
   comfortNoiseEnabled = e.target.checked;
   localStorage.setItem('styx-comfort-noise', comfortNoiseEnabled);
-  if (actuallyTauri) tauriInvoke('set_comfort_noise', { enabled: comfortNoiseEnabled }).catch(() => {});
+  if (actuallyTauri) tauriInvoke('set_comfort_noise', { enabled: comfortNoiseEnabled }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
 });
 
 $('adv-auto-adapt')?.addEventListener('change', (e) => {
