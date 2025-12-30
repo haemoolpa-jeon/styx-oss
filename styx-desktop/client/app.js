@@ -5993,11 +5993,20 @@ if ($('loopback-mode')) {
 
 // 고급 설정 패널 토글
 function toggleAdvancedPanel() {
-  $('advanced-settings-panel')?.classList.toggle('hidden');
-  $('effects-panel')?.classList.add('hidden'); // 다른 패널 닫기
+  console.log('toggleAdvancedPanel called');
+  const panel = $('advanced-settings-panel');
+  console.log('panel:', panel);
+  if (panel) {
+    panel.classList.toggle('hidden');
+    console.log('panel hidden:', panel.classList.contains('hidden'));
+  }
+  $('effects-panel')?.classList.add('hidden');
 }
 
-$('advanced-settings-btn')?.addEventListener('click', toggleAdvancedPanel);
+$('advanced-settings-btn')?.addEventListener('click', () => {
+  console.log('advanced-settings-btn clicked');
+  toggleAdvancedPanel();
+});
 
 // 연결 모드 변경
 document.querySelectorAll('input[name="connection-mode"]').forEach(radio => {
@@ -6167,8 +6176,11 @@ $('adv-auto-adapt')?.addEventListener('change', (e) => {
 
 // 오디오 이펙트 패널 (EQ만)
 $('effects-toggle')?.addEventListener('click', () => {
-  $('effects-panel')?.classList.toggle('hidden');
-  $('advanced-settings-panel')?.classList.add('hidden'); // 다른 패널 닫기
+  console.log('effects-toggle clicked');
+  const panel = $('effects-panel');
+  console.log('effects panel:', panel);
+  if (panel) panel.classList.toggle('hidden');
+  $('advanced-settings-panel')?.classList.add('hidden');
 });
 
 // EQ 슬라이더 초기화
