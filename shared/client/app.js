@@ -600,10 +600,7 @@ async function createProcessedInputStream(rawStream) {
       await ctx.audioWorklet.addModule('noise-gate-processor.js');
       noiseGateWorklet = new AudioWorkletNode(ctx, 'noise-gate-processor');
       const thresholdParam = noiseGateWorklet.parameters.get('threshold');
-      // 적응형 임계값 사용 (노이즈 프로파일 기반)
-      const adaptiveThreshold = noiseProfile.adaptiveThreshold > -60 ? 
-        noiseProfile.adaptiveThreshold : -45;
-      if (thresholdParam) thresholdParam.value = adaptiveThreshold;
+      if (thresholdParam) thresholdParam.value = -45; // Default threshold
       eqHigh.connect(noiseGateWorklet);
       lastNode = noiseGateWorklet;
     } catch (e) { log('Noise gate worklet failed:', e); }
@@ -4178,22 +4175,12 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
         peerData.audioNodes = { source, compressor, makeupGain, panNode, gainNode, delayNode, peerAnalyser, dest }; // 정리용
       }
       
-      // 공간 오디오 설정
-      if (spatialAudioEnabled) {
-        setupSpatialAudio(peerId, audioEl);
-      }
-      
       // VAD 시작
       if (vadEnabled) startVAD(peerId, peerAnalyser);
       
     } catch (err) {
       console.error('오디오 처리 설정 실패:', err);
       audioEl.srcObject = e.streams[0];
-      
-      // 공간 오디오 설정
-      if (spatialAudioEnabled) {
-        setupSpatialAudio(peerId, audioEl);
-      }
       
       // 폴백: 간단한 볼륨 모니터링
       if (vadEnabled) startVAD(peerId, null);
@@ -5110,10 +5097,6 @@ socket.on('ice-candidate', async ({ from, candidate }) => {
 });
 
 socket.on('user-left', ({ id }) => {
-  // Cleanup spatial audio and bandwidth monitoring for this peer
-  spatialPanners.delete(id);
-  connectionStats.delete(id);
-  
   // Remove peer from peers Map
   const peer = peers.get(id);
   if (peer) {
@@ -5290,7 +5273,6 @@ function leaveRoom() {
   if (metronomeInterval) { clearInterval(metronomeInterval); metronomeInterval = null; }
   if (turnRefreshTimer) { clearTimeout(turnRefreshTimer); turnRefreshTimer = null; }
   if (networkQualityInterval) { clearInterval(networkQualityInterval); networkQualityInterval = null; }
-  if (bandwidthStatsInterval) { clearInterval(bandwidthStatsInterval); bandwidthStatsInterval = null; }
   
   // VAD 인터벌 정리
   vadIntervals.forEach(int => clearInterval(int));
@@ -5336,11 +5318,6 @@ function leaveRoom() {
   });
   peers.clear();
   volumeStates.clear();
-  
-  // Cleanup spatial audio and bandwidth monitoring
-  spatialPanners.clear();
-  connectionStats.clear();
-  qualityHistory.clear();
   
   // Cleanup P2P and sync mode state
   peerConnections.clear();
