@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
-  <link rel="stylesheet" href="style.css?v=1.4.3">
+  <link rel="stylesheet" href="style.css?v=1.4.4">
   <script src="config.js"></script>
 </head>
 <body data-theme="dark">
@@ -549,67 +549,118 @@
       <div class="room-toolbar">
         <div class="toolbar-section">
           <label class="toolbar-check" title="Push-to-Talk: 스페이스바를 누르고 있을 때만 마이크 활성화"><input type="checkbox" id="room-ptt-mode"> PTT</label>
-          <label class="toolbar-check" title="지연 보상: 모든 참가자의 오디오를 동기화 (지연 증가)"><input type="checkbox" id="delay-compensation"> 지연 맞추기</label>
           <label class="toolbar-check" title="멀티트랙: 각 참가자를 별도 파일로 녹음"><input type="checkbox" id="multitrack-mode"> 멀티트랙</label>
-          <label class="toolbar-check" title="루프백: 내 마이크 소리를 들을 수 있음 (모니터링)"><input type="checkbox" id="loopback-mode"> 루프백</label>
         </div>
         <div class="toolbar-section">
-          <span class="toolbar-label" title="네트워크 지연 변동을 흡수하는 버퍼. 낮을수록 지연↓ 끊김↑">버퍼:</span>
-          <input type="range" id="room-jitter-slider" min="5" max="150" value="50" step="5" class="toolbar-slider" title="5~150ms 조절 가능">
+          <span class="toolbar-label" title="네트워크 지연 변동을 흡수하는 버퍼">버퍼:</span>
+          <input type="range" id="room-jitter-slider" min="5" max="150" value="50" step="5" class="toolbar-slider">
           <span id="room-jitter-value" class="toolbar-value">50ms</span>
-          <label class="toolbar-check" title="네트워크 상태에 따라 자동으로 버퍼 크기 조절"><input type="checkbox" id="room-auto-jitter" checked> 자동</label>
-        </div>
-        <div class="toolbar-section tauri-only" id="bitrate-section" style="display:none;">
-          <span class="toolbar-label" title="Opus 인코더 비트레이트. 높을수록 음질↑ 대역폭↑">음질:</span>
-          <select id="bitrate-select" class="toolbar-select" title="48kbps: 음성용 / 96kbps: 권장 / 192kbps: 고음질 악기">
-            <option value="48">48kbps (저용량)</option>
-            <option value="64">64kbps</option>
-            <option value="96" selected>96kbps (권장)</option>
-            <option value="128">128kbps (고음질)</option>
-            <option value="192">192kbps (최고)</option>
-          </select>
+          <label class="toolbar-check"><input type="checkbox" id="room-auto-jitter" checked> 자동</label>
         </div>
         <div class="toolbar-section metronome-section">
           <button id="metronome-toggle" class="btn-metro">▶️</button>
           <input type="number" id="bpm-input" value="120" min="30" max="300" class="bpm-input">
           <span>BPM</span>
-          <label class="count-in-label"><input type="checkbox" id="count-in"> 카운트인</label>
-          <button class="btn-small" onclick="exportClickTrack()" title="클릭 트랙 내보내기">📥</button>
           <div class="beat-indicators">
             <span class="beat-indicator">1</span>
             <span class="beat-indicator">2</span>
             <span class="beat-indicator">3</span>
             <span class="beat-indicator">4</span>
           </div>
-          <div id="metronome-tick" class="metro-tick"></div>
         </div>
         <div class="toolbar-section">
           <span class="toolbar-label">입력:</span>
           <div class="input-meter"><div id="audio-meter"></div></div>
         </div>
-        <div class="toolbar-section effects-section">
+        <div class="toolbar-section">
+          <button id="advanced-settings-btn" class="btn-icon" title="고급 설정">⚙️</button>
           <button id="effects-toggle" class="btn-icon" title="EQ">🎛️</button>
-          <div id="effects-panel" class="effects-panel hidden">
-            <div class="effect-row preset-row">
-              <span title="EQ와 압축 설정을 한번에 적용">프리셋</span>
-              <select id="audio-preset" onchange="applyAudioPreset(this.value)" title="음성: 명료한 대화 / 악기: 풀레인지 / 팟캐스트: 따뜻한 음색">
-                <option value="custom">사용자 정의</option>
-                <option value="voice">🎤 음성</option>
-                <option value="instrument">🎸 악기</option>
-                <option value="podcast">🎙️ 팟캐스트</option>
-              </select>
-              <button class="btn-small" onclick="saveCustomPreset()" title="현재 설정 저장">💾</button>
-            </div>
-            <div class="effect-row"><span title="마이크 입력 볼륨 조절">입력</span><input type="range" id="input-volume" min="0" max="200" value="120" title="100% 이상은 증폭 (클리핑 주의)"><span class="effect-val">120%</span></div>
-            <div class="effect-row"><span title="저음역 (베이스) 조절">저음</span><input type="range" id="eq-low" min="-12" max="12" value="0" title="250Hz 이하"><span class="effect-val">0dB</span></div>
-            <div class="effect-row"><span title="중음역 (보컬/악기) 조절">중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0" title="250Hz~4kHz"><span class="effect-val">0dB</span></div>
-            <div class="effect-row"><span title="고음역 (선명도) 조절">고음</span><input type="range" id="eq-high" min="-12" max="12" value="0" title="4kHz 이상"><span class="effect-val">0dB</span></div>
-            <div class="effect-row"><span title="다이나믹 레인지 압축 (음량 균일화)">압축</span><input type="range" id="compression-ratio" min="1" max="8" value="4" step="0.5" title="1:1=없음 / 4:1=보통 / 8:1=강함"><span class="effect-val">4:1</span></div>
-            <div class="effect-row diag-row">
-              <span>진단</span>
-              <button id="diag-toggle" class="btn-small" onclick="openDiagnostics()" title="연결 진단">🔍</button>
+          <button id="diag-toggle" class="btn-icon" onclick="openDiagnostics()" title="연결 진단">🔍</button>
+        </div>
+        
+        <!-- 고급 설정 패널 -->
+        <div id="advanced-settings-panel" class="advanced-panel hidden">
+          <div class="panel-header">
+            <h4>⚙️ 고급 설정</h4>
+            <button class="btn-close" onclick="toggleAdvancedPanel()">✕</button>
+          </div>
+          
+          <div class="panel-section">
+            <h5>🔗 연결 모드</h5>
+            <div class="radio-group">
+              <label title="네트워크 상태와 참가자 수에 따라 자동 선택">
+                <input type="radio" name="connection-mode" value="auto" checked> 자동 (권장)
+              </label>
+              <label title="서버를 거치지 않고 직접 연결 (낮은 지연)">
+                <input type="radio" name="connection-mode" value="p2p"> P2P 직접 연결
+              </label>
+              <label title="서버에서 오디오 믹싱 (다수 참가자에 적합)">
+                <input type="radio" name="connection-mode" value="sfu"> SFU 서버 믹싱
+              </label>
             </div>
           </div>
+          
+          <div class="panel-section">
+            <h5>🎛️ 오디오 처리</h5>
+            <div class="checkbox-group">
+              <label title="상대방 스피커 소리가 마이크로 들어가는 것을 방지">
+                <input type="checkbox" id="adv-echo-cancel" checked> 에코 제거
+              </label>
+              <label title="배경 소음(에어컨, 키보드 등)을 줄여줍니다">
+                <input type="checkbox" id="adv-noise-suppress" checked> 노이즈 제거
+              </label>
+              <label title="AI 기반 고급 노이즈 제거 (약간의 지연 추가)">
+                <input type="checkbox" id="adv-ai-noise"> 🤖 AI 노이즈 제거
+              </label>
+              <label title="마이크 입력 볼륨을 자동으로 조절">
+                <input type="checkbox" id="adv-auto-gain" checked> 자동 음량
+              </label>
+            </div>
+          </div>
+          
+          <div class="panel-section">
+            <h5>⚡ 성능 모드</h5>
+            <div class="radio-group">
+              <label title="일반적인 사용에 적합한 균형 잡힌 설정">
+                <input type="radio" name="adv-performance" value="normal" checked> 🎵 일반
+              </label>
+              <label title="지연시간을 최소화 (유선 연결 권장)">
+                <input type="radio" name="adv-performance" value="low-latency"> ⚡ 저지연
+              </label>
+              <label title="모든 오디오 처리 우회 (ASIO 권장)">
+                <input type="radio" name="adv-performance" value="pro"> 🎸 Pro
+              </label>
+            </div>
+          </div>
+          
+          <div class="panel-section tauri-only">
+            <h5>🎚️ 음질</h5>
+            <select id="adv-bitrate" class="panel-select" title="Opus 인코더 비트레이트">
+              <option value="48">48kbps (저용량)</option>
+              <option value="64">64kbps</option>
+              <option value="96" selected>96kbps (권장)</option>
+              <option value="128">128kbps (고음질)</option>
+              <option value="192">192kbps (최고)</option>
+            </select>
+          </div>
+        </div>
+        
+        <!-- EQ 패널 -->
+        <div id="effects-panel" class="effects-panel hidden">
+          <div class="effect-row preset-row">
+            <span title="EQ와 압축 설정을 한번에 적용">프리셋</span>
+            <select id="audio-preset" onchange="applyAudioPreset(this.value)">
+              <option value="custom">사용자 정의</option>
+              <option value="voice">🎤 음성</option>
+              <option value="instrument">🎸 악기</option>
+              <option value="podcast">🎙️ 팟캐스트</option>
+            </select>
+          </div>
+          <div class="effect-row"><span>입력</span><input type="range" id="input-volume" min="0" max="200" value="120"><span class="effect-val">120%</span></div>
+          <div class="effect-row"><span>저음</span><input type="range" id="eq-low" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+          <div class="effect-row"><span>중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+          <div class="effect-row"><span>고음</span><input type="range" id="eq-high" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+          <div class="effect-row"><span>압축</span><input type="range" id="compression-ratio" min="1" max="8" value="4" step="0.5"><span class="effect-val">4:1</span></div>
         </div>
       </div>
 
@@ -638,6 +689,6 @@
 
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script src="styx-modules.js"></script>
-  <script src="app.js?v=1.4.3"></script>
+  <script src="app.js?v=1.4.4"></script>
 </body>
 </html>

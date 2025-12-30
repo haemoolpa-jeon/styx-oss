@@ -3613,6 +3613,9 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     // 방 내 오디오 설정 동기화
     syncRoomAudioSettings();
     
+    // 고급 설정 패널 초기화
+    initAdvancedPanel();
+    
     // PTT 모드면 음소거 버튼 상태 업데이트
     if (pttMode) {
       $('muteBtn').textContent = '🔇';
@@ -5987,9 +5990,114 @@ if ($('loopback-mode')) {
   };
 }
 
+// 고급 설정 패널 토글
+function toggleAdvancedPanel() {
+  $('advanced-settings-panel')?.classList.toggle('hidden');
+  $('effects-panel')?.classList.add('hidden'); // 다른 패널 닫기
+}
+
+$('advanced-settings-btn')?.addEventListener('click', toggleAdvancedPanel);
+
+// 연결 모드 변경
+document.querySelectorAll('input[name="connection-mode"]').forEach(radio => {
+  radio.addEventListener('change', (e) => {
+    const mode = e.target.value;
+    if (mode === 'auto') {
+      // 자동 모드 - 서버가 결정
+      socket.emit('set-connection-preference', { mode: 'auto' });
+      toast('🔄 연결 모드: 자동', 'info');
+    } else if (mode === 'p2p') {
+      // P2P 강제
+      socket.emit('set-connection-preference', { mode: 'p2p' });
+      toast('🔗 연결 모드: P2P 직접 연결', 'info');
+    } else if (mode === 'sfu') {
+      // SFU 강제
+      socket.emit('set-sfu-mode', { enabled: true });
+      toast('🔀 연결 모드: SFU 서버 믹싱', 'info');
+    }
+  });
+});
+
+// 고급 패널 오디오 처리 토글
+$('adv-echo-cancel')?.addEventListener('change', async (e) => {
+  echoCancellation = e.target.checked;
+  localStorage.setItem('styx-echo', echoCancellation);
+  if (localStream) await restartAudioStream();
+});
+
+$('adv-noise-suppress')?.addEventListener('change', async (e) => {
+  noiseSuppression = e.target.checked;
+  localStorage.setItem('styx-noise', noiseSuppression);
+  if (localStream) await restartAudioStream();
+});
+
+$('adv-ai-noise')?.addEventListener('change', async (e) => {
+  aiNoiseCancellation = e.target.checked;
+  localStorage.setItem('styx-ai-noise', aiNoiseCancellation);
+  if (localStream) await restartAudioStream();
+});
+
+$('adv-auto-gain')?.addEventListener('change', (e) => {
+  autoGainControl = e.target.checked;
+  localStorage.setItem('styx-auto-gain', autoGainControl);
+});
+
+// 고급 패널 성능 모드
+document.querySelectorAll('input[name="adv-performance"]').forEach(radio => {
+  radio.addEventListener('change', async (e) => {
+    const mode = e.target.value;
+    lowLatencyMode = mode === 'low-latency' || mode === 'pro';
+    proMode = mode === 'pro';
+    
+    localStorage.setItem('styx-low-latency', lowLatencyMode);
+    localStorage.setItem('styx-pro-mode', proMode);
+    
+    applyLowLatencyMode();
+    
+    if (localStream && proMode) {
+      try {
+        const rawStream = localStream._rawStream || localStream;
+        processedStream = await createProcessedInputStream(rawStream);
+        localStream = processedStream;
+        localStream._rawStream = rawStream;
+      } catch (e) { console.error('Mode switch failed:', e); }
+    }
+    
+    const messages = { 'normal': '🎵 일반 모드', 'low-latency': '⚡ 저지연 모드', 'pro': '🎸 Pro 모드' };
+    toast(messages[mode], 'info');
+  });
+});
+
+// 고급 패널 비트레이트
+$('adv-bitrate')?.addEventListener('change', async (e) => {
+  const bitrate = parseInt(e.target.value);
+  localStorage.setItem('styx-bitrate', bitrate);
+  if (actuallyTauri) {
+    await tauriInvoke('set_bitrate', { bitrateKbps: bitrate });
+  }
+  toast(`음질: ${bitrate}kbps`, 'info');
+});
+
+// 고급 패널 초기값 설정
+function initAdvancedPanel() {
+  if ($('adv-echo-cancel')) $('adv-echo-cancel').checked = echoCancellation;
+  if ($('adv-noise-suppress')) $('adv-noise-suppress').checked = noiseSuppression;
+  if ($('adv-ai-noise')) $('adv-ai-noise').checked = aiNoiseCancellation;
+  if ($('adv-auto-gain')) $('adv-auto-gain').checked = autoGainControl;
+  
+  // 성능 모드
+  const perfMode = proMode ? 'pro' : (lowLatencyMode ? 'low-latency' : 'normal');
+  document.querySelector(`input[name="adv-performance"][value="${perfMode}"]`)?.click();
+  
+  // 비트레이트
+  const savedBitrate = localStorage.getItem('styx-bitrate') || '96';
+  if ($('adv-bitrate')) $('adv-bitrate').value = savedBitrate;
+}
+
 // 오디오 이펙트 패널 (EQ만)
 $('effects-toggle')?.addEventListener('click', () => {
   $('effects-panel')?.classList.toggle('hidden');
+  $('advanced-settings-panel')?.classList.add('hidden'); // 다른 패널 닫기
 });
 
 // EQ 슬라이더 초기화
