@@ -5696,10 +5696,15 @@ function closeDiagnostics() {
 function updateDiagnostics() {
   // Latency chart
   const latencyCanvas = $('diag-latency-chart');
-  if (latencyCanvas && latencyHistory.length > 0) {
+  if (latencyCanvas) {
     const ctx = latencyCanvas.getContext('2d');
     ctx.clearRect(0, 0, 400, 120);
-    ctx.strokeStyle = '#8b7cf7';
+    if (latencyHistory.length === 0) {
+      ctx.fillStyle = '#888';
+      ctx.font = '14px sans-serif';
+      ctx.fillText('데이터 수집 중...', 150, 60);
+    } else {
+      ctx.strokeStyle = '#8b7cf7';
     ctx.lineWidth = 2;
     ctx.beginPath();
     const max = Math.max(100, ...latencyHistory);
@@ -5715,6 +5720,7 @@ function updateDiagnostics() {
     $('diag-avg-latency').textContent = avg;
     $('diag-min-latency').textContent = Math.min(...latencyHistory);
     $('diag-max-latency').textContent = Math.max(...latencyHistory);
+    }
   }
   
   // Jitter histogram
