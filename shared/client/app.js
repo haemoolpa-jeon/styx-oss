@@ -1896,7 +1896,8 @@ function startRecording() {
   isRecording = true;
   const recordBtn = $('recordBtn');
   if (recordBtn) {
-    recordBtn.textContent = '⏹️ 녹음 중';
+    recordBtn.textContent = '⏹️';
+    recordBtn.title = '녹음 중지';
     recordBtn.classList.add('recording');
   }
 }
@@ -1933,7 +1934,8 @@ function stopRecording() {
   isRecording = false;
   const recordBtn = $('recordBtn');
   if (recordBtn) {
-    recordBtn.textContent = '⏺️ 녹음';
+    recordBtn.textContent = '⏺️';
+    recordBtn.title = '녹음';
     recordBtn.classList.remove('recording');
   }
 }
@@ -3711,7 +3713,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
     if (!networkQualityInterval) {
       networkQualityInterval = setInterval(monitorNetworkQuality, 5000);
     }
-    if (actuallyTauri) startAudioMeter();
+    startAudioMeter();
     initPttTouch();
     joiningRoom = false;
   });

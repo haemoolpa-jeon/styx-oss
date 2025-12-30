@@ -893,6 +893,14 @@ input[type="range"]::-webkit-slider-thumb {
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--bg-input); color: var(--text-primary); font-size: 12px;
 }
+.bpm-input::-webkit-inner-spin-button,
+.bpm-input::-webkit-outer-spin-button {
+  opacity: 1;
+}
+input[type="number"] {
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
 .bpm-input:focus { border-color: var(--accent); outline: none; }
 .count-in-label { font-size: 11px; display: flex; align-items: center; gap: 4px; color: var(--text-muted); }
 .beat-indicators { display: flex; gap: 4px; }
@@ -1160,7 +1168,15 @@ input[type="range"]::-webkit-slider-thumb {
 .btn-small { padding: 8px 14px; border-radius: 4px; border: none; background: var(--primary); color: white; cursor: pointer; font-size: 13px; }
 .btn-small.btn-danger { background: #e94560; }
 .template-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-.template-row select, .template-row input { flex: 1; }
+.template-row select, .template-row input { 
+  flex: 1; 
+  background: var(--bg-input); 
+  color: var(--text-primary); 
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+.template-row select option { background: var(--bg-card); color: var(--text-primary); }
 
 /* User management controls */
 .user-management-controls {
