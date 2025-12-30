@@ -2323,6 +2323,10 @@ socket.on('disconnect', () => {
   socket.room = null;
 });
 
+socket.on('error', (data) => {
+  toast(data.message || '서버 오류', 'error');
+});
+
 // 서버 종료 알림
 socket.on('server-shutdown', () => {
   toast('서버가 종료됩니다. 잠시 후 재연결됩니다.', 'warning', 5000);
@@ -5383,8 +5387,8 @@ $('test-audio-btn').onclick = async () => {
     testStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-        echoCancellation: $('echo-cancel').checked,
-        noiseSuppression: $('noise-suppress').checked,
+        echoCancellation: $('adv-echo-cancel')?.checked ?? true,
+        noiseSuppression: $('adv-noise-suppress')?.checked ?? true,
         channelCount: 2 // Stereo support
       }
     });
