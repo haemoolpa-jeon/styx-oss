@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
-  <link rel="stylesheet" href="style.css?v=1.4.7">
+  <link rel="stylesheet" href="style.css?v=1.5.0">
   <script src="config.js"></script>
 </head>
 <body data-theme="dark">
@@ -500,21 +500,6 @@
           </div>
           
           <div class="panel-section">
-            <h5>🔗 연결 모드</h5>
-            <div class="radio-group">
-              <label title="네트워크 상태와 참가자 수에 따라 자동 선택">
-                <input type="radio" name="connection-mode" value="auto" checked> 자동 (권장)
-              </label>
-              <label title="서버를 거치지 않고 직접 연결 (낮은 지연)">
-                <input type="radio" name="connection-mode" value="p2p"> P2P 직접 연결
-              </label>
-              <label title="서버에서 오디오 믹싱 (다수 참가자에 적합)">
-                <input type="radio" name="connection-mode" value="sfu"> SFU 서버 믹싱
-              </label>
-            </div>
-          </div>
-          
-          <div class="panel-section">
             <h5>🎛️ 오디오 처리</h5>
             <div class="checkbox-group">
               <label title="상대방 스피커 소리가 마이크로 들어가는 것을 방지">
@@ -535,9 +520,6 @@
           <div class="panel-section">
             <h5>🗣️ 통화 모드</h5>
             <div class="checkbox-group">
-              <label title="스페이스바를 누르고 있을 때만 마이크가 켜집니다">
-                <input type="checkbox" id="adv-ptt-mode"> 눌러서 말하기 (Space)
-              </label>
               <label title="말하고 있을 때 프로필에 표시됩니다">
                 <input type="checkbox" id="adv-vad-mode" checked> 말할 때 표시
               </label>
@@ -639,6 +621,6 @@
 
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script src="styx-modules.js"></script>
-  <script src="app.js?v=1.4.8"></script>
+  <script src="app.js?v=1.5.0"></script>
 </body>
 </html>

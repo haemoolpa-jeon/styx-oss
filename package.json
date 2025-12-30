@@ -1,6 +1,6 @@
 {
   "name": "styx",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Real-time audio collaboration platform",
   "main": "server/index.js",
   "license": "MIT",
