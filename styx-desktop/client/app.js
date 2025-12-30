@@ -6165,16 +6165,6 @@ $('adv-auto-adapt')?.addEventListener('change', (e) => {
   localStorage.setItem('styx-auto-adapt', autoAdapt);
 });
 
-document.querySelectorAll('input[name="adv-performance"]').forEach(radio => {
-  radio.addEventListener('change', (e) => {
-    const mode = e.target.value;
-    lowLatencyMode = mode === 'low-latency';
-    proMode = mode === 'pro';
-    localStorage.setItem('styx-low-latency', lowLatencyMode);
-    localStorage.setItem('styx-pro-mode', proMode);
-  });
-});
-
 // 오디오 이펙트 패널 (EQ만)
 $('effects-toggle')?.addEventListener('click', () => {
   const panel = $('effects-panel');
