@@ -1122,6 +1122,10 @@ input[type="range"]::-webkit-slider-thumb {
 .panel-section input[type="radio"],
 .panel-section input[type="checkbox"] { margin: 0; }
 .panel-select { width: 100%; padding: 6px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.panel-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.panel-slider { flex: 1; min-width: 80px; }
+.panel-value { min-width: 45px; font-size: 12px; color: var(--text-secondary); }
+.settings-hint { font-size: 12px; color: var(--text-secondary); margin-top: 12px; padding: 8px; background: var(--bg); border-radius: 4px; }
 
 /* Auto jitter */
 .auto-jitter-label { font-size: 12px; margin-top: 4px; display: flex; align-items: center; gap: 4px; }

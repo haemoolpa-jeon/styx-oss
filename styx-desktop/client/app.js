@@ -6081,19 +6081,89 @@ $('adv-bitrate')?.addEventListener('change', async (e) => {
 
 // 고급 패널 초기값 설정
 function initAdvancedPanel() {
+  // 오디오 처리
   if ($('adv-echo-cancel')) $('adv-echo-cancel').checked = echoCancellation;
   if ($('adv-noise-suppress')) $('adv-noise-suppress').checked = noiseSuppression;
   if ($('adv-ai-noise')) $('adv-ai-noise').checked = aiNoiseCancellation;
   if ($('adv-auto-gain')) $('adv-auto-gain').checked = autoGainControl;
   
+  // 통화 모드
+  if ($('adv-ptt-mode')) $('adv-ptt-mode').checked = pttMode;
+  if ($('adv-vad-mode')) $('adv-vad-mode').checked = vadEnabled;
+  if ($('adv-input-monitor')) $('adv-input-monitor').checked = inputMonitorEnabled;
+  
   // 성능 모드
   const perfMode = proMode ? 'pro' : (lowLatencyMode ? 'low-latency' : 'normal');
-  document.querySelector(`input[name="adv-performance"][value="${perfMode}"]`)?.click();
+  const perfRadio = document.querySelector(`input[name="adv-performance"][value="${perfMode}"]`);
+  if (perfRadio) perfRadio.checked = true;
+  
+  // 네트워크
+  if ($('adv-jitter-slider')) {
+    $('adv-jitter-slider').value = jitterBuffer;
+    $('adv-jitter-slider').disabled = autoJitter;
+  }
+  if ($('adv-jitter-value')) $('adv-jitter-value').textContent = jitterBuffer + 'ms';
+  if ($('adv-auto-jitter')) $('adv-auto-jitter').checked = autoJitter;
+  if ($('adv-dtx')) $('adv-dtx').checked = dtxEnabled;
+  if ($('adv-comfort-noise')) $('adv-comfort-noise').checked = comfortNoiseEnabled;
+  if ($('adv-auto-adapt')) $('adv-auto-adapt').checked = autoAdapt;
   
   // 비트레이트
   const savedBitrate = localStorage.getItem('styx-bitrate') || '96';
   if ($('adv-bitrate')) $('adv-bitrate').value = savedBitrate;
 }
+
+// 새 고급 패널 핸들러
+$('adv-ptt-mode')?.addEventListener('change', (e) => {
+  pttMode = e.target.checked;
+  localStorage.setItem('styx-ptt', pttMode);
+  if (pttMode && localStream) {
+    localStream.getAudioTracks().forEach(t => t.enabled = false);
+    isMuted = true;
+    updateMuteUI();
+  }
+});
+
+$('adv-vad-mode')?.addEventListener('change', (e) => {
+  vadEnabled = e.target.checked;
+  localStorage.setItem('styx-vad', vadEnabled);
+});
+
+$('adv-input-monitor')?.addEventListener('change', (e) => {
+  inputMonitorEnabled = e.target.checked;
+  localStorage.setItem('styx-input-monitor', inputMonitorEnabled);
+  toggleInputMonitor(inputMonitorEnabled);
+});
+
+$('adv-jitter-slider')?.addEventListener('input', (e) => {
+  jitterBuffer = parseInt(e.target.value);
+  if ($('adv-jitter-value')) $('adv-jitter-value').textContent = jitterBuffer + 'ms';
+  localStorage.setItem('styx-jitter-buffer', jitterBuffer);
+  applyJitterBuffer();
+});
+
+$('adv-auto-jitter')?.addEventListener('change', (e) => {
+  autoJitter = e.target.checked;
+  localStorage.setItem('styx-auto-jitter', autoJitter);
+  if ($('adv-jitter-slider')) $('adv-jitter-slider').disabled = autoJitter;
+});
+
+$('adv-dtx')?.addEventListener('change', (e) => {
+  dtxEnabled = e.target.checked;
+  localStorage.setItem('styx-dtx', dtxEnabled);
+  if (actuallyTauri) tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(() => {});
+});
+
+$('adv-comfort-noise')?.addEventListener('change', (e) => {
+  comfortNoiseEnabled = e.target.checked;
+  localStorage.setItem('styx-comfort-noise', comfortNoiseEnabled);
+  if (actuallyTauri) tauriInvoke('set_comfort_noise', { enabled: comfortNoiseEnabled }).catch(() => {});
+});
+
+$('adv-auto-adapt')?.addEventListener('change', (e) => {
+  autoAdapt = e.target.checked;
+  localStorage.setItem('styx-auto-adapt', autoAdapt);
+});
 
 // 오디오 이펙트 패널 (EQ만)
 $('effects-toggle')?.addEventListener('click', () => {
