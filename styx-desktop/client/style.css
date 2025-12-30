@@ -200,12 +200,21 @@ small {
 input, select, textarea {
   transition: all 0.2s ease;
   border: 2px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
 }
 
 input:focus, select:focus, textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--accent-glow);
   outline: none;
+}
+
+select option {
+  background: var(--bg-card);
+  color: var(--text-primary);
 }
 
 /* Modal */
@@ -1154,8 +1163,10 @@ input[type="number"] {
 }
 .tuner-display .note { font-size: 32px; font-weight: bold; }
 .tuner-display .cents { font-size: 16px; margin-left: 8px; color: var(--text-secondary); }
-.tuner-display.in-tune { border-color: #4caf50; background: rgba(76, 175, 80, 0.1); }
-.tuner-display.in-tune .cents { color: #4caf50; }
+.tuner-display.in-tune { border-color: var(--success); background: rgba(45, 212, 160, 0.1); }
+.tuner-display.in-tune .cents { color: var(--success); }
+
+[data-theme="light"] .tuner-display.in-tune { background: rgba(5, 150, 105, 0.1); }
 
 
 /* Whitelist management */
@@ -1164,9 +1175,9 @@ input[type="number"] {
 .whitelist-add { display: flex; gap: 8px; }
 .whitelist-add input { flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-primary); }
 .whitelist-item { display: flex; justify-content: space-between; align-items: center; padding: 8px; background: var(--bg-input); border-radius: 4px; margin-bottom: 4px; }
-.whitelist-item button { background: #e94560; border: none; color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+.whitelist-item button { background: var(--danger); border: none; color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
 .btn-small { padding: 8px 14px; border-radius: 4px; border: none; background: var(--primary); color: white; cursor: pointer; font-size: 13px; }
-.btn-small.btn-danger { background: #e94560; }
+.btn-small.btn-danger { background: var(--danger); }
 .template-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
 .template-row select, .template-row input { 
   flex: 1; 
@@ -1264,12 +1275,12 @@ input[type="number"] {
   border-left: 4px solid var(--accent);
 }
 .pending-user {
-  border-left-color: #ffa502; /* Orange for pending */
-  background: rgba(255, 165, 2, 0.1);
+  border-left-color: var(--warning);
+  background: rgba(255, 192, 92, 0.1);
 }
 .user-item {
-  border-left-color: #2ed573; /* Green for approved */
-  background: rgba(46, 213, 115, 0.1);
+  border-left-color: var(--success);
+  background: rgba(45, 212, 160, 0.1);
 }
 .pending-user span, .user-item span {
   font-weight: 500; flex: 1;
@@ -1279,14 +1290,17 @@ input[type="number"] {
   cursor: pointer; font-size: 14px; font-weight: bold;
 }
 .pending-user button:first-of-type {
-  background: #2ed573; color: white; /* Approve button */
+  background: var(--success); color: white;
 }
 .pending-user button:last-of-type {
-  background: #e94560; color: white; /* Reject button */
+  background: var(--danger); color: white;
 }
 .user-item button {
-  background: #e94560; color: white; /* Delete button */
+  background: var(--danger); color: white;
 }
+
+[data-theme="light"] .pending-user { background: rgba(217, 119, 6, 0.1); }
+[data-theme="light"] .user-item { background: rgba(5, 150, 105, 0.1); }
 .pending-user button:hover, .user-item button:hover {
   opacity: 0.8;
 }
@@ -1337,7 +1351,7 @@ input[type="number"] {
 #adminBtn { position: relative; }
 .notification-badge {
   position: absolute; top: -8px; right: -8px;
-  background: #e94560; color: white; border-radius: 50%;
+  background: var(--danger); color: white; border-radius: 50%;
   width: 20px; height: 20px; font-size: 12px; font-weight: bold;
   display: flex; align-items: center; justify-content: center;
   animation: pulse 2s infinite;
