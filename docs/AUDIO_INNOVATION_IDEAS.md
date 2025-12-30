@@ -5,203 +5,308 @@
 ### ✅ Already Implemented (Good!)
 | Feature | Status | Location |
 |---------|--------|----------|
-| **Opus FEC** | ✅ Enabled | `peer.rs:276` - `set_inband_fec(true)` |
-| **Adaptive FEC %** | ✅ Dynamic | `peer.rs:426-427` - adjusts based on loss |
-| **Adaptive Bitrate** | ✅ Client-side | `app.js:3543-3551` - 48-128kbps range |
-| **Adaptive Jitter Buffer** | ✅ NetEQ-style | `peer.rs:53-150` - auto-adjusts target |
-| **CBR Mode** | ✅ Enabled | `peer.rs:278` - consistent latency |
+| **Opus FEC** | ✅ Enabled | `peer.rs:279` - `set_inband_fec(true)` |
+| **Adaptive FEC %** | ✅ Dynamic | `peer.rs:428-430` - loss*1.5+5 headroom |
+| **Adaptive Bitrate** | ✅ Client-side | `app.js:3543-3553` - 48-128kbps range |
+| **Adaptive Jitter Buffer** | ✅ NetEQ-style | `peer.rs:53-160` - auto-adjusts, allows 0 |
+| **CBR Mode** | ✅ Enabled | `peer.rs:281` - consistent latency |
 | **DSCP QoS** | ✅ Enabled | `udp.rs:65-75` - EF marking |
 | **P2P + Relay Fallback** | ✅ Working | NAT detection + auto fallback |
 | **TCP Fallback** | ✅ Working | When UDP completely fails |
+| **Hybrid SFU** | ✅ Implemented | Simple relay for <5 users |
 
 ### Current Latency Breakdown (Tauri Mode)
 ```
 Capture buffer:     ~5ms  (480 samples @ 48kHz)
 Opus encode:        ~2ms  (LowDelay mode)
 Network (relay):    ~20-40ms (Seoul server)
-Jitter buffer:      ~5-20ms (adaptive)
+Jitter buffer:      ~0-20ms (adaptive, can be 0)
 Opus decode:        ~2ms
 Playback buffer:    ~5ms
 ─────────────────────────────
-Total:              ~40-75ms typical
+Total:              ~35-75ms typical (can be <40ms on good networks)
 ```
 
 ---
 
-## Evaluation of Ideas (Considering Your Criteria)
+## Comprehensive Analysis of Postponed Improvements
 
-### Criteria Weights:
-1. **Latency** - Must not increase
+### Evaluation Criteria
+1. **Latency Impact** - Must not increase, ideally decrease
 2. **Stability** - No cutting out, no sound loss
-3. **Server Load** - Manageable, upgradeable
-4. **Integration** - Works with existing code
+3. **Server Load** - Manageable, upgradeable if needed
+4. **Implementation Effort** - Time and complexity
+5. **Real-World Benefit** - For music collaboration use case
 
 ---
 
-### 🟢 RECOMMENDED: Low Risk, High Value
+## Tier 1: High Value, Reasonable Effort
 
-#### 1. Improve Existing FEC Tuning
-**Current:** FEC % set to measured loss rate
-**Improvement:** Set FEC % slightly higher than measured (anticipate bursts)
+### 1. Opus DRED (Deep Redundancy) 
+**Status:** Postponed - needs library update
 
-```rust
-// Current (peer.rs:426-427)
-let fec_pct = loss_pct.max(0).min(50);
+| Criteria | Assessment |
+|----------|------------|
+| Latency | 0ms added (embedded in packet) |
+| Stability | +++  Can recover up to 400ms of lost audio |
+| Server | 0 (client-side only) |
+| Effort | Medium - update opus crate to 1.5+ |
+| Benefit | High for unstable networks |
 
-// Improved: Add headroom for burst loss
-let fec_pct = (loss_pct * 1.5 + 5.0).max(5).min(50) as i32;
-```
+**Analysis:**
+- Current FEC recovers 1 lost packet (~5ms)
+- DRED can recover 80 consecutive lost packets (~400ms)
+- Uses ML-based compression for redundancy (~200 bytes extra)
+- Being standardized by IETF (draft-ietf-mlcodec-opus-dred)
 
-| Criteria | Impact |
-|----------|--------|
-| Latency | 0ms (no change) |
-| Stability | +15% better burst recovery |
-| Server | 0 (client-side) |
-| Integration | 1 line change |
-
----
-
-#### 2. Reduce Minimum Jitter Buffer
-**Current:** MIN_JITTER_BUFFER = 1 (5ms)
-**Issue:** Good networks don't need even 5ms
-
-```rust
-// Consider: Allow 0 buffer for excellent connections
-const MIN_JITTER_BUFFER: usize = 0; // Was 1
-
-// But only if late_ratio is very low
-if late_ratio < 0.001 && self.jitter_estimate < 2.0 {
-    self.target_size = 0; // Direct playback
-}
-```
-
-| Criteria | Impact |
-|----------|--------|
-| Latency | -5ms for good networks |
-| Stability | Neutral (only for stable connections) |
-| Server | 0 |
-| Integration | Small change |
+**Recommendation:** ⏳ Wait for opus crate 1.5 stable release, then implement
+**When:** Q1 2025 (when library matures)
 
 ---
 
-#### 3. Faster Bitrate Recovery
-**Current:** Increase by 8kbps when loss < 1%
-**Issue:** Slow recovery after congestion clears
+### 2. Packet Loss Concealment (PLC) Enhancement
+**Status:** Not yet considered
 
-```javascript
-// Current (app.js:3548-3551)
-currentBitrate = Math.min(maxBitrate, currentBitrate + 8);
-
-// Improved: Faster recovery when network is stable
-const increment = stats.loss_rate === 0 ? 16 : 8;
-currentBitrate = Math.min(maxBitrate, currentBitrate + increment);
-```
-
-| Criteria | Impact |
-|----------|--------|
+| Criteria | Assessment |
+|----------|------------|
 | Latency | 0ms |
-| Stability | Better quality recovery |
+| Stability | ++ Better than silence on loss |
 | Server | 0 |
-| Integration | 1 line change |
+| Effort | Low-Medium |
+| Benefit | High - smoother audio during loss |
 
----
+**Analysis:**
+Current behavior on packet loss:
+- Opus decoder has basic PLC (repeats/fades last frame)
+- Could enhance with Burg's method or simple interpolation
 
-### 🟡 CONSIDER: Medium Effort, Good Value
-
-#### 4. Hybrid Relay Mode (Smart SFU)
-**Current:** SFU always decodes/encodes for all peers
-**Improvement:** Only use SFU mixing for 5+ users
-
-```javascript
-// In server UDP handler
-if (members.size <= 4) {
-    // Simple relay - no decode/encode
-    relayPacketToAll(packet);
-} else {
-    // SFU mixing for larger rooms
-    sfuMixAndSend(packet);
+**Implementation:**
+```rust
+// In decoder, when packet missing:
+if packet_lost {
+    // Instead of just decoder.decode(None):
+    // 1. Use previous frame's spectral envelope
+    // 2. Apply pitch-based interpolation
+    // 3. Gradually fade if consecutive losses
 }
 ```
 
-| Criteria | Impact |
-|----------|--------|
-| Latency | -10-20ms for small rooms |
-| Stability | Same |
-| Server | -80% CPU for small rooms |
-| Integration | Moderate (conditional logic) |
+**Recommendation:** ✅ Consider implementing - low effort, good benefit
+**When:** Next iteration
 
 ---
 
-#### 5. Packet Duplication for Critical Frames
-**Current:** Each packet sent once
-**Improvement:** Duplicate first packet after silence (attack transients)
+### 3. Smarter Sync Mode
+**Status:** Basic implementation exists
 
+| Criteria | Assessment |
+|----------|------------|
+| Latency | Intentionally adds delay for sync |
+| Stability | Neutral |
+| Server | Low (just coordination) |
+| Effort | Medium |
+| Benefit | High for music collaboration |
+
+**Current Issues:**
+- Sync mode adds delay to faster connections
+- Doesn't account for audio device latency
+- No automatic calibration
+
+**Improvements:**
+1. **Auto-calibration:** Measure actual end-to-end latency including audio devices
+2. **Adaptive sync:** Only add minimum necessary delay
+3. **Visual metronome sync:** Ensure visual and audio are aligned
+
+**Recommendation:** ✅ Improve existing sync mode
+**When:** Next iteration
+
+---
+
+## Tier 2: Medium Value, Higher Effort
+
+### 4. WebTransport for Browser
+**Status:** Postponed
+
+| Criteria | Assessment |
+|----------|------------|
+| Latency | Better than WebRTC for audio-only |
+| Stability | Good (QUIC-based) |
+| Server | Needs HTTP/3 support |
+| Effort | High - major rewrite |
+| Benefit | Medium (browser is secondary) |
+
+**Analysis:**
+- WebRTC works fine for browser mode
+- Browser mode is "spectator only" anyway
+- WebTransport would need server changes (HTTP/3)
+
+**Recommendation:** ❌ Not worth effort for current use case
+**When:** Only if browser becomes primary platform
+
+---
+
+### 5. Edge Server Distribution
+**Status:** Postponed
+
+| Criteria | Assessment |
+|----------|------------|
+| Latency | -10-30ms for distant users |
+| Stability | Better (redundancy) |
+| Server | High cost (multiple servers) |
+| Effort | High (infrastructure) |
+| Benefit | Only if users are geographically distributed |
+
+**Analysis:**
+- Current users are mostly in Korea
+- Single Seoul server is sufficient
+- Would need AWS Global Accelerator or similar
+
+**Recommendation:** ❌ Not needed now
+**When:** Only if expanding to international users
+
+---
+
+### 6. Server-side Spatial Audio
+**Status:** Postponed
+
+| Criteria | Assessment |
+|----------|------------|
+| Latency | +5-10ms (processing) |
+| Stability | Neutral |
+| Server | High CPU |
+| Effort | High |
+| Benefit | Low (client-side works fine) |
+
+**Recommendation:** ❌ Keep client-side spatial audio
+**When:** Never (adds latency, no benefit)
+
+---
+
+## Tier 3: Nice to Have
+
+### 7. Packet Duplication for Transients
+**Status:** Considered but not implemented
+
+| Criteria | Assessment |
+|----------|------------|
+| Latency | 0ms |
+| Stability | + Better attack preservation |
+| Server | +5% bandwidth |
+| Effort | Low |
+| Benefit | Medium for percussive sounds |
+
+**Implementation:**
 ```rust
 // Detect silence → sound transition
-if was_silent && !is_silent {
-    // Send this packet twice (different sequence numbers)
-    send_packet(packet.clone());
-    send_packet_duplicate(packet);
+let is_attack = prev_rms < 0.01 && curr_rms > 0.1;
+if is_attack {
+    send_packet(packet.clone()); // Send twice
 }
 ```
 
-| Criteria | Impact |
-|----------|--------|
+**Recommendation:** ⏳ Consider for future
+**When:** After more critical improvements
+
+---
+
+### 8. Audio Fingerprinting for True Latency
+**Status:** Not implemented
+
+| Criteria | Assessment |
+|----------|------------|
+| Latency | 0ms (measurement only) |
+| Stability | Neutral |
+| Server | Low |
+| Effort | Medium |
+| Benefit | Better sync calibration |
+
+**Analysis:**
+- Would inject ultrasonic pulses (18-20kHz)
+- Measure true glass-to-glass latency
+- Useful for sync mode calibration
+
+**Recommendation:** ⏳ Consider for sync mode improvement
+**When:** When improving sync mode
+
+---
+
+## New Ideas to Consider
+
+### 9. Comfort Noise Generation
+**Status:** Not implemented
+
+| Criteria | Assessment |
+|----------|------------|
 | Latency | 0ms |
-| Stability | Better attack preservation |
-| Server | +5% bandwidth (only on attacks) |
-| Integration | Moderate |
+| Stability | + Smoother silence |
+| Server | 0 |
+| Effort | Low |
+| Benefit | Medium - less jarring transitions |
+
+**Analysis:**
+- When no audio, generate low-level comfort noise
+- Prevents "dead air" feeling
+- Standard in VoIP (RFC 3389)
+
+**Recommendation:** ✅ Easy to implement
+**When:** Next iteration
 
 ---
 
-### 🔴 NOT RECOMMENDED (For Now)
+### 10. DTX (Discontinuous Transmission)
+**Status:** Not enabled
 
-#### ❌ Opus DRED
-- Requires Opus 1.5 library update
-- Adds complexity
-- Current FEC is sufficient for most cases
+| Criteria | Assessment |
+|----------|------------|
+| Latency | 0ms |
+| Stability | Neutral |
+| Server | -30% bandwidth during silence |
+| Effort | Very low (just enable) |
+| Benefit | Bandwidth savings |
 
-#### ❌ WebTransport
-- Major rewrite of browser mode
-- Browser support still limited
-- Current WebRTC works fine
+**Analysis:**
+- Opus supports DTX - don't send packets during silence
+- Reduces bandwidth significantly
+- Already supported, just needs enabling
 
-#### ❌ Server-side Spatial Audio
-- Adds latency (processing time)
-- High CPU
-- Client-side spatial already works
-
-#### ❌ Edge Server Distribution
-- Infrastructure complexity
-- Current single server is sufficient for Korea
-- Consider only if expanding globally
+**Recommendation:** ⚠️ Test carefully - may cause issues with VAD
+**When:** After testing
 
 ---
 
-## Recommended Implementation Order
+## Priority Roadmap
 
-### Phase 1: Quick Wins (Today)
-1. ✅ Improve FEC tuning (add headroom)
-2. ✅ Faster bitrate recovery
-3. ✅ Allow zero jitter buffer for excellent connections
+### Immediate (This Week)
+1. ✅ **Comfort Noise** - Easy, improves UX
+2. ✅ **Test DTX** - May save bandwidth
 
-### Phase 2: Optimization (This Week)
-4. 🔄 Hybrid relay mode (skip SFU for small rooms)
-5. 🔄 Packet duplication for transients
+### Short-term (This Month)
+3. 🔄 **Enhanced PLC** - Better packet loss handling
+4. 🔄 **Sync Mode Improvements** - Auto-calibration
 
-### Phase 3: Future Consideration
-6. ⏳ Opus DRED when library matures
-7. ⏳ WebTransport when browser support improves
-8. ⏳ Edge servers if expanding globally
+### Medium-term (Q1 2025)
+5. ⏳ **Opus DRED** - When library is ready
+6. ⏳ **Audio Fingerprinting** - For sync calibration
+
+### Long-term / If Needed
+7. ❌ WebTransport - Only if browser becomes primary
+8. ❌ Edge Servers - Only if international expansion
+9. ❌ Server Spatial - Never (adds latency)
 
 ---
 
 ## Summary
 
-**Your current implementation is already quite good!** The main opportunities are:
+**Your system is already well-optimized.** The most impactful remaining improvements are:
 
-1. **Fine-tuning existing features** (FEC %, jitter buffer, bitrate recovery)
-2. **Reducing unnecessary processing** (skip SFU for small rooms)
-3. **Protecting critical audio** (duplicate attack transients)
+1. **Comfort Noise** - Easy win, better UX
+2. **Enhanced PLC** - Better packet loss handling  
+3. **Sync Mode Improvements** - Critical for music collaboration
+4. **Opus DRED** - When library is ready
 
-These changes maintain your low-latency focus while improving stability, with minimal server impact.
+The key insight is that for **music collaboration**, the sync mode is actually more important than raw latency. Musicians can adapt to consistent latency, but inconsistent timing is unusable.
+
+Focus areas:
+- **Stability over raw speed** - Consistent latency > lowest latency
+- **Sync mode** - Make it actually usable for ensemble playing
+- **Packet loss resilience** - FEC + PLC + (future) DRED

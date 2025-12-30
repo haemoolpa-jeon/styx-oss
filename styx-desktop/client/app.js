@@ -1573,6 +1573,8 @@ let delayCompensation = false;
 let autoJitter = localStorage.getItem('styx-auto-jitter') !== 'false'; // 자동 지터 버퍼
 let lowLatencyMode = localStorage.getItem('styx-low-latency') === 'true'; // 저지연 모드
 let proMode = localStorage.getItem('styx-pro-mode') === 'true'; // Pro 모드 (처리 우회)
+let dtxEnabled = localStorage.getItem('styx-dtx') === 'true'; // DTX (무음 시 전송 안함)
+let comfortNoiseEnabled = localStorage.getItem('styx-comfort-noise') === 'true'; // 컴포트 노이즈
 let currentRoomSettings = {}; // 현재 방 설정
 let isRoomCreator = false; // 방장 여부
 let roomCreatorUsername = ''; // 방장 이름
@@ -3418,6 +3420,10 @@ async function startUdpMode() {
       
       await tauriInvoke('udp_start_relay_stream');
       console.log('✅ UDP relay stream started successfully');
+      
+      // Apply optional audio settings
+      await tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(() => {});
+      await tauriInvoke('set_comfort_noise', { enabled: comfortNoiseEnabled }).catch(() => {});
       
       // Wait a moment before starting stats monitor
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -6409,6 +6415,32 @@ if ($('pro-mode')) {
       }
     }
     toast(proMode ? '🎸 Pro 모드: 모든 처리 우회 (최저 지연)' : '🎛️ 일반 모드: EQ/압축/노이즈게이트 활성', 'info');
+  };
+}
+
+// DTX (Discontinuous Transmission) - saves bandwidth during silence
+if ($('dtx-toggle')) {
+  $('dtx-toggle').checked = dtxEnabled;
+  $('dtx-toggle').onchange = () => {
+    dtxEnabled = $('dtx-toggle').checked;
+    localStorage.setItem('styx-dtx', dtxEnabled);
+    if (actuallyTauri) {
+      tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(() => {});
+    }
+    toast(dtxEnabled ? '📉 DTX 켜짐: 무음 시 대역폭 절약' : '📉 DTX 꺼짐', 'info');
+  };
+}
+
+// Comfort Noise - generates low-level noise during silence
+if ($('comfort-noise-toggle')) {
+  $('comfort-noise-toggle').checked = comfortNoiseEnabled;
+  $('comfort-noise-toggle').onchange = () => {
+    comfortNoiseEnabled = $('comfort-noise-toggle').checked;
+    localStorage.setItem('styx-comfort-noise', comfortNoiseEnabled);
+    if (actuallyTauri) {
+      tauriInvoke('set_comfort_noise', { enabled: comfortNoiseEnabled }).catch(() => {});
+    }
+    toast(comfortNoiseEnabled ? '🔇 컴포트 노이즈 켜짐' : '🔇 컴포트 노이즈 꺼짐', 'info');
   };
 }
 

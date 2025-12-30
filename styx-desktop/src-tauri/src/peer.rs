@@ -213,6 +213,9 @@ pub struct UdpStreamState {
     // 릴레이 모드
     pub relay_addr: Option<SocketAddr>,
     pub session_id: Option<String>,
+    // Optional audio features
+    pub dtx_enabled: Arc<AtomicBool>,      // Discontinuous transmission (save bandwidth during silence)
+    pub comfort_noise: Arc<AtomicBool>,    // Generate comfort noise during silence
 }
 
 impl Default for UdpStreamState {
@@ -235,6 +238,8 @@ impl Default for UdpStreamState {
             output_device: None,
             relay_addr: None,
             session_id: None,
+            dtx_enabled: Arc::new(AtomicBool::new(false)),  // Off by default
+            comfort_noise: Arc::new(AtomicBool::new(false)), // Off by default
         }
     }
 }
@@ -672,6 +677,8 @@ pub fn start_relay_loop(
     output_device: Option<String>,
     input_level: Arc<AtomicU32>,
     bitrate: Arc<AtomicU32>,
+    dtx_enabled: Arc<AtomicBool>,
+    comfort_noise: Arc<AtomicBool>,
 ) -> Result<(), String> {
     eprintln!("[RELAY] Starting relay loop with proper networking");
     
@@ -705,6 +712,7 @@ pub fn start_relay_loop(
     let sequence_send = sequence.clone();
     let packets_sent_send = packets_sent.clone();
     let input_level_send = input_level.clone();
+    let dtx_enabled_send = dtx_enabled.clone();
     let session_send = session_bytes.clone();
     
     std::thread::spawn(move || {
@@ -757,6 +765,10 @@ pub fn start_relay_loop(
         let mut last_keepalive = std::time::Instant::now();
         let keepalive_interval = std::time::Duration::from_secs(5);
         
+        // DTX state
+        const SILENCE_THRESHOLD: f32 = 0.005; // -46dB
+        let mut consecutive_silence_frames = 0u32;
+        
         while is_running_send.load(Ordering::SeqCst) {
             if let Ok(samples) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
                 // Calculate input level
@@ -775,6 +787,21 @@ pub fn start_relay_loop(
                     }
                     continue;
                 }
+                
+                // DTX: Skip sending during silence (if enabled)
+                let is_silence = rms < SILENCE_THRESHOLD;
+                if dtx_enabled_send.load(Ordering::SeqCst) && is_silence {
+                    consecutive_silence_frames += 1;
+                    // Send occasional keepalive during silence
+                    if consecutive_silence_frames % 100 == 0 { // Every 500ms
+                        let mut keepalive = vec![0u8; 21];
+                        keepalive[..20].copy_from_slice(&padded_session);
+                        keepalive[20] = 0x50;
+                        let _ = std_socket_send.send_to(&keepalive, relay_addr);
+                    }
+                    continue;
+                }
+                consecutive_silence_frames = 0;
                 
                 if let Ok(encoded) = encode_frame(&mut encoder, &samples) {
                     let seq = sequence_send.fetch_add(1, Ordering::SeqCst);
@@ -834,7 +861,9 @@ pub fn start_relay_loop(
         };
         
         let pb = playback_buffer.clone();
+        let comfort_noise_enabled = comfort_noise.load(Ordering::Relaxed);
         let mut fade_out = 1.0f32; // For smooth underrun handling
+        let mut noise_state = 0u32; // Simple PRNG state for comfort noise
         let stream = match device.build_output_stream(
             &config,
             move |data: &mut [f32], _| {
@@ -845,8 +874,15 @@ pub fn start_relay_loop(
                             *sample = s * fade_out;
                             fade_out = 1.0; // Reset fade when we have data
                         } else {
-                            // Buffer underrun - fade out smoothly
-                            *sample = 0.0;
+                            // Buffer underrun - comfort noise or silence
+                            if comfort_noise_enabled {
+                                // Simple PRNG for low-level comfort noise (~-60dB)
+                                noise_state = noise_state.wrapping_mul(1103515245).wrapping_add(12345);
+                                let noise = ((noise_state >> 16) as f32 / 65536.0 - 0.5) * 0.002;
+                                *sample = noise * fade_out;
+                            } else {
+                                *sample = 0.0;
+                            }
                             fade_out = (fade_out * 0.95).max(0.0);
                         }
                     }

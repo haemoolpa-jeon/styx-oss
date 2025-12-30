@@ -268,6 +268,8 @@ fn udp_start_relay_stream(state: State<'_, AppState>) -> Result<(), String> {
         output_device,
         stream_state.input_level.clone(),
         stream_state.bitrate.clone(),
+        stream_state.dtx_enabled.clone(),
+        stream_state.comfort_noise.clone(),
     )?;
     
     Ok(())
@@ -365,6 +367,16 @@ fn set_bitrate(bitrate_kbps: u32, state: State<'_, AppState>) {
 #[tauri::command]
 fn get_bitrate(state: State<'_, AppState>) -> u32 {
     state.udp_stream.lock().unwrap().bitrate.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_dtx_enabled(enabled: bool, state: State<'_, AppState>) {
+    state.udp_stream.lock().unwrap().dtx_enabled.store(enabled, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn set_comfort_noise(enabled: bool, state: State<'_, AppState>) {
+    state.udp_stream.lock().unwrap().comfort_noise.store(enabled, Ordering::SeqCst);
 }
 
 // ===== TCP Fallback Commands =====
@@ -553,6 +565,8 @@ pub fn run() {
             get_input_level,
             set_bitrate,
             get_bitrate,
+            set_dtx_enabled,
+            set_comfort_noise,
         ])
         .setup(|app| {
             // Handle deep links (styx://join/roomId?password=xxx)
