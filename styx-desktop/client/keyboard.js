@@ -1,5 +1,6 @@
 // Styx Keyboard Shortcuts Module
 // 키보드 단축키 시스템
+(function() {
 
 const globalEventListeners = [];
 
@@ -17,7 +18,6 @@ function cleanupGlobalListeners() {
 
 window.addEventListener('beforeunload', cleanupGlobalListeners);
 
-// Global error handlers
 addGlobalListener(window, 'error', (e) => {
   if (e.error?.name === 'OverconstrainedError' || e.message?.includes('getUserMedia')) {
     if (window.toast) toast('마이크 접근 오류 - 다른 앱이 사용 중일 수 있습니다', 'error');
@@ -64,7 +64,6 @@ const keyboardShortcuts = {
   'ControlAltKeyM': { action: 'toggleReducedMotion', global: true }
 };
 
-// Action handlers - will be set by app.js
 const actionHandlers = {};
 
 function registerAction(name, handler) {
@@ -72,12 +71,10 @@ function registerAction(name, handler) {
 }
 
 function executeShortcut(action, options = {}) {
-  // First check registered handlers
   if (actionHandlers[action]) {
     try { actionHandlers[action](options); return; } catch (e) { console.warn('Shortcut failed:', e); }
   }
   
-  // Fallback to default implementations
   const $ = id => document.getElementById(id);
   const StyxAccessibility = window.StyxAccessibility || {};
   
@@ -213,7 +210,6 @@ function initKeyboardShortcuts() {
     
     if (isInputField) return;
     
-    // PTT mode
     if (window.pttMode && !window.isPttActive && e.code === window.pttKey && window.localStream) {
       window.isPttActive = true;
       window.localStream.getAudioTracks().forEach(t => t.enabled = true);
@@ -237,7 +233,6 @@ function initKeyboardShortcuts() {
       return;
     }
     
-    // Legacy Korean keyboard
     const legacyMappings = { 'ㅡ': 'toggleMute', 'ㄱ': 'toggleRecording', 'ㅠ': 'addMarker', 'ㅑ': 'copyInvite' };
     if (legacyMappings[e.key]) {
       e.preventDefault();
@@ -259,7 +254,6 @@ function initKeyboardShortcuts() {
   });
 }
 
-// Auto-init when DOM is ready
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initKeyboardShortcuts);
 } else {
@@ -299,3 +293,5 @@ window.StyxKeyboard = {
   addGlobalListener,
   cleanupGlobalListeners
 };
+
+})();

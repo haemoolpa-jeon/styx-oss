@@ -1,5 +1,6 @@
 // Styx Toast Module
 // 토스트 알림 메시지
+(function() {
 
 function toast(message, type = 'info', duration = 3000) {
   const M = window.StyxModules || {};
@@ -21,3 +22,5 @@ function toast(message, type = 'info', duration = 3000) {
 
 window.toast = toast;
 window.StyxToast = { toast };
+
+})();

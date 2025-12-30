@@ -1,5 +1,6 @@
 // Styx Tuner Module
 // 악기 튜너 (피치 감지)
+(function() {
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -76,3 +77,5 @@ window.StyxTuner = {
   freqToNote,
   get enabled() { return tunerEnabled; }
 };
+
+})();

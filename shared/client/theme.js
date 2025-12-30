@@ -1,5 +1,6 @@
 // Styx Theme Module
 // 테마 관리 (다크/라이트)
+(function() {
 
 function initTheme() {
   const M = window.StyxModules || {};
@@ -29,7 +30,8 @@ function getTheme() {
   return document.body.dataset.theme || 'dark';
 }
 
-// Auto-init
 initTheme();
 
 window.StyxTheme = { initTheme, toggleTheme, updateThemeIcon, getTheme };
+
+})();

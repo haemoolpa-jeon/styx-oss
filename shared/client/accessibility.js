@@ -1,5 +1,6 @@
 // Styx Accessibility Module
 // 접근성 개선 시스템
+(function() {
 
 const accessibility = {
   highContrast: false,
@@ -131,7 +132,7 @@ function enhanceKeyboardNavigation() {
   });
 }
 
-// Export to window for app.js compatibility
+// Export to window
 window.StyxAccessibility = {
   accessibility,
   loadAccessibilitySettings,
@@ -142,3 +143,5 @@ window.StyxAccessibility = {
   toggleReducedMotion,
   enhanceKeyboardNavigation
 };
+
+})();

@@ -1,7 +1,7 @@
 // Styx Utils Module
 // 유틸리티 함수들
+(function() {
 
-// 연결 품질 등급
 function getQualityGrade(latency, packetLoss, jitter) {
   const M = window.StyxModules || {};
   if (M.network?.getQualityGrade) return M.network.getQualityGrade(latency, packetLoss, jitter);
@@ -10,7 +10,6 @@ function getQualityGrade(latency, packetLoss, jitter) {
   return { grade: 'good', label: '좋음', color: '#2ed573' };
 }
 
-// 사용자 친화적 에러 메시지
 function showUserFriendlyError(error, context) {
   const errorMessages = {
     'NotAllowedError': '마이크 권한이 거부되었습니다. 브라우저 설정에서 마이크 권한을 허용해주세요.',
@@ -28,7 +27,6 @@ function showUserFriendlyError(error, context) {
   if (window.toast) toast(message, 'error', 8000);
 }
 
-// 시간 포맷
 function formatTime(ms) {
   const M = window.StyxModules || {};
   if (M.core?.formatTime) return M.core.formatTime(ms);
@@ -36,7 +34,6 @@ function formatTime(ms) {
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
-// 파일 다운로드
 function downloadBlob(blob, filename) {
   const M = window.StyxModules || {};
   if (M.core?.downloadBlob) return M.core.downloadBlob(blob, filename);
@@ -53,3 +50,5 @@ window.StyxUtils = {
   formatTime,
   downloadBlob
 };
+
+})();

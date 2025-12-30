@@ -1,5 +1,6 @@
 // Styx Recording Module
 // 녹음 기능 (믹스다운, 멀티트랙, 루프백)
+(function() {
 
 let recordingAudioCtx = null;
 let multitrackRecorders = new Map();
@@ -11,10 +12,8 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
 
-// Use window.DEBUG from app.js
 const DEBUG = window.DEBUG ?? false;
 
-// Use formatTime from utils.js via window.StyxUtils
 function formatTime(ms) {
   if (window.StyxUtils?.formatTime) return window.StyxUtils.formatTime(ms);
   const s = Math.floor(ms / 1000);
@@ -194,7 +193,6 @@ function setLoopbackMode(enabled) {
   localStorage.setItem('styx-loopback', enabled);
 }
 
-// Export to window
 window.StyxRecording = {
   get isRecording() { return isRecording; },
   startRecording,
@@ -207,3 +205,5 @@ window.StyxRecording = {
   get multitrackMode() { return multitrackMode; },
   get loopbackMode() { return loopbackMode; }
 };
+
+})();

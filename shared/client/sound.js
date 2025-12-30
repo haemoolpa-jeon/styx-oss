@@ -1,5 +1,6 @@
 // Styx Sound Module
 // 사운드 알림 (입장/퇴장)
+(function() {
 
 let notifyAudio = null;
 
@@ -35,3 +36,5 @@ function cleanupSound() {
 }
 
 window.StyxSound = { playSound, cleanupSound };
+
+})();

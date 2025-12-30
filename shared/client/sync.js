@@ -1,9 +1,11 @@
 // Styx Sync Module
 // 동기화 모드 - 지연 보정으로 모든 참가자가 동시에 듣기
+(function() {
 
-let estimatedDeviceLatency = 20; // ms, default estimate
+let estimatedDeviceLatency = 20;
 let syncDelayBuffers = new Map();
 let maxRoomLatency = 0;
+let syncHandlersInitialized = false;
 
 async function calibrateDeviceLatency() {
   const localStream = window.localStream;
@@ -31,9 +33,7 @@ async function calibrateDeviceLatency() {
     const checkLoop = () => {
       if (detected || performance.now() - startTime > 200) {
         ctx.close();
-        if (!detected) {
-          console.log('[SYNC] Device calibration: no loopback detected, using default');
-        }
+        if (!detected) console.log('[SYNC] Device calibration: no loopback detected, using default');
         return;
       }
       
@@ -85,9 +85,7 @@ function calculateSyncDelays() {
   }
   
   const display = $('sync-latency-display');
-  if (display) {
-    display.textContent = `동기화 지연: ${maxRoomLatency}ms`;
-  }
+  if (display) display.textContent = `동기화 지연: ${maxRoomLatency}ms`;
 }
 
 function broadcastLatency() {
@@ -113,10 +111,8 @@ function clearSyncDelays() {
   }
 }
 
-let syncHandlersInitialized = false;
-
 function initSyncSocketHandlers() {
-  if (syncHandlersInitialized) return; // Prevent duplicate registration
+  if (syncHandlersInitialized) return;
   syncHandlersInitialized = true;
   
   const socket = window.socket;
@@ -124,13 +120,10 @@ function initSyncSocketHandlers() {
   
   socket.on('peer-latency', ({ peerId, latency }) => {
     peerLatencies.set(peerId, latency);
-    if (window.syncMode) {
-      calculateSyncDelays();
-    }
+    if (window.syncMode) calculateSyncDelays();
   });
 }
 
-// Export to window
 window.StyxSync = {
   get estimatedDeviceLatency() { return estimatedDeviceLatency; },
   get maxRoomLatency() { return maxRoomLatency; },
@@ -140,3 +133,5 @@ window.StyxSync = {
   clearSyncDelays,
   initSyncSocketHandlers
 };
+
+})();
