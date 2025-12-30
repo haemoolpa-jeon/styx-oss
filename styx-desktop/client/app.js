@@ -748,8 +748,7 @@ let autoAdapt = localStorage.getItem('styx-auto-adapt') !== 'false';
 // Sync Mode - 모든 사용자가 동일한 지연시간으로 듣도록 조정
 let syncMode = false; // Room-level setting, controlled by host
 let peerLatencies = new Map(); // peerId -> latency in ms
-let maxRoomLatency = 0; // Maximum latency in room
-let syncDelayBuffers = new Map(); // peerId -> delay buffer
+// maxRoomLatency and syncDelayBuffers are managed by sync.js module
 
 // P2P Connection State
 let myNatType = 'Unknown';
@@ -4541,13 +4540,12 @@ function leaveRoom() {
   // Cleanup P2P and sync mode state
   peerConnections.clear();
   peerLatencies.clear();
-  syncDelayBuffers.clear();
+  clearSyncDelays?.(); // Use sync.js module function
   syncMode = false;
   sfuMode = false;
   isRoomCreator = false;
   currentRoomSettings = {};
   roomCreatorUsername = '';
-  maxRoomLatency = 0;
   
   latencyHistory = [];
   
@@ -4809,7 +4807,7 @@ socket.on('room-settings-changed', ({ setting, value }) => {
       setTimeout(() => {
         broadcastLatency();
         calculateSyncDelays();
-        toast(`🔄 동기화 완료 (총 지연: ${maxRoomLatency}ms)`, 'success');
+        toast(`🔄 동기화 완료 (총 지연: ${window.StyxSync?.maxRoomLatency || 0}ms)`, 'success');
       }, 500);
     } else {
       toast('⚡ Jam 모드: 최저 지연시간 우선', 'info');

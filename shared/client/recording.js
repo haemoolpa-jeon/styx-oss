@@ -11,11 +11,12 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let isRecording = false;
 
-const DEBUG = window.DEBUG ?? (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+// Use window.DEBUG from app.js
+const DEBUG = window.DEBUG ?? false;
 
+// Use formatTime from utils.js via window.StyxUtils
 function formatTime(ms) {
-  const M = window.StyxModules || {};
-  if (M.core?.formatTime) return M.core.formatTime(ms);
+  if (window.StyxUtils?.formatTime) return window.StyxUtils.formatTime(ms);
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 }
