@@ -3837,11 +3837,11 @@ function startMetronome(bpm, serverStartTime, countIn = false) {
   }
   
   const playTick = (isAccent = false) => {
-    tick.classList.add('active');
+    tick?.classList.add('active');
     
     // 비트 인디케이터 업데이트
     beatIndicators.forEach((el, i) => {
-      el.classList.toggle('active', i === metronomeBeat);
+      el?.classList.toggle('active', i === metronomeBeat);
     });
     
     if (!metronomeAudio || metronomeAudio.state === 'closed') {
@@ -3864,7 +3864,7 @@ function startMetronome(bpm, serverStartTime, countIn = false) {
       osc.stop(metronomeAudio.currentTime + 0.08);
     } catch {}
     
-    setTimeout(() => tick.classList.remove('active'), 80);
+    setTimeout(() => tick?.classList.remove('active'), 80);
     metronomeBeat = (metronomeBeat + 1) % BEATS_PER_BAR;
   };
   
