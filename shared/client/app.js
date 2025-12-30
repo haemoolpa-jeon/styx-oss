@@ -1998,7 +1998,7 @@ async function startScreenShare() {
     } else {
       // Browser mode: use existing peer connections
       peers.forEach((peer, id) => {
-        if (peer.pc) {
+        if (peer.pc?.addTrack) {
           peer.pc.addTrack(videoTrack, screenStream);
           peer.pc.createOffer().then(offer => {
             peer.pc.setLocalDescription(offer);
@@ -2190,7 +2190,7 @@ if (navigator.connection) {
     if (socket.room && peers.size > 0) {
       toast('네트워크 변경 감지, 재연결 중...', 'info');
       peers.forEach(peer => {
-        try { peer.pc.restartIce(); } catch {}
+        try { if (peer.pc?.restartIce) peer.pc.restartIce(); } catch {}
       });
     }
   });
@@ -4361,7 +4361,7 @@ function renderUsers() {
     const label = card.querySelector('.volume-label');
     slider.oninput = () => {
       const vol = parseInt(slider.value);
-      peer.audioEl.volume = vol / 100;
+      if (peer.audioEl) peer.audioEl.volume = vol / 100;
       peer.volume = vol;
       volumeStates.set(id, vol);
       label.textContent = vol + '%';
@@ -4828,7 +4828,7 @@ function updateJitterBuffer(value) {
 // 지터 버퍼 적용 (기존 피어에)
 function applyJitterBuffer() {
   peers.forEach(peer => {
-    if (peer.pc) {
+    if (peer.pc?.getReceivers) {
       peer.pc.getReceivers().forEach(receiver => {
         if (receiver.track?.kind === 'audio' && receiver.playoutDelayHint !== undefined) {
           receiver.playoutDelayHint = jitterBuffer / 1000;
@@ -5229,6 +5229,7 @@ async function restartAudioStream() {
     
     // 모든 피어 연결에 새 트랙 적용
     peers.forEach(peer => {
+      if (!peer.pc?.getSenders) return;
       const sender = peer.pc.getSenders().find(s => s.track?.kind === 'audio');
       if (sender) sender.replaceTrack(newTrack);
     });
