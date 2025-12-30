@@ -4421,36 +4421,99 @@ function applyMixerState() {
 
 // ===== Sync Mode Functions =====
 
+// Estimated audio device latency (capture + playback)
+let estimatedDeviceLatency = 20; // ms, default estimate
+
+// Calibrate device latency using loopback test
+async function calibrateDeviceLatency() {
+  if (!localStream) return;
+  
+  try {
+    const ctx = new AudioContext();
+    const oscillator = ctx.createOscillator();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    
+    // Create a short beep
+    oscillator.frequency.value = 1000;
+    oscillator.connect(ctx.destination);
+    
+    // Listen for the beep through microphone
+    const source = ctx.createMediaStreamSource(localStream);
+    source.connect(analyser);
+    
+    const startTime = performance.now();
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.05); // 50ms beep
+    
+    // Wait for beep to be detected
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    let detected = false;
+    
+    const checkLoop = () => {
+      if (detected || performance.now() - startTime > 200) {
+        ctx.close();
+        if (!detected) {
+          console.log('[SYNC] Device calibration: no loopback detected, using default');
+        }
+        return;
+      }
+      
+      analyser.getByteFrequencyData(dataArray);
+      const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+      
+      if (avg > 50) { // Threshold for detection
+        detected = true;
+        estimatedDeviceLatency = Math.round(performance.now() - startTime);
+        console.log(`[SYNC] Device latency calibrated: ${estimatedDeviceLatency}ms`);
+        toast(`오디오 장치 지연: ${estimatedDeviceLatency}ms`, 'info', 2000);
+      } else {
+        requestAnimationFrame(checkLoop);
+      }
+    };
+    
+    setTimeout(checkLoop, 10);
+  } catch (e) {
+    console.warn('[SYNC] Device calibration failed:', e);
+  }
+}
+
 // Calculate delay buffers to equalize latency across all peers
 function calculateSyncDelays() {
   if (!syncMode) return;
   
-  // Find maximum latency in room
-  maxRoomLatency = selfStats.latency || 0;
+  // Find maximum latency in room (including device latency)
+  let maxLatency = (selfStats.latency || 0) + estimatedDeviceLatency;
   peerLatencies.forEach(lat => {
-    if (lat > maxRoomLatency) maxRoomLatency = lat;
+    const totalLat = lat + estimatedDeviceLatency;
+    if (totalLat > maxLatency) maxLatency = totalLat;
   });
   
-  // Add 10ms buffer for jitter
-  maxRoomLatency += 10;
+  // Add jitter buffer headroom
+  maxRoomLatency = maxLatency + jitterBuffer;
   
-  console.log(`[SYNC] Max room latency: ${maxRoomLatency}ms`);
+  console.log(`[SYNC] Max room latency: ${maxRoomLatency}ms (device: ${estimatedDeviceLatency}ms)`);
   
   // Apply delays via jitter buffer adjustment
-  // For Tauri mode, we'll adjust the playback buffer
-  if (actuallyTauri && actuallyTauri) {
-    // Convert ms to jitter buffer frames (5ms per frame)
+  if (actuallyTauri) {
     const frames = Math.ceil(maxRoomLatency / 5);
     tauriInvoke('set_jitter_buffer', { size: frames }).catch(e => {
       console.error('[SYNC] Failed to set jitter buffer:', e);
     });
+  }
+  
+  // Update UI
+  if ($('sync-latency-display')) {
+    $('sync-latency-display').textContent = `동기화 지연: ${maxRoomLatency}ms`;
   }
 }
 
 // Broadcast our latency (called separately, not in calculateSyncDelays to avoid loops)
 function broadcastLatency() {
   if (syncMode && selfStats.latency) {
-    socket.emit('peer-latency', { latency: selfStats.latency });
+    // Include estimated device latency for more accurate sync
+    const totalLatency = selfStats.latency + estimatedDeviceLatency;
+    socket.emit('peer-latency', { latency: totalLatency });
   }
 }
 
@@ -5601,9 +5664,13 @@ socket.on('room-settings-changed', ({ setting, value }) => {
   if (setting === 'syncMode') {
     syncMode = value;
     if (syncMode) {
-      toast('🔄 동기화 모드: 모든 사용자가 동일한 타이밍에 듣습니다', 'info');
-      broadcastLatency();
-      calculateSyncDelays();
+      toast('🔄 동기화 모드: 장치 지연 측정 중...', 'info');
+      calibrateDeviceLatency();
+      setTimeout(() => {
+        broadcastLatency();
+        calculateSyncDelays();
+        toast(`🔄 동기화 완료 (총 지연: ${maxRoomLatency}ms)`, 'success');
+      }, 500);
     } else {
       toast('⚡ Jam 모드: 최저 지연시간 우선', 'info');
       clearSyncDelays();
