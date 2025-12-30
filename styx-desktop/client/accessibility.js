@@ -40,8 +40,8 @@ function applyAccessibilitySettings() {
 
 function addScreenReaderSupport() {
   const elements = [
-    { id: 'muteBtn', label: () => window.isMuted ? '음소거 해제' : '음소거' },
-    { id: 'recordBtn', label: () => window.isRecording ? '녹음 중지' : '녹음 시작' },
+    { id: 'muteBtn', label: () => document.getElementById('muteBtn')?.classList.contains('muted') ? '음소거 해제' : '음소거' },
+    { id: 'recordBtn', label: () => document.getElementById('recordBtn')?.classList.contains('recording') ? '녹음 중지' : '녹음 시작' },
     { id: 'metronome-toggle', label: () => '메트로놈 토글' },
     { id: 'inviteBtn', label: () => '초대 링크 복사' },
     { id: 'leaveBtn', label: () => '방 나가기' },

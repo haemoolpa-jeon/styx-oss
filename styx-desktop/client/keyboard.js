@@ -72,9 +72,106 @@ function registerAction(name, handler) {
 }
 
 function executeShortcut(action, options = {}) {
-  const handler = actionHandlers[action];
-  if (handler) {
-    try { handler(options); } catch (e) { console.warn('Shortcut failed:', e); }
+  // First check registered handlers
+  if (actionHandlers[action]) {
+    try { actionHandlers[action](options); return; } catch (e) { console.warn('Shortcut failed:', e); }
+  }
+  
+  // Fallback to default implementations
+  const $ = id => document.getElementById(id);
+  const StyxAccessibility = window.StyxAccessibility || {};
+  
+  switch (action) {
+    case 'toggleMute':
+      if (!window.pttMode) $('muteBtn')?.click();
+      break;
+    case 'toggleMetronome':
+      $('metronome-toggle')?.click();
+      break;
+    case 'toggleRecording':
+      $('recordBtn')?.click();
+      break;
+    case 'addMarker':
+      window.StyxRecording?.addRecordingMarker?.();
+      break;
+    case 'copyInvite':
+      $('inviteBtn')?.click();
+      break;
+    case 'leaveRoom':
+      $('leaveBtn')?.click();
+      break;
+    case 'toggleVAD':
+      $('vad-toggle')?.click();
+      break;
+    case 'toggleTuner':
+      $('tuner-toggle')?.click();
+      break;
+    case 'toggleLowLatency':
+      $('low-latency-toggle')?.click();
+      break;
+    case 'toggleEchoCancellation':
+      const echoEl = $('room-echo-cancel') || $('echo-cancel');
+      if (echoEl) { echoEl.checked = !echoEl.checked; echoEl.dispatchEvent(new Event('change')); }
+      break;
+    case 'toggleNoiseSuppression':
+      const noiseEl = $('room-noise-suppress') || $('noise-suppress');
+      if (noiseEl) { noiseEl.checked = !noiseEl.checked; noiseEl.dispatchEvent(new Event('change')); }
+      break;
+    case 'volumeUp':
+    case 'volumeDown':
+      const masterVol = $('master-volume');
+      if (masterVol) {
+        const delta = action === 'volumeUp' ? 5 : -5;
+        masterVol.value = Math.max(0, Math.min(100, parseInt(masterVol.value) + delta));
+        masterVol.dispatchEvent(new Event('input'));
+        if (window.toast) toast(`마스터 볼륨: ${masterVol.value}%`, 'info', 1000);
+      }
+      break;
+    case 'inputVolumeUp':
+    case 'inputVolumeDown':
+      const inputVol = $('input-volume-slider');
+      if (inputVol) {
+        const delta = action === 'inputVolumeUp' ? 5 : -5;
+        inputVol.value = Math.max(0, Math.min(200, parseInt(inputVol.value) + delta));
+        inputVol.dispatchEvent(new Event('input'));
+        if (window.toast) toast(`입력 볼륨: ${inputVol.value}%`, 'info', 1000);
+      }
+      break;
+    case 'togglePeerMute':
+      if (window.peers && options.peer !== undefined) {
+        const peerIds = [...window.peers.keys()];
+        if (peerIds[options.peer]) {
+          const peer = window.peers.get(peerIds[options.peer]);
+          if (peer?.audioEl) {
+            peer.audioEl.muted = !peer.audioEl.muted;
+            if (window.toast) toast(`${peer.username} ${peer.audioEl.muted ? '음소거' : '음소거 해제'}`, 'info', 1000);
+            window.renderUsers?.();
+          }
+        }
+      }
+      break;
+    case 'showHelp':
+      $('shortcuts-overlay')?.classList.remove('hidden');
+      break;
+    case 'toggleFullscreen':
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+      else document.exitFullscreen?.();
+      break;
+    case 'saveSettings':
+      window.saveCurrentSettings?.();
+      break;
+    case 'openSettings':
+      $('settingsBtn')?.click();
+      break;
+    case 'toggleHighContrast':
+      StyxAccessibility.toggleHighContrast?.();
+      break;
+    case 'toggleScreenReader':
+      StyxAccessibility.toggleScreenReaderMode?.();
+      break;
+    case 'toggleReducedMotion':
+      StyxAccessibility.toggleReducedMotion?.();
+      break;
   }
 }
 
@@ -160,6 +257,13 @@ function initKeyboardShortcuts() {
       }
     }
   });
+}
+
+// Auto-init when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initKeyboardShortcuts);
+} else {
+  initKeyboardShortcuts();
 }
 
 function initPttTouch() {

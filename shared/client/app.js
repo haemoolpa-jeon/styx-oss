@@ -1474,6 +1474,9 @@ socket.on('connect', () => {
   // TURN 자격증명 업데이트
   updateTurnCredentials();
   
+  // Initialize sync module socket handlers
+  if (initSyncSocketHandlers) initSyncSocketHandlers();
+  
   // 세션 복구 (최초 연결 시에만)
   if (!sessionRestored) {
     sessionRestored = true;
