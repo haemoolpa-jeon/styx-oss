@@ -111,6 +111,17 @@ let adminNotificationInterval = null;
 let turnRefreshTimer = null;
 let settingsSaveTimer = null;
 
+// Variables used in leaveRoom (moved to top for error recovery)
+let sharedAudioContext = null;
+let syncMode = false;
+let peerLatencies = new Map();
+let peerConnections = new Map();
+let latencyHistory = [];
+let isPttActive = false;
+let inputMonitorCtx = null;
+let vadIntervals = new Map();
+let screenPeerConnections = new Map();
+
 // 피어 오디오용 공유 AudioContext 가져오기 (통합된 컨텍스트 사용)
 function getPeerAudioContext() {
   return getSharedAudioContext();
@@ -403,7 +414,6 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 // 통합 AudioContext 관리 - delegates to module
-let sharedAudioContext = null;
 
 function getSharedAudioContext() {
   if (M.audio?.getSharedAudioContext) return M.audio.getSharedAudioContext();
@@ -755,14 +765,13 @@ let jitterBuffer = parseInt(localStorage.getItem('styx-jitter-buffer')) || 50; /
 let autoAdapt = localStorage.getItem('styx-auto-adapt') !== 'false';
 
 // Sync Mode - 모든 사용자가 동일한 지연시간으로 듣도록 조정
-let syncMode = false; // Room-level setting, controlled by host
-let peerLatencies = new Map(); // peerId -> latency in ms
+// syncMode, peerLatencies moved to top for error recovery
 // maxRoomLatency and syncDelayBuffers are managed by sync.js module
 
 // P2P Connection State
 let myNatType = 'Unknown';
 let myPublicAddr = null;
-let peerConnections = new Map(); // peerId -> { type: 'p2p'|'relay', addr: string }
+// peerConnections moved to top for error recovery
 
 // 오디오 처리 설정
 let echoCancellation = localStorage.getItem('styx-echo') !== 'false';
@@ -771,11 +780,11 @@ let aiNoiseCancellation = localStorage.getItem('styx-ai-noise') === 'true'; // O
 let autoGainControl = localStorage.getItem('styx-auto-gain') !== 'false';
 let pttMode = localStorage.getItem('styx-ptt') === 'true';
 let pttKey = localStorage.getItem('styx-ptt-key') || 'Space';
-let isPttActive = false;
+// isPttActive moved to top for error recovery
 
 // 오디오 프로세싱 노드
 let gainNode = null;
-let latencyHistory = []; // 핑 그래프용
+// latencyHistory moved to top for error recovery
 let serverTimeOffset = 0; // 서버 시간과 클라이언트 시간 차이 (ms)
 
 // Self connection stats
@@ -790,7 +799,7 @@ let selfStats = {
 // Audio input monitoring
 let inputMonitorEnabled = localStorage.getItem('styx-input-monitor') === 'true';
 let inputMonitorGain = null;
-let inputMonitorCtx = null;
+// inputMonitorCtx moved to top for error recovery
 
 function toggleInputMonitor(enabled) {
   inputMonitorEnabled = enabled;
@@ -820,7 +829,7 @@ let lastRoom = sessionStorage.getItem('styx-room');
 let lastRoomPassword = sessionStorage.getItem('styx-room-pw');
 let duckingEnabled = localStorage.getItem('styx-ducking') === 'true';
 let vadEnabled = localStorage.getItem('styx-vad') !== 'false';
-let vadIntervals = new Map(); // 피어별 VAD 인터벌
+// vadIntervals moved to top for error recovery
 let delayCompensation = false;
 let autoJitter = localStorage.getItem('styx-auto-jitter') !== 'false'; // 자동 지터 버퍼
 let lowLatencyMode = localStorage.getItem('styx-low-latency') === 'true'; // 저지연 모드
@@ -1206,7 +1215,7 @@ let screenStream = null;
 let isScreenSharing = false;
 
 // Screen share WebRTC connections (separate from audio UDP)
-const screenPeerConnections = new Map(); // peerId -> RTCPeerConnection
+// screenPeerConnections moved to top for error recovery
 
 async function startScreenShare() {
   try {
