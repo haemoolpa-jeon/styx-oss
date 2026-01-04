@@ -100,6 +100,17 @@ let sessionRestored = false;
 let inputLimiterContext = null; // 입력 리미터용 AudioContext
 let processedStream = null; // 리미터 적용된 스트림
 
+// All interval/timer declarations (moved to top for error recovery)
+let networkQualityInterval = null;
+let monitoringInterval = null;
+let tcpAudioInterval = null;
+let tcpHandlerRegistered = false;
+let udpStatsInterval = null;
+let udpHealthFailCount = 0;
+let adminNotificationInterval = null;
+let turnRefreshTimer = null;
+let settingsSaveTimer = null;
+
 // 피어 오디오용 공유 AudioContext 가져오기 (통합된 컨텍스트 사용)
 function getPeerAudioContext() {
   return getSharedAudioContext();
@@ -351,7 +362,6 @@ function adaptToNetworkQuality(quality) {
 }
 
 // 네트워크 품질 모니터링 (방 입장 시 시작)
-let networkQualityInterval = null;
 
 // 자동 크래시 복구 및 에러 경계
 let crashRecoveryAttempts = 0;
@@ -551,7 +561,6 @@ function hideAdminFeaturesInTauri() {
 }
 
 // 모니터링 시스템
-let monitoringInterval = null;
 let monitoringInitialized = false;
 const systemLogs = [];
 
@@ -1171,17 +1180,25 @@ const { initKeyboardShortcuts, initPttTouch, registerAction, addGlobalListener, 
 // ===== 녹음 (from recording.js module) =====
 const { startRecording, stopRecording, toggleRecording, cleanupRecording, addRecordingMarker } = window.StyxRecording || {};
 
-// Expose globals for modules using getters (dynamic access)
+// Expose globals for modules using getters (dynamic access) - consolidated
 Object.defineProperties(window, {
   localStream: { get: () => localStream, configurable: true },
   peers: { get: () => peers, configurable: true },
   currentUser: { get: () => currentUser, configurable: true },
   isMuted: { get: () => isMuted, configurable: true },
   isRecording: { get: () => window.StyxRecording?.isRecording || false, configurable: true },
-  renderUsers: { get: () => renderUsers, configurable: true },
+  renderUsers: { value: function() { return typeof renderUsers === 'function' ? renderUsers() : undefined; }, configurable: true, writable: true },
   pttMode: { get: () => pttMode, configurable: true },
   isPttActive: { get: () => isPttActive, set: (v) => isPttActive = v, configurable: true },
-  pttKey: { get: () => pttKey, configurable: true }
+  pttKey: { get: () => pttKey, configurable: true },
+  // Sync-related globals (for sync.js module)
+  syncMode: { get: () => syncMode, set: (v) => syncMode = v, configurable: true },
+  selfStats: { get: () => selfStats, configurable: true },
+  peerLatencies: { get: () => peerLatencies, configurable: true },
+  jitterBuffer: { get: () => jitterBuffer, configurable: true },
+  actuallyTauri: { get: () => actuallyTauri, configurable: true },
+  tauriInvoke: { get: () => tauriInvoke, configurable: true },
+  socket: { get: () => socket, configurable: true }
 });
 
 // ===== 화면 공유 =====
@@ -2171,8 +2188,6 @@ async function startUdpMode() {
 
 // TCP 폴백 오디오 스트림
 let useTcpFallback = false;
-let tcpAudioInterval = null;
-let tcpHandlerRegistered = false;
 
 function startTcpAudioStream() {
   if (!actuallyTauri) return;
@@ -2232,8 +2247,6 @@ async function cleanupAudio() {
 }
 
 // UDP 연결 품질 모니터링
-let udpStatsInterval = null;
-let udpHealthFailCount = 0;
 let currentBitrate = 96; // Default bitrate in kbps
 let lastPacketLoss = 0;
 
@@ -2577,7 +2590,6 @@ function updateAdminNotifications() {
 }
 
 // 관리자 알림 확인 (관리자 로그인 시 시작)
-let adminNotificationInterval = null;
 
 function loadAdminData() {
   // 관리자 패널 열 때 알림 배지 숨기기
@@ -3316,7 +3328,6 @@ function recreatePeerConnection(peerId, username, avatar) {
 }
 
 // TURN 자격증명 갱신 (만료 전 갱신)
-let turnRefreshTimer = null;
 function scheduleTurnRefresh() {
   if (turnRefreshTimer) clearTimeout(turnRefreshTimer);
   // 23시간 후 갱신 (24시간 TTL 전에)
@@ -3663,17 +3674,6 @@ function applyMixerState() {
 
 // ===== Sync Mode (from sync.js module) =====
 const { calibrateDeviceLatency, calculateSyncDelays, broadcastLatency, clearSyncDelays, initSyncSocketHandlers } = window.StyxSync || {};
-
-// Expose sync-related globals using getters
-Object.defineProperties(window, {
-  syncMode: { get: () => syncMode, set: (v) => syncMode = v, configurable: true },
-  selfStats: { get: () => selfStats, configurable: true },
-  peerLatencies: { get: () => peerLatencies, configurable: true },
-  jitterBuffer: { get: () => jitterBuffer, configurable: true },
-  actuallyTauri: { get: () => actuallyTauri, configurable: true },
-  tauriInvoke: { get: () => tauriInvoke, configurable: true },
-  socket: { get: () => socket, configurable: true }
-});
 
 // ===== P2P Connection Functions =====
 
@@ -5487,7 +5487,6 @@ function applySettings(s) {
   localStorage.setItem('styx-theme', s.theme || 'dark');
 }
 
-let settingsSaveTimer = null;
 function scheduleSettingsSave() {
   if (settingsSaveTimer) return;
   settingsSaveTimer = setTimeout(() => {
