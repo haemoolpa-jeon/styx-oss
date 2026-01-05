@@ -176,6 +176,7 @@ function applyAudioPreset(preset) {
   localStorage.setItem('styx-effects', JSON.stringify(inputEffects));
   toast(`🎛️ ${preset} 프리셋 적용`, 'success');
 }
+window.applyAudioPreset = applyAudioPreset;
 
 function saveCustomPreset() {
   if (M.settings?.saveCustomPreset) {
@@ -479,7 +480,7 @@ async function createProcessedInputStream(rawStream) {
   // 컴프레서 (리미터 역할) - 클리핑 방지
   const compressor = ctx.createDynamicsCompressor();
   compressor.threshold.value = -12; compressor.knee.value = 6;
-  compressor.ratio.value = 12; compressor.attack.value = 0.003; compressor.release.value = 0.1;
+  compressor.ratio.value = inputEffects.compressionRatio || 4; compressor.attack.value = 0.003; compressor.release.value = 0.1;
   
   // 메이크업 게인 (입력 볼륨 컨트롤)
   const makeupGain = ctx.createGain();
