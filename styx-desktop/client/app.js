@@ -121,6 +121,7 @@ let isPttActive = false;
 let inputMonitorCtx = null;
 let vadIntervals = new Map();
 let screenPeerConnections = new Map();
+let metronomeBeat = 0; // moved to top for error recovery
 
 // 피어 오디오용 공유 AudioContext 가져오기 (통합된 컨텍스트 사용)
 function getPeerAudioContext() {
@@ -377,9 +378,16 @@ function adaptToNetworkQuality(quality) {
 // 자동 크래시 복구 및 에러 경계
 let crashRecoveryAttempts = 0;
 const MAX_RECOVERY_ATTEMPTS = 3;
+let appFullyLoaded = false; // Flag to prevent recovery during initialization
 
 function handleCriticalError(error, context) {
   console.error(`Critical error in ${context}:`, error);
+  
+  // Don't attempt recovery during script initialization
+  if (!appFullyLoaded) {
+    console.warn('Error during initialization, skipping auto-recovery');
+    return;
+  }
   
   if (crashRecoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
     crashRecoveryAttempts++;
@@ -1190,17 +1198,16 @@ const { initKeyboardShortcuts, initPttTouch, registerAction, addGlobalListener, 
 const { startRecording, stopRecording, toggleRecording, cleanupRecording, addRecordingMarker } = window.StyxRecording || {};
 
 // Expose globals for modules using getters (dynamic access) - consolidated
-Object.defineProperties(window, {
+// Use try-catch to handle redefinition errors gracefully
+const windowProps = {
   localStream: { get: () => localStream, configurable: true },
   peers: { get: () => peers, configurable: true },
   currentUser: { get: () => currentUser, configurable: true },
   isMuted: { get: () => isMuted, configurable: true },
   isRecording: { get: () => window.StyxRecording?.isRecording || false, configurable: true },
-  renderUsers: { value: function() { return typeof renderUsers === 'function' ? renderUsers() : undefined; }, configurable: true, writable: true },
   pttMode: { get: () => pttMode, configurable: true },
   isPttActive: { get: () => isPttActive, set: (v) => isPttActive = v, configurable: true },
   pttKey: { get: () => pttKey, configurable: true },
-  // Sync-related globals (for sync.js module)
   syncMode: { get: () => syncMode, set: (v) => syncMode = v, configurable: true },
   selfStats: { get: () => selfStats, configurable: true },
   peerLatencies: { get: () => peerLatencies, configurable: true },
@@ -1208,6 +1215,14 @@ Object.defineProperties(window, {
   actuallyTauri: { get: () => actuallyTauri, configurable: true },
   tauriInvoke: { get: () => tauriInvoke, configurable: true },
   socket: { get: () => socket, configurable: true }
+};
+// Define each property individually to avoid one failure breaking all
+Object.keys(windowProps).forEach(key => {
+  try {
+    Object.defineProperty(window, key, windowProps[key]);
+  } catch (e) {
+    // Property already defined, skip
+  }
 });
 
 // ===== 화면 공유 =====
@@ -3084,7 +3099,7 @@ socket.on('delay-compensation-sync', (enabled) => {
   toast(enabled ? '지연 맞추기 켜짐 - 모든 사람 타이밍 동기화' : '지연 맞추기 꺼짐', 'info');
 });
 
-let metronomeBeat = 0; // 현재 박자 (0-3)
+// metronomeBeat moved to top for error recovery
 const BEATS_PER_BAR = 4;
 
 function startMetronome(bpm, serverStartTime, countIn = false) {
@@ -5511,3 +5526,6 @@ function saveCurrentSettings() {
   toast('설정이 저장되었습니다', 'success', 2000);
 }
 window.saveCurrentSettings = saveCurrentSettings;
+
+// Mark app as fully loaded - enables error recovery
+appFullyLoaded = true;
