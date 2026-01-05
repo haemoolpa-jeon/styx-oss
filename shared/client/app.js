@@ -762,7 +762,7 @@ function initUIEnhancements() {
 
 // Enhanced toast notifications with better styling
 // Debug: Tauri 감지 상태 확인
-console.log('Tauri detection:', {
+log('Tauri detection:', {
   __TAURI__: typeof window.__TAURI__,
   __TAURI_INTERNALS__: typeof window.__TAURI_INTERNALS__,
   userAgent: navigator.userAgent,
@@ -964,7 +964,7 @@ async function runConnectionTest() {
         results.network = true;
       }
     } catch (e) {
-      console.log('NAT detection skipped:', e);
+      log('NAT detection skipped:', e);
       results.network = true; // Assume network works
     }
     
@@ -977,13 +977,13 @@ async function runConnectionTest() {
       try {
         // Use current origin if serverUrl is empty
         const testUrl = serverUrl ? serverUrl + '/health' : window.location.origin + '/health';
-        console.log('Testing network to:', testUrl);
+        log('Testing network to:', testUrl);
         await fetch(testUrl, { method: 'HEAD', cache: 'no-store' });
         const ping = performance.now() - start;
-        console.log(`Ping ${i + 1}: ${ping}ms`);
+        log(`Ping ${i + 1}: ${ping}ms`);
         pings.push(ping);
       } catch (e) { 
-        console.log(`Ping ${i + 1} failed:`, e);
+        log(`Ping ${i + 1} failed:`, e);
         pings.push(999); 
       }
       await new Promise(r => setTimeout(r, 100));
@@ -1321,7 +1321,7 @@ function createScreenShareConnection(peerId, videoTrack, initiator) {
   
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-      console.log(`Screen share connection ${pc.connectionState} with ${peerId}`);
+      log(`Screen share connection ${pc.connectionState} with ${peerId}`);
     }
   };
   
@@ -1389,7 +1389,7 @@ socket.on('screen-share-stop', () => {
 // Screen share WebRTC signaling
 socket.on('screen-offer', async ({ from, offer }) => {
   try {
-    console.log('Received screen-offer from', from);
+    log('Received screen-offer from', from);
     const pc = createScreenShareConnection(from, null, false);
     await pc.setRemoteDescription(offer);
     const answer = await pc.createAnswer();
@@ -1402,7 +1402,7 @@ socket.on('screen-offer', async ({ from, offer }) => {
 
 socket.on('screen-answer', async ({ from, answer }) => {
   try {
-    console.log('Received screen-answer from', from);
+    log('Received screen-answer from', from);
     const pc = screenPeerConnections.get(from);
     if (pc) {
       await pc.setRemoteDescription(answer);
@@ -1545,7 +1545,7 @@ socket.on('connect', () => {
         } else {
           // Only clear if server explicitly rejected (not on timeout/error)
           if (res && res.error) {
-            console.log('Session restore failed:', res.error);
+            log('Session restore failed:', res.error);
             localStorage.removeItem('styx-user');
             localStorage.removeItem('styx-token');
             sessionStorage.removeItem('styx-user');
@@ -1666,7 +1666,7 @@ if (actuallyTauri) {
   const setupDeepLink = () => {
     window.__TAURI__?.event?.listen('deep-link', (event) => {
       const url = event.payload;
-      console.log('Deep link received:', url);
+      log('Deep link received:', url);
       
       // Parse styx://join/roomName or styx://join/roomName?password=xxx
       const match = url.match(/styx:\/\/join\/([^?]+)(\?password=(.+))?/);
@@ -1846,7 +1846,7 @@ async function showLobby() {
   // Listen for audio device changes - auto-reconnect
   if (navigator.mediaDevices?.addEventListener) {
     navigator.mediaDevices.addEventListener('devicechange', async () => {
-      console.log('[AUDIO] Device change detected');
+      log('[AUDIO] Device change detected');
       const oldDevices = await loadAudioDevices();
       
       // If in room with active stream, attempt reconnect
@@ -2125,7 +2125,7 @@ async function startUdpMode() {
   startingUdp = true;
   
   try {
-    console.log('Starting UDP mode...');
+    log('Starting UDP mode...');
     
     // Detect NAT type for P2P
     await detectNatType();
@@ -2137,7 +2137,7 @@ async function startUdpMode() {
     } catch (e) { /* ignore */ }
     
     udpPort = await tauriInvoke('udp_bind', { port: 0 });
-    console.log('UDP 포트 바인딩:', udpPort);
+    log('UDP 포트 바인딩:', udpPort);
     
     // Always use relay server (simpler, works for everyone)
     let relayHost = serverUrl ? new URL(serverUrl).hostname : window.location.hostname;
@@ -2149,27 +2149,27 @@ async function startUdpMode() {
     
     const mySessionId = socket.id;
     
-    console.log('UDP relay debug:', { serverUrl, relayHost, UDP_RELAY_PORT, mySessionId });
+    log('UDP relay debug:', { serverUrl, relayHost, UDP_RELAY_PORT, mySessionId });
     
     // Try UDP first
     let udpSuccess = false;
     try {
-      console.log('Setting UDP relay...');
+      log('Setting UDP relay...');
       await tauriInvoke('udp_set_relay', { host: relayHost, port: UDP_RELAY_PORT, sessionId: mySessionId });
-      console.log('✅ UDP relay set');
+      log('✅ UDP relay set');
       
-      console.log('Binding to room...');
+      log('Binding to room...');
       socket.emit('udp-bind-room', { sessionId: mySessionId, roomId: socket.room });
-      console.log('✅ Room binding sent');
+      log('✅ Room binding sent');
       
-      console.log('Setting audio devices...');
+      log('Setting audio devices...');
       await tauriInvoke('set_audio_devices', { input: null, output: null });
-      console.log('✅ Audio devices set');
+      log('✅ Audio devices set');
       
-      console.log('Starting relay stream...');
+      log('Starting relay stream...');
       
       await tauriInvoke('udp_start_relay_stream');
-      console.log('✅ UDP relay stream started successfully');
+      log('✅ UDP relay stream started successfully');
       
       // Apply optional audio settings
       await tauriInvoke('set_dtx_enabled', { enabled: dtxEnabled }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
@@ -2181,7 +2181,7 @@ async function startUdpMode() {
       udpSuccess = true;
       toast('UDP 오디오 연결됨', 'success');
       startUdpStatsMonitor(); // Enable for adaptive bitrate
-      console.log('✅ UDP setup complete');
+      log('✅ UDP setup complete');
     } catch (e) {
       console.error('UDP 실패, TCP 폴백:', e);
       toast(`UDP 연결 실패: ${e.message || e}`, 'warning');
@@ -2280,7 +2280,7 @@ let lastPacketLoss = 0;
 function startUdpStatsMonitor() {
   if (!tauriInvoke || udpStatsInterval) return;
   
-  console.log('Starting UDP stats monitor...');
+  log('Starting UDP stats monitor...');
   
   udpStatsInterval = setInterval(async () => {
     try {
@@ -2296,7 +2296,7 @@ function startUdpStatsMonitor() {
           // High packet loss - reduce bitrate
           currentBitrate = Math.max(48, currentBitrate - 16);
           await tauriInvoke('set_bitrate', { bitrateKbps: currentBitrate });
-          console.log(`[ADAPTIVE] Reduced bitrate to ${currentBitrate}kbps (loss: ${stats.loss_rate.toFixed(1)}%)`);
+          log(`[ADAPTIVE] Reduced bitrate to ${currentBitrate}kbps (loss: ${stats.loss_rate.toFixed(1)}%)`);
         } else if (stats.loss_rate < 1 && currentBitrate < maxBitrate) {
           // Low packet loss - increase bitrate (faster when loss = 0)
           const increment = stats.loss_rate === 0 ? 16 : 8;
@@ -3722,7 +3722,7 @@ async function detectNatType() {
     const info = await tauriInvoke('detect_nat');
     myNatType = info.nat_type;
     myPublicAddr = info.public_addr;
-    console.log(`[P2P] NAT Type: ${myNatType}, Public: ${myPublicAddr}`);
+    log(`[P2P] NAT Type: ${myNatType}, Public: ${myPublicAddr}`);
   } catch (e) {
     console.error('[P2P] NAT detection failed:', e);
     myNatType = 'Unknown';
@@ -3733,7 +3733,7 @@ async function detectNatType() {
 socket.on('p2p-offer', async ({ from, natType, publicAddr }) => {
   if (!actuallyTauri || !tauriInvoke) return;
   
-  console.log(`[P2P] Received offer from ${from}: ${natType} @ ${publicAddr}`);
+  log(`[P2P] Received offer from ${from}: ${natType} @ ${publicAddr}`);
   
   // Check if P2P is possible
   const canP2P = canEstablishP2P(myNatType, natType);
@@ -3745,29 +3745,29 @@ socket.on('p2p-offer', async ({ from, natType, publicAddr }) => {
       if (success) {
         peerConnections.set(from, { type: 'p2p', addr: publicAddr });
         socket.emit('p2p-answer', { to: from, success: true, publicAddr: myPublicAddr });
-        console.log(`[P2P] ✅ Direct connection to ${from}`);
+        log(`[P2P] ✅ Direct connection to ${from}`);
         updateConnectionStatus();
         return;
       }
     } catch (e) {
-      console.log(`[P2P] Hole punch failed: ${e}`);
+      log(`[P2P] Hole punch failed: ${e}`);
     }
   }
   
   // Fall back to relay
   peerConnections.set(from, { type: 'relay', addr: null });
   socket.emit('p2p-answer', { to: from, success: false });
-  console.log(`[P2P] Using relay for ${from}`);
+  log(`[P2P] Using relay for ${from}`);
   updateConnectionStatus();
 });
 
 socket.on('p2p-answer', ({ from, success, publicAddr }) => {
   if (success && publicAddr) {
     peerConnections.set(from, { type: 'p2p', addr: publicAddr });
-    console.log(`[P2P] ✅ P2P confirmed with ${from}`);
+    log(`[P2P] ✅ P2P confirmed with ${from}`);
   } else {
     peerConnections.set(from, { type: 'relay', addr: null });
-    console.log(`[P2P] Relay confirmed with ${from}`);
+    log(`[P2P] Relay confirmed with ${from}`);
   }
   updateConnectionStatus();
 });
@@ -4152,7 +4152,7 @@ function autoAdjustJitter() {
     
     // Log adjustment for debugging
     if (DEBUG) {
-      console.log(`Buffer adjusted: ${jitterBuffer}ms → ${newValue}ms (loss: ${maxLoss}%, jitter: ${maxJitter}ms)`);
+      log(`Buffer adjusted: ${jitterBuffer}ms → ${newValue}ms (loss: ${maxLoss}%, jitter: ${maxJitter}ms)`);
     }
   }
   
