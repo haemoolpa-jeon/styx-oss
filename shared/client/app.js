@@ -4536,6 +4536,7 @@ function leaveRoom() {
   cleanupRecording();
   if (cleanupTuner) cleanupTuner();
   if (cleanupSound) cleanupSound();
+  if (cleanupGlobalListeners) cleanupGlobalListeners();
   if (isScreenSharing) stopScreenShare();
   
   // 모든 AudioContext 정리
