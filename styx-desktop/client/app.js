@@ -130,8 +130,10 @@ function getPeerAudioContext() {
 
 // Resume audio contexts on user interaction (browser autoplay policy)
 document.addEventListener('click', function resumeAudio() {
+  if (audioContext?.state === 'suspended') audioContext.resume();
   if (peerAudioContext?.state === 'suspended') peerAudioContext.resume();
   if (inputMonitorCtx?.state === 'suspended') inputMonitorCtx.resume();
+  if (sharedAudioContext?.state === 'suspended') sharedAudioContext.resume();
 }, { once: false });
 
 // 입력 오디오에 리미터/컴프레서 + EQ 적용 (저지연)
@@ -3012,8 +3014,18 @@ function startAudioMeter() {
     try { audioContext.close(); } catch {}
   }
   
+  // Check if localStream exists
+  if (!localStream) {
+    console.warn('startAudioMeter: localStream not available');
+    return;
+  }
+  
   try {
     audioContext = new AudioContext();
+    // Resume if suspended (browser autoplay policy)
+    if (audioContext.state === 'suspended') {
+      audioContext.resume();
+    }
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     
