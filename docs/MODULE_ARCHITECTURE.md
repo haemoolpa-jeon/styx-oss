@@ -1,53 +1,95 @@
 # Styx Client Module Architecture
 
 ## Overview
-The client uses a hybrid architecture: ES modules for utilities + legacy app.js for core logic.
+The client uses a hybrid architecture combining ES modules for utilities with a monolithic app.js for core WebRTC logic. This design prioritizes stability and backward compatibility.
 
-## Module Structure
+## File Structure
 
 ```
 shared/client/
-├── app.js              # Main application (220KB, legacy)
+├── app.js              # Main application (5500 lines, 190KB)
 ├── styx-modules.js     # Bundled ES modules (20KB, Vite output)
 ├── modules/            # ES module source files
-│   ├── core.js         # State, utilities (escapeHtml, formatTime, downloadBlob)
-│   ├── ui.js           # Toast, theme, reconnect progress, mute UI
-│   ├── audio.js        # AudioContext, effects, spectrum, presets
-│   ├── settings.js     # localStorage management, presets, templates
+│   ├── core.js         # Shared state, utilities
+│   ├── ui.js           # Toast, theme, reconnect UI
+│   ├── audio.js        # AudioContext, effects, spectrum
+│   ├── settings.js     # localStorage management
 │   ├── recording.js    # Recording, multitrack, WAV export
-│   ├── network.js      # Quality grade, SDP optimization
-│   └── main.js         # Entry point (imports all modules)
-├── vite.config.js      # Vite bundler config
-└── package.json        # Build scripts
+│   ├── network.js      # Quality metrics, SDP optimization
+│   └── main.js         # Entry point
+├── recording.js        # Standalone recording module (IIFE)
+├── keyboard.js         # Keyboard shortcuts
+├── accessibility.js    # Screen reader, high contrast
+├── sync.js             # Latency sync between peers
+├── sound.js            # UI sound effects
+├── theme.js            # Theme toggle
+├── tuner.js            # Instrument tuner
+└── noise-gate-processor.js  # AudioWorklet for noise gate
 ```
 
-## How It Works
+## Architecture
 
-1. `index.html` loads `styx-modules.js` before `app.js`
-2. Modules expose `window.StyxModules` (M.ui, M.audio, M.core, etc.)
-3. Functions in `app.js` delegate to modules when available:
-   ```javascript
-   function toast(msg, type, duration) {
-     if (M.ui?.toast) return M.ui.toast(msg, type, duration);
-     // fallback implementation...
-   }
-   ```
+### Loading Order (index.html)
+1. `styx-modules.js` - Exposes `window.StyxModules`
+2. Utility modules (utils.js, toast.js, etc.)
+3. `app.js` - Main application
 
-## Migrated Functions (23 total)
+### Module Access Pattern
+```javascript
+const M = window.StyxModules || {};
 
-| Module | Functions |
-|--------|-----------|
-| M.ui | toast, initTheme, toggleTheme, showReconnectProgress, updateReconnectProgress, hideReconnectProgress, updateMuteUI |
-| M.audio | getSharedAudioContext, createProcessedInputStream, updateInputEffect, initSpectrum, toggleSpectrum, applyAudioPreset, resetNoiseProfile |
-| M.core | escapeHtml, formatTime, downloadBlob |
-| M.settings | saveCustomPreset, deleteCustomPreset, saveRoomTemplate, getRoomTemplates, deleteRoomTemplate |
-| M.network | getQualityGrade |
+// Delegate to module if available, fallback to local
+function getSharedAudioContext() {
+  if (M.audio?.getSharedAudioContext) return M.audio.getSharedAudioContext();
+  // local implementation...
+}
+```
 
-## Remaining Functions (157 total)
+## Global State (96 variables)
 
-### Accessibility (7 functions) - Low complexity
-- loadAccessibilitySettings, applyAccessibilitySettings, addScreenReaderSupport
-- announceToScreenReader, toggleHighContrast, toggleScreenReaderMode, toggleReducedMotion
+Organized by category in app.js:
+
+| Category | Variables |
+|----------|-----------|
+| Peer/Connection | peers, peerConnections, screenPeerConnections, vadIntervals |
+| Audio | localStream, audioContext, sharedAudioContext, effectNodes |
+| Room/User | currentUser, myRole, currentRoomSettings, isRoomCreator |
+| Device | selectedDeviceId, selectedOutputId |
+| Timers | latencyInterval, statsInterval, meterInterval |
+| Network | myNatType, serverTimeOffset, latencyHistory, selfStats |
+
+## Why Not Full Modularization?
+
+1. **Tight Coupling**: WebRTC peer connections, audio processing, and room management share state
+2. **Circular Dependencies**: createPeerConnection needs audio, audio needs peers for ducking
+3. **Event-Driven**: Socket.io handlers span multiple concerns
+4. **Working System**: Current architecture is stable and tested
+
+## Migration Strategy
+
+For future development:
+- New features → Add to modules
+- Bug fixes → Migrate touched code to modules
+- Keep app.js as orchestration layer
+
+## Module API Reference
+
+### M.audio
+- `getSharedAudioContext()` - Single AudioContext for all audio
+- `createProcessedInputStream(stream)` - Apply EQ, compression, noise gate
+- `updateInputEffect(effect, value)` - Real-time effect adjustment
+
+### M.ui
+- `toast(msg, type, duration)` - Show notification
+- `showReconnectProgress(attempt)` - Connection retry UI
+
+### M.settings
+- `getSetting(key)` / `setSetting(key, value)` - localStorage wrapper
+- `getPresets()` / `saveCustomPreset(name, preset)` - Audio presets
+
+### M.network
+- `getQualityGrade(latency, packetLoss, jitter)` - Connection quality
+- `optimizeOpusSdp(sdp, mode)` - Codec optimization
 - saveAccessibilitySettings
 
 ### Audio Processing (15 functions) - Medium complexity
