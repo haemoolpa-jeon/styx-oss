@@ -67,6 +67,15 @@ function validateEnv() {
     }
   }
   
+  // Admin token validation
+  if (!process.env.ADMIN_TOKEN) {
+    if (process.env.NODE_ENV === 'production') {
+      errors.push('ADMIN_TOKEN required in production for audit endpoint security');
+    } else {
+      warnings.push('ADMIN_TOKEN not set, using insecure default for /audit endpoint');
+    }
+  }
+  
   warnings.forEach(w => console.warn(`⚠️  ${w}`));
   
   if (errors.length > 0) {

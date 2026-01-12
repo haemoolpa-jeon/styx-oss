@@ -79,49 +79,93 @@ function hideReconnectProgress() {
 // 아바타 URL을 절대 경로로 변환
 const avatarUrl = (path) => path ? (path.startsWith('/') ? serverUrl + path : path) : '';
 
+// ============================================================================
+// GLOBAL STATE DECLARATIONS
+// Organized by category for maintainability. All variables remain at module
+// scope for backward compatibility. State objects at bottom provide read-only
+// grouped access for debugging and future refactoring.
+// ============================================================================
+
+// --- Peer/Connection State ---
 const peers = new Map();
 const volumeStates = new Map();
+let peerConnections = new Map();
+let peerLatencies = new Map();
+let screenPeerConnections = new Map();
+let vadIntervals = new Map();
+
+// --- Audio State ---
 let localStream = null;
+let processedStream = null;
 let isMuted = false;
+let audioContext = null;
+let peerAudioContext = null;
+let sharedAudioContext = null;
+let inputLimiterContext = null;
+let inputMonitorCtx = null;
+let analyser = null;
+let gainNode = null;
+let inputMonitorGain = null;
+let effectNodes = {};
+let noiseGateWorklet = null;
+
+// --- Room/User State ---
 let currentUser = null;
 let myRole = 'performer'; // 'host' | 'performer' | 'listener'
+let lastRoom = sessionStorage.getItem('styx-room');
+let lastRoomPassword = sessionStorage.getItem('styx-room-pw');
+let currentRoomSettings = {};
+let isRoomCreator = false;
+let roomCreatorUsername = '';
+let syncMode = false;
+let delayCompensation = false;
+
+// --- Device State ---
 let selectedDeviceId = null;
 let selectedOutputId = null;
+
+// --- Timer/Interval State ---
 let latencyInterval = null;
 let statsInterval = null;
-let audioContext = null;
-let peerAudioContext = null; // 피어 오디오 처리용 공유 AudioContext
-let analyser = null;
 let meterInterval = null;
 let metronomeInterval = null;
-let metronomeAudio = null;
-let metronomeLocalStop = false; // Track if user locally stopped metronome
-let sessionRestored = false;
-let inputLimiterContext = null; // 입력 리미터용 AudioContext
-let processedStream = null; // 리미터 적용된 스트림
-
-// All interval/timer declarations (moved to top for error recovery)
-let networkQualityInterval = null;
 let monitoringInterval = null;
 let tcpAudioInterval = null;
-let tcpHandlerRegistered = false;
 let udpStatsInterval = null;
-let udpHealthFailCount = 0;
 let adminNotificationInterval = null;
 let turnRefreshTimer = null;
 let settingsSaveTimer = null;
 
-// Variables used in leaveRoom (moved to top for error recovery)
-let sharedAudioContext = null;
-let syncMode = false;
-let peerLatencies = new Map();
-let peerConnections = new Map();
+// --- Metronome State ---
+let metronomeAudio = null;
+let metronomeLocalStop = false;
+let metronomeBeat = 0;
+
+// --- Network State ---
+let myNatType = 'Unknown';
+let myPublicAddr = null;
+let serverTimeOffset = 0;
 let latencyHistory = [];
+let selfStats = {
+  latency: 0,
+  jitter: 0,
+  packetsLost: 0,
+  bandwidth: 0,
+  connectionType: 'unknown'
+};
+
+// --- Session/App State ---
+let sessionRestored = false;
+let crashRecoveryAttempts = 0;
+let appFullyLoaded = false;
+let isOnline = navigator.onLine;
+let tcpHandlerRegistered = false;
+let udpHealthFailCount = 0;
 let isPttActive = false;
-let inputMonitorCtx = null;
-let vadIntervals = new Map();
-let screenPeerConnections = new Map();
-let metronomeBeat = 0; // moved to top for error recovery
+
+// ============================================================================
+// END GLOBAL STATE DECLARATIONS
+// ============================================================================
 
 // 피어 오디오용 공유 AudioContext 가져오기 (통합된 컨텍스트 사용)
 function getPeerAudioContext() {
@@ -224,8 +268,6 @@ function updatePresetSelect() {
     ${customNames.map(name => `<option value="${name}">⭐ ${name}</option>`).join('')}
   `;
 }
-let effectNodes = {};
-let noiseGateWorklet = null;
 
 // 사용자 경험 개선 - 자동 설정 감지
 async function autoDetectOptimalSettings() {
@@ -294,94 +336,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Auto-optimization moved to after login
 });
 
-// 네트워크 품질 모니터링 및 적응형 설정
-let networkQuality = 'good'; // 'good', 'fair', 'poor'
-let adaptiveSettingsEnabled = true;
-let lastQualityCheck = 0;
-
-function monitorNetworkQuality() {
-  const now = Date.now();
-  if (now - lastQualityCheck < 5000) return; // 5초마다 체크
-  lastQualityCheck = now;
-  
-  // RTCPeerConnection 통계 기반 품질 평가
-  peers.forEach(async (peer, peerId) => {
-    if (!peer.connection) return;
-    
-    try {
-      const stats = await peer.connection.getStats();
-      let totalLoss = 0, totalRtt = 0, count = 0;
-      
-      stats.forEach(report => {
-        if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
-          if (report.packetsLost !== undefined && report.packetsReceived !== undefined) {
-            const lossRate = report.packetsLost / (report.packetsLost + report.packetsReceived) * 100;
-            totalLoss += lossRate;
-            count++;
-          }
-        }
-        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-          if (report.currentRoundTripTime !== undefined) {
-            totalRtt += report.currentRoundTripTime * 1000; // ms로 변환
-          }
-        }
-      });
-      
-      if (count > 0) {
-        const avgLoss = totalLoss / count;
-        const rtt = totalRtt;
-        
-        // 품질 등급 결정
-        let quality = 'good';
-        if (avgLoss > 5 || rtt > 150) quality = 'poor';
-        else if (avgLoss > 2 || rtt > 80) quality = 'fair';
-        
-        if (quality !== networkQuality) {
-          networkQuality = quality;
-          if (adaptiveSettingsEnabled) {
-            adaptToNetworkQuality(quality);
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Network quality check failed:', e);
-    }
-  });
-}
-
-function adaptToNetworkQuality(quality) {
-  const settings = {
-    good: { bitrate: 96, jitterBuffer: 30, mono: false },
-    fair: { bitrate: 64, jitterBuffer: 50, mono: false },
-    poor: { bitrate: 32, jitterBuffer: 80, mono: true }
-  };
-  
-  const config = settings[quality];
-  if (!config) return;
-  
-  // Graceful degradation - adjust settings to prevent dropout
-  if (actuallyTauri) {
-    tauriInvoke('set_bitrate', { bitrate: config.bitrate }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
-    tauriInvoke('set_jitter_buffer', { size: Math.round(config.jitterBuffer / 5) }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
-  }
-  
-  // Auto-increase jitter buffer on poor quality
-  if (quality === 'poor' && !proMode && !lowLatencyMode) {
-    jitterBuffer = Math.max(jitterBuffer, config.jitterBuffer);
-    if ($('jitter-slider')) $('jitter-slider').value = jitterBuffer;
-    if ($('jitter-value')) $('jitter-value').textContent = jitterBuffer + 'ms';
-  }
-  
-  const labels = { good: '양호', fair: '보통', poor: '불안정' };
-  toast(`📶 ${labels[quality]} - ${quality === 'poor' ? '버퍼 증가됨' : '최적화됨'}`, 'info', 2000);
-}
-
-// 네트워크 품질 모니터링 (방 입장 시 시작)
+// Note: Network quality monitoring is integrated into statsInterval
+// Quality adaptation happens automatically via autoAdapt and autoAdjustJitter
 
 // 자동 크래시 복구 및 에러 경계
-let crashRecoveryAttempts = 0;
 const MAX_RECOVERY_ATTEMPTS = 3;
-let appFullyLoaded = false; // Flag to prevent recovery during initialization
 
 function handleCriticalError(error, context) {
   console.error(`Critical error in ${context}:`, error);
@@ -779,11 +738,6 @@ let autoAdapt = localStorage.getItem('styx-auto-adapt') !== 'false';
 // syncMode, peerLatencies moved to top for error recovery
 // maxRoomLatency and syncDelayBuffers are managed by sync.js module
 
-// P2P Connection State
-let myNatType = 'Unknown';
-let myPublicAddr = null;
-// peerConnections moved to top for error recovery
-
 // 오디오 처리 설정
 let echoCancellation = localStorage.getItem('styx-echo') !== 'false';
 let noiseSuppression = localStorage.getItem('styx-noise') !== 'false';
@@ -793,31 +747,16 @@ let pttMode = localStorage.getItem('styx-ptt') === 'true';
 let pttKey = localStorage.getItem('styx-ptt-key') || 'Space';
 // isPttActive moved to top for error recovery
 
-// 오디오 프로세싱 노드
-let gainNode = null;
-// latencyHistory moved to top for error recovery
-let serverTimeOffset = 0; // 서버 시간과 클라이언트 시간 차이 (ms)
-
-// Self connection stats
-let selfStats = {
-  latency: 0,
-  jitter: 0,
-  packetsLost: 0,
-  bandwidth: 0,
-  connectionType: 'unknown'
-};
-
 // Audio input monitoring
 let inputMonitorEnabled = localStorage.getItem('styx-input-monitor') === 'true';
-let inputMonitorGain = null;
-// inputMonitorCtx moved to top for error recovery
 
 function toggleInputMonitor(enabled) {
   inputMonitorEnabled = enabled;
   localStorage.setItem('styx-input-monitor', enabled);
   
   if (enabled && localStream) {
-    if (!inputMonitorCtx) inputMonitorCtx = new AudioContext();
+    // Use shared AudioContext instead of creating new one
+    inputMonitorCtx = getSharedAudioContext();
     const source = inputMonitorCtx.createMediaStreamSource(localStream);
     inputMonitorGain = inputMonitorCtx.createGain();
     inputMonitorGain.gain.value = 0.7;
@@ -835,21 +774,14 @@ function toggleInputMonitor(enabled) {
 const { toggleTuner, cleanupTuner, detectPitch, freqToNote } = window.StyxTuner || {};
 
 // 추가 기능
-let isOnline = navigator.onLine;
-let lastRoom = sessionStorage.getItem('styx-room');
-let lastRoomPassword = sessionStorage.getItem('styx-room-pw');
 let duckingEnabled = localStorage.getItem('styx-ducking') === 'true';
 let vadEnabled = localStorage.getItem('styx-vad') !== 'false';
 // vadIntervals moved to top for error recovery
-let delayCompensation = false;
 let autoJitter = localStorage.getItem('styx-auto-jitter') !== 'false'; // 자동 지터 버퍼
 let lowLatencyMode = localStorage.getItem('styx-low-latency') === 'true'; // 저지연 모드
 let proMode = localStorage.getItem('styx-pro-mode') === 'true'; // Pro 모드 (처리 우회)
 let dtxEnabled = localStorage.getItem('styx-dtx') === 'true'; // DTX (무음 시 전송 안함)
 let comfortNoiseEnabled = localStorage.getItem('styx-comfort-noise') === 'true'; // 컴포트 노이즈
-let currentRoomSettings = {}; // 현재 방 설정
-let isRoomCreator = false; // 방장 여부
-let roomCreatorUsername = ''; // 방장 이름
 
 // 기본 ICE 서버 설정 (TURN은 서버에서 동적으로 받음)
 let rtcConfig = {
@@ -2822,6 +2754,7 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
   
   // RTCPeerConnection 지원 확인
   if (!window.RTCPeerConnection) {
+    joiningRoom = false;
     return toast('이 브라우저는 WebRTC를 지원하지 않습니다', 'error');
   }
 
@@ -2856,149 +2789,148 @@ window.joinRoom = async (roomName, hasPassword, providedPassword, roomSettings) 
   }
 
   socket.emit('join', { room, username: currentUser.username, password: roomPassword, settings: roomSettings }, async (res) => {
-    if (res.error) {
-      localStream._rawStream?.getTracks().forEach(t => t.stop());
-      localStream.getTracks().forEach(t => t.stop());
-      if (inputLimiterContext && inputLimiterContext.state !== 'closed') { 
-        try { inputLimiterContext.close(); } catch {} 
-      }
-      inputLimiterContext = null;
-      sharedAudioContext = null;
-      joiningRoom = false;
-      const errorMsg = {
-        'Room full': '방이 가득 찼습니다',
-        'Username already in room': '이미 방에 접속 중입니다',
-        'Not authorized': '권한이 없습니다',
-        'Wrong room password': '방 비밀번호가 틀렸습니다'
-      }[res.error] || res.error;
-      return toast(errorMsg, 'error');
-    }
-
-    // Clear any existing peers from previous room
-    peers.forEach(peer => {
-      if (peer.pc?.close) peer.pc.close();
-      if (peer.audioEl) peer.audioEl.remove();
-    });
-    peers.clear();
-    usersGrid.innerHTML = '';
-
-    lobby.classList.add('hidden');
-    roomView.classList.remove('hidden');
-    $('roomName').textContent = room;
-    socket.room = room;
-    lastRoom = room;
-    lastRoomPassword = roomPassword;
-    sessionStorage.setItem('styx-room', room);
-    if (roomPassword) sessionStorage.setItem('styx-room-pw', roomPassword);
-    else sessionStorage.removeItem('styx-room-pw');
-    
-    // 방 설정 저장 및 표시
-    currentRoomSettings = res.roomSettings || {};
-    isRoomCreator = res.isCreator || false;
-    roomCreatorUsername = res.creatorUsername || '';
-    displayRoomSettings();
-    
-    // 방 내 오디오 설정 동기화
-    syncRoomAudioSettings();
-    
-    // 고급 설정 패널 초기화
-    initAdvancedPanel();
-    
-    // PTT 모드면 음소거 버튼 상태 업데이트
-    if (pttMode) {
-      $('muteBtn').textContent = '🔇';
-      $('muteBtn').classList.add('muted');
-    }
-    
-    // 관리자 또는 방 생성자면 방 닫기 버튼 표시
-    if (res.isAdmin || res.isCreator) {
-      $('closeRoomBtn')?.classList.remove('hidden');
-    } else {
-      $('closeRoomBtn')?.classList.add('hidden');
-    }
-    
-    const myCardAvatar = document.querySelector('#my-card .card-avatar');
-    if (myCardAvatar) {
-      myCardAvatar.style.backgroundImage = currentUser?.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
-    }
-
-    chatMessages.innerHTML = '';
-    res.messages?.forEach(addChatMessage);
-
-    if (res.metronome) {
-      $('bpm-input').value = res.metronome.bpm;
-      if (res.metronome.playing) startMetronome(res.metronome.bpm, res.metronome.startTime);
-    }
-    
-    // 지연 보상 상태 적용
-    delayCompensation = res.delayCompensation || false;
-    if ($('delay-compensation')) $('delay-compensation').checked = delayCompensation;
-
-    // 역할 설정
-    myRole = res.myRole || 'performer';
-    updateRoleUI();
-    
-    // listener는 오디오 전송 안함
-    if (myRole === 'listener' && localStream) {
-      localStream.getAudioTracks().forEach(t => t.enabled = false);
-      isMuted = true;
-      updateMuteUI();
-    }
-
-    // 기존 사용자들을 peers Map에 추가
-    if (res.users) {
-      res.users.forEach(({ id, username, avatar, role }) => {
-        if (!peers.has(id)) {
-          peers.set(id, {
-            pc: { connectionState: actuallyTauri ? 'connected' : 'new' },
-            username,
-            avatar,
-            role: role || 'performer',
-            audioEl: null,
-            latency: null,
-            volume: 100,
-            packetLoss: 0,
-            jitter: 0,
-            bitrate: 0,
-            quality: { grade: actuallyTauri ? 'good' : 'fair', label: actuallyTauri ? 'UDP' : '관전', color: actuallyTauri ? '#2ed573' : '#ffa502' },
-            pan: 0,
-            muted: false,
-            solo: false,
-            isSpeaking: false
-          });
+    try {
+      if (res.error) {
+        localStream._rawStream?.getTracks().forEach(t => t.stop());
+        localStream.getTracks().forEach(t => t.stop());
+        if (inputLimiterContext && inputLimiterContext.state !== 'closed') { 
+          try { inputLimiterContext.close(); } catch {} 
         }
+        inputLimiterContext = null;
+        sharedAudioContext = null;
+        const errorMsg = {
+          'Room full': '방이 가득 찼습니다',
+          'Username already in room': '이미 방에 접속 중입니다',
+          'Not authorized': '권한이 없습니다',
+          'Wrong room password': '방 비밀번호가 틀렸습니다'
+        }[res.error] || res.error;
+        return toast(errorMsg, 'error');
+      }
+
+      // Clear any existing peers from previous room
+      peers.forEach(peer => {
+        if (peer.pc?.close) peer.pc.close();
+        if (peer.audioEl) peer.audioEl.remove();
       });
-      renderUsers();
-    }
+      peers.clear();
+      usersGrid.innerHTML = '';
 
-    // Tauri앱: UDP 릴레이로 오디오, 브라우저: 관전 모드 (오디오 없음)
-    if (actuallyTauri) {
-      try {
-        await startUdpMode();
-        // After UDP is set up, attempt P2P with existing peers
-        if (res.users) {
-          res.users.forEach(({ id }) => initiateP2P(id));
-        }
-      } catch (udpError) {
-        console.error('UDP 시작 실패:', udpError);
-        toast('오디오 연결 중 오류 발생', 'warning');
+      lobby.classList.add('hidden');
+      roomView.classList.remove('hidden');
+      $('roomName').textContent = room;
+      socket.room = room;
+      lastRoom = room;
+      lastRoomPassword = roomPassword;
+      sessionStorage.setItem('styx-room', room);
+      if (roomPassword) sessionStorage.setItem('styx-room-pw', roomPassword);
+      else sessionStorage.removeItem('styx-room-pw');
+      
+      // 방 설정 저장 및 표시
+      currentRoomSettings = res.roomSettings || {};
+      isRoomCreator = res.isCreator || false;
+      roomCreatorUsername = res.creatorUsername || '';
+      displayRoomSettings();
+      
+      // 방 내 오디오 설정 동기화
+      syncRoomAudioSettings();
+      
+      // 고급 설정 패널 초기화
+      initAdvancedPanel();
+      
+      // PTT 모드면 음소거 버튼 상태 업데이트
+      if (pttMode) {
+        $('muteBtn').textContent = '🔇';
+        $('muteBtn').classList.add('muted');
       }
-    } else {
-      // 브라우저 관전 모드 배너 표시, 오디오 컨트롤 숨김
-      $('browser-spectator-banner')?.classList.remove('hidden');
-      $('muteBtn')?.classList.add('hidden');
-      $('room-audio-device')?.classList.add('hidden');
-      $('room-audio-output')?.classList.add('hidden');
-      $('recordBtn')?.classList.add('hidden');
+      
+      // 관리자 또는 방 생성자면 방 닫기 버튼 표시
+      if (res.isAdmin || res.isCreator) {
+        $('closeRoomBtn')?.classList.remove('hidden');
+      } else {
+        $('closeRoomBtn')?.classList.add('hidden');
+      }
+      
+      const myCardAvatar = document.querySelector('#my-card .card-avatar');
+      if (myCardAvatar) {
+        myCardAvatar.style.backgroundImage = currentUser?.avatar ? `url(${avatarUrl(currentUser.avatar)})` : '';
+      }
+
+      chatMessages.innerHTML = '';
+      res.messages?.forEach(addChatMessage);
+
+      if (res.metronome) {
+        $('bpm-input').value = res.metronome.bpm;
+        if (res.metronome.playing) startMetronome(res.metronome.bpm, res.metronome.startTime);
+      }
+      
+      // 지연 보상 상태 적용
+      delayCompensation = res.delayCompensation || false;
+      if ($('delay-compensation')) $('delay-compensation').checked = delayCompensation;
+
+      // 역할 설정
+      myRole = res.myRole || 'performer';
+      updateRoleUI();
+      
+      // listener는 오디오 전송 안함
+      if (myRole === 'listener' && localStream) {
+        localStream.getAudioTracks().forEach(t => t.enabled = false);
+        isMuted = true;
+        updateMuteUI();
+      }
+
+      // 기존 사용자들을 peers Map에 추가
+      if (res.users) {
+        res.users.forEach(({ id, username, avatar, role }) => {
+          if (!peers.has(id)) {
+            peers.set(id, {
+              pc: { connectionState: actuallyTauri ? 'connected' : 'new' },
+              username,
+              avatar,
+              role: role || 'performer',
+              audioEl: null,
+              latency: null,
+              volume: 100,
+              packetLoss: 0,
+              jitter: 0,
+              bitrate: 0,
+              quality: { grade: actuallyTauri ? 'good' : 'fair', label: actuallyTauri ? 'UDP' : '관전', color: actuallyTauri ? '#2ed573' : '#ffa502' },
+              pan: 0,
+              muted: false,
+              solo: false,
+              isSpeaking: false
+            });
+          }
+        });
+        renderUsers();
+      }
+
+      // Tauri앱: UDP 릴레이로 오디오, 브라우저: 관전 모드 (오디오 없음)
+      if (actuallyTauri) {
+        try {
+          await startUdpMode();
+          // After UDP is set up, attempt P2P with existing peers
+          if (res.users) {
+            res.users.forEach(({ id }) => initiateP2P(id));
+          }
+        } catch (udpError) {
+          console.error('UDP 시작 실패:', udpError);
+          toast('오디오 연결 중 오류 발생', 'warning');
+        }
+      } else {
+        // 브라우저 관전 모드 배너 표시, 오디오 컨트롤 숨김
+        $('browser-spectator-banner')?.classList.remove('hidden');
+        $('muteBtn')?.classList.add('hidden');
+        $('room-audio-device')?.classList.add('hidden');
+        $('room-audio-output')?.classList.add('hidden');
+        $('recordBtn')?.classList.add('hidden');
+      }
+      
+      startLatencyPing();
+      startAudioMeter();
+      initPttTouch();
+    } finally {
+      joiningRoom = false;
     }
-    
-    startLatencyPing();
-    if (!networkQualityInterval) {
-      networkQualityInterval = setInterval(monitorNetworkQuality, 5000);
-    }
-    startAudioMeter();
-    initPttTouch();
-    joiningRoom = false;
   });
 };
 
@@ -3010,11 +2942,6 @@ function startAudioMeter() {
     meterInterval = null;
   }
   
-  // Close existing audio context
-  if (audioContext && audioContext.state !== 'closed') {
-    try { audioContext.close(); } catch {}
-  }
-  
   // Check if localStream exists
   if (!localStream) {
     console.warn('startAudioMeter: localStream not available');
@@ -3022,11 +2949,8 @@ function startAudioMeter() {
   }
   
   try {
-    audioContext = new AudioContext();
-    // Resume if suspended (browser autoplay policy)
-    if (audioContext.state === 'suspended') {
-      audioContext.resume();
-    }
+    // Use shared AudioContext instead of creating new one
+    audioContext = getSharedAudioContext();
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     
@@ -3588,6 +3512,18 @@ function createPeerConnection(peerId, username, avatar, initiator, role = 'perfo
 }
 
 function renderUsers() {
+  // Check if we can do a lightweight update instead of full rebuild
+  const existingCards = usersGrid.querySelectorAll('.user-card[data-peer-id]');
+  const existingIds = new Set([...existingCards].map(c => c.dataset.peerId));
+  const currentIds = new Set(peers.keys());
+  
+  // If same peers, just update stats (fast path)
+  if (existingIds.size === currentIds.size && [...existingIds].every(id => currentIds.has(id))) {
+    updateUserStats();
+    return;
+  }
+  
+  // Full rebuild needed (peer joined/left)
   usersGrid.innerHTML = '';
   const hasSolo = [...peers.values()].some(p => p.solo);
   
@@ -3600,14 +3536,15 @@ function renderUsers() {
     
     const card = document.createElement('div');
     card.className = `user-card ${connected ? 'connected' : 'connecting'} ${speaking}`;
+    card.dataset.peerId = id;
     card.innerHTML = `
       <div class="card-avatar" style="background-image: ${peer.avatar ? `url(${avatarUrl(peer.avatar)})` : 'none'}"></div>
       <div class="card-info">
         <span class="card-name">${peer.isSpeaking ? '🎤 ' : ''}${escapeHtml(peer.username)}</span>
         <div class="card-stats">
           <span class="quality-badge" style="background:${q.color}">${q.label}${connType ? ` (${connType})` : ''}</span>
-          <span class="stat">${peer.latency ? peer.latency + 'ms' : '--'}</span>
-          <span class="stat">${peer.packetLoss.toFixed(1)}% 손실</span>
+          <span class="stat stat-latency">${peer.latency ? peer.latency + 'ms' : '--'}</span>
+          <span class="stat stat-loss">${peer.packetLoss.toFixed(1)}% 손실</span>
         </div>
         <div class="volume-meter">
           <div class="volume-bar" data-peer="${id}"></div>
@@ -3664,7 +3601,7 @@ function renderUsers() {
     if (muteBtn) muteBtn.onclick = () => {
       peer.muted = !peer.muted;
       applyMixerState();
-      renderUsers();
+      updateUserStats(); // Use lightweight update
     };
     
     // 솔로 버튼
@@ -3672,7 +3609,7 @@ function renderUsers() {
     if (soloBtn) soloBtn.onclick = () => {
       peer.solo = !peer.solo;
       applyMixerState();
-      renderUsers();
+      updateUserStats(); // Use lightweight update
     };
     
     // 팬 슬라이더
@@ -3692,6 +3629,44 @@ function renderUsers() {
     }
     
     usersGrid.appendChild(card);
+  });
+}
+
+// Lightweight stats-only update (no DOM rebuild)
+function updateUserStats() {
+  peers.forEach((peer, id) => {
+    const card = usersGrid.querySelector(`.user-card[data-peer-id="${id}"]`);
+    if (!card) return;
+    
+    const q = peer.quality;
+    const connected = peer.pc.connectionState === 'connected';
+    const connType = peer.connectionType ? { host: '직접', srflx: 'STUN', relay: 'TURN' }[peer.connectionType] || '' : '';
+    
+    // Update class for speaking/connected state
+    card.className = `user-card ${connected ? 'connected' : 'connecting'} ${peer.isSpeaking ? 'speaking' : ''}`;
+    
+    // Update stats text
+    const nameEl = card.querySelector('.card-name');
+    if (nameEl) nameEl.innerHTML = `${peer.isSpeaking ? '🎤 ' : ''}${escapeHtml(peer.username)}`;
+    
+    const badge = card.querySelector('.quality-badge');
+    if (badge) {
+      badge.style.background = q.color;
+      badge.textContent = q.label + (connType ? ` (${connType})` : '');
+    }
+    
+    const latencyEl = card.querySelector('.stat-latency');
+    if (latencyEl) latencyEl.textContent = peer.latency ? peer.latency + 'ms' : '--';
+    
+    const lossEl = card.querySelector('.stat-loss');
+    if (lossEl) lossEl.textContent = peer.packetLoss.toFixed(1) + '% 손실';
+    
+    // Update mute/solo button states
+    const muteBtn = card.querySelector('[data-action="mute"]');
+    if (muteBtn) muteBtn.classList.toggle('active', peer.muted);
+    
+    const soloBtn = card.querySelector('[data-action="solo"]');
+    if (soloBtn) soloBtn.classList.toggle('active', peer.solo);
   });
 }
 
@@ -4082,28 +4057,8 @@ function applyJitterBuffer() {
 }
 
 // 지터 버퍼 설정 (UI 동기화 포함)
-function setJitterBuffer(value) {
-  const minBuffer = proMode ? 5 : (lowLatencyMode ? 10 : 20);
-  jitterBuffer = Math.min(200, Math.max(minBuffer, value));
-  localStorage.setItem('styx-jitter-buffer', jitterBuffer);
-  
-  // UI 동기화
-  if ($('jitter-slider')) {
-    $('jitter-slider').value = jitterBuffer;
-    $('jitter-value').textContent = jitterBuffer + 'ms';
-  }
-  if ($('room-jitter-slider')) {
-    $('room-jitter-slider').value = jitterBuffer;
-    $('room-jitter-value').textContent = jitterBuffer + 'ms';
-  }
-  
-  applyJitterBuffer();
-  
-  // Tauri UDP 지터 버퍼도 설정
-  if (actuallyTauri) {
-    tauriInvoke('set_jitter_buffer', { size: Math.round(jitterBuffer / 10) }).catch(e => { if (DEBUG) console.debug('Silent error:', e); });
-  }
-}
+// setJitterBuffer is an alias for updateJitterBuffer (kept for compatibility)
+const setJitterBuffer = updateJitterBuffer;
 
 // 실시간 자동 지터 버퍼 조절 (세션 중) - Enhanced
 function autoAdjustJitter() {
@@ -4526,7 +4481,6 @@ function leaveRoom() {
   if (udpStatsInterval) { clearInterval(udpStatsInterval); udpStatsInterval = null; }
   if (metronomeInterval) { clearInterval(metronomeInterval); metronomeInterval = null; }
   if (turnRefreshTimer) { clearTimeout(turnRefreshTimer); turnRefreshTimer = null; }
-  if (networkQualityInterval) { clearInterval(networkQualityInterval); networkQualityInterval = null; }
   
   // VAD 인터벌 정리
   vadIntervals.forEach(int => clearInterval(int));
@@ -4574,6 +4528,10 @@ function leaveRoom() {
   });
   peers.clear();
   volumeStates.clear();
+  
+  // Cleanup screen share connections (in case stopScreenShare wasn't called)
+  screenPeerConnections.forEach(pc => { try { pc.close(); } catch {} });
+  screenPeerConnections.clear();
   
   // Cleanup P2P and sync mode state
   peerConnections.clear();
