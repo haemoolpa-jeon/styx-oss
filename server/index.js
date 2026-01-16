@@ -251,6 +251,46 @@ setInterval(() => {
   udp.cleanupRateLimits();
 }, 60 * 60 * 1000);
 
+// Resource monitoring (every 5 minutes)
+const MEMORY_THRESHOLD_MB = 800;
+const CPU_THRESHOLD_PERCENT = 80;
+let lastCpuUsage = process.cpuUsage();
+let lastCpuTime = Date.now();
+
+setInterval(() => {
+  const mem = process.memoryUsage();
+  const heapUsedMB = Math.round(mem.heapUsed / 1024 / 1024);
+  const rssMB = Math.round(mem.rss / 1024 / 1024);
+  
+  // CPU usage calculation
+  const currentCpuUsage = process.cpuUsage(lastCpuUsage);
+  const elapsedMs = Date.now() - lastCpuTime;
+  const cpuPercent = Math.round((currentCpuUsage.user + currentCpuUsage.system) / 1000 / elapsedMs * 100);
+  lastCpuUsage = process.cpuUsage();
+  lastCpuTime = Date.now();
+  
+  // Log warnings
+  if (heapUsedMB > MEMORY_THRESHOLD_MB) {
+    console.warn(`⚠️ [RESOURCE] High memory: ${heapUsedMB}MB heap, ${rssMB}MB RSS (threshold: ${MEMORY_THRESHOLD_MB}MB)`);
+    logSecurityEvent('HIGH_MEMORY_USAGE', { heapUsedMB, rssMB, threshold: MEMORY_THRESHOLD_MB });
+  }
+  
+  if (cpuPercent > CPU_THRESHOLD_PERCENT) {
+    console.warn(`⚠️ [RESOURCE] High CPU: ${cpuPercent}% (threshold: ${CPU_THRESHOLD_PERCENT}%)`);
+    logSecurityEvent('HIGH_CPU_USAGE', { cpuPercent, threshold: CPU_THRESHOLD_PERCENT });
+  }
+  
+  // Periodic stats log
+  const stats = {
+    memory: `${heapUsedMB}MB`,
+    cpu: `${cpuPercent}%`,
+    connections: serverStats.activeConnections,
+    rooms: rooms.getRoomCount(),
+    udpClients: udp.getStats().clients
+  };
+  console.log(`[STATS] ${JSON.stringify(stats)}`);
+}, 5 * 60 * 1000);
+
 // Graceful shutdown
 const shutdown = async (signal) => {
   console.log(`\n${signal} received, shutting down...`);
