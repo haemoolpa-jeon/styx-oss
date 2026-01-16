@@ -333,11 +333,13 @@ function init(io, stats) {
     });
 
     // Metronome
-    socket.on('metronome-update', ({ bpm, playing }) => {
+    socket.on('metronome-update', ({ bpm, playing, startTime }) => {
       if (!socket.room) return;
       const roomData = rooms.getRoom(socket.room);
       if (!roomData) return;
-      roomData.metronome = { bpm: Math.min(300, Math.max(30, bpm || 120)), playing, startTime: playing ? Date.now() : null };
+      // Use client-provided startTime for better sync, fallback to server time
+      const syncTime = playing ? (startTime || Date.now()) : null;
+      roomData.metronome = { bpm: Math.min(300, Math.max(30, bpm || 120)), playing, startTime: syncTime };
       socket.to(socket.room).emit('metronome-sync', roomData.metronome);
     });
 

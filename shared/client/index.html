@@ -457,10 +457,18 @@
       <div id="screen-share-container" class="screen-share-container hidden">
         <div class="screen-share-header">
           <span id="screen-share-user">화면 공유 중</span>
-          <button type="button" id="screen-share-close" class="btn-icon">✕</button>
+          <div class="screen-share-controls">
+            <button type="button" id="screen-share-zoom-out" class="btn-icon" title="축소">−</button>
+            <button type="button" id="screen-share-zoom-in" class="btn-icon" title="확대">+</button>
+            <button type="button" id="screen-share-fullscreen" class="btn-icon" title="전체화면">⛶</button>
+            <button type="button" id="screen-share-close" class="btn-icon" title="닫기">✕</button>
+          </div>
         </div>
         <video id="screen-share-video" autoplay playsinline></video>
       </div>
+      
+      <!-- 화면 공유 다시 열기 버튼 (숨겨진 상태) -->
+      <button type="button" id="screen-share-reopen" class="screen-share-reopen hidden" title="화면 공유 다시 보기">🖥️ 화면 공유 보기</button>
 
       <div class="room-toolbar">
         <div class="toolbar-section">

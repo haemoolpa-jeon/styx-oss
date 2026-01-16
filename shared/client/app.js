@@ -1325,9 +1325,14 @@ function stopScreenShare() {
 
 // 다른 사용자의 화면 공유 수신
 socket.on('screen-share-start', ({ userId, username }) => {
+  activeScreenShareUser = userId;
   const screenUser = $('screen-share-user');
   if (screenUser) screenUser.textContent = `${username}님의 화면`;
   $('screen-share-container')?.classList.remove('hidden');
+  $('screen-share-reopen')?.classList.add('hidden');
+  screenShareZoom = 1;
+  const video = $('screen-share-video');
+  if (video) video.style.transform = '';
   
   // Tauri 앱에서도 WebRTC로 화면 공유 수신 가능
   // (WebRTC connection will be created when screen-offer is received)
@@ -1335,7 +1340,9 @@ socket.on('screen-share-start', ({ userId, username }) => {
 
 socket.on('screen-share-stop', () => {
   if (!isScreenSharing) {
+    activeScreenShareUser = null;
     $('screen-share-container')?.classList.add('hidden');
+    $('screen-share-reopen')?.classList.add('hidden');
     const screenVideo = $('screen-share-video');
     if (screenVideo) screenVideo.srcObject = null;
     // Close screen share connections
@@ -1387,9 +1394,49 @@ $('screenShareBtn')?.addEventListener('click', () => {
   isScreenSharing ? stopScreenShare() : startScreenShare();
 });
 
+// Screen share controls
+let screenShareZoom = 1;
+let activeScreenShareUser = null;
+
 $('screen-share-close')?.addEventListener('click', () => {
-  if (isScreenSharing) stopScreenShare();
-  else $('screen-share-container')?.classList.add('hidden');
+  if (isScreenSharing) {
+    stopScreenShare();
+  } else {
+    // Just hide the container, show reopen button
+    $('screen-share-container')?.classList.add('hidden');
+    if (activeScreenShareUser) {
+      $('screen-share-reopen')?.classList.remove('hidden');
+    }
+  }
+});
+
+$('screen-share-reopen')?.addEventListener('click', () => {
+  if (activeScreenShareUser) {
+    $('screen-share-container')?.classList.remove('hidden');
+    $('screen-share-reopen')?.classList.add('hidden');
+  }
+});
+
+$('screen-share-zoom-in')?.addEventListener('click', () => {
+  screenShareZoom = Math.min(3, screenShareZoom + 0.25);
+  const video = $('screen-share-video');
+  if (video) video.style.transform = `scale(${screenShareZoom})`;
+});
+
+$('screen-share-zoom-out')?.addEventListener('click', () => {
+  screenShareZoom = Math.max(0.5, screenShareZoom - 0.25);
+  const video = $('screen-share-video');
+  if (video) video.style.transform = `scale(${screenShareZoom})`;
+});
+
+$('screen-share-fullscreen')?.addEventListener('click', () => {
+  const container = $('screen-share-container');
+  if (!container) return;
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  } else {
+    container.requestFullscreen().catch(() => {});
+  }
 });
 
 const authPanel = $('auth');
@@ -3031,21 +3078,23 @@ $('metronome-toggle').onclick = () => {
   
   if (playing) {
     metronomeLocalStop = false;
-    startMetronome(bpm, null, countIn);
+    const startTime = getServerTime(); // Use server time for sync
+    startMetronome(bpm, startTime, countIn);
+    socket.emit('metronome-update', { bpm, playing, startTime });
   } else {
     metronomeLocalStop = true;
     stopMetronome();
+    socket.emit('metronome-update', { bpm, playing: false });
   }
-  
-  socket.emit('metronome-update', { bpm, playing });
 };
 
 $('bpm-input').onchange = () => {
   if (metronomeInterval) {
     const bpm = parseInt($('bpm-input').value) || 120;
+    const startTime = getServerTime();
     stopMetronome();
-    startMetronome(bpm);
-    socket.emit('metronome-update', { bpm, playing: true });
+    startMetronome(bpm, startTime);
+    socket.emit('metronome-update', { bpm, playing: true, startTime });
   }
 };
 
