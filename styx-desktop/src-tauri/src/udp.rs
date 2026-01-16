@@ -118,12 +118,13 @@ pub async fn send_audio_packet(
     sequence: u32,
     audio_data: &[u8],
 ) -> Result<(), String> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or(0);
     let header = AudioPacketHeader {
         sequence,
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_micros() as u64,
+        timestamp,
         sample_rate: 48000,
         channels: 2,
         payload_len: audio_data.len() as u16,
@@ -239,4 +240,106 @@ pub async fn get_public_addr(socket: &UdpSocket) -> Result<SocketAddr, String> {
     }
     
     Err("STUN 응답에서 주소를 찾을 수 없음".to_string())
+}
+
+// NAT type detection result
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum NatType {
+    Open,           // No NAT, direct connection
+    FullCone,       // Best for P2P - any external host can send
+    Restricted,     // P2P possible with hole punching
+    PortRestricted, // P2P possible with hole punching
+    Symmetric,      // P2P difficult, need relay
+    Unknown,
+}
+
+// Simple NAT type detection using two STUN servers
+pub async fn detect_nat_type(local_port: u16) -> Result<(NatType, SocketAddr), String> {
+    let socket = UdpSocket::bind(format!("0.0.0.0:{}", local_port))
+        .await
+        .map_err(|e| format!("Socket bind failed: {}", e))?;
+    
+    // Query first STUN server
+    let addr1 = get_public_addr(&socket).await?;
+    
+    // Query second STUN server to check if port changes (use IP, not hostname)
+    let stun2: SocketAddr = "74.125.250.129:19305".parse()
+        .map_err(|_| "STUN 서버 주소 파싱 실패")?;
+    
+    let binding_request: [u8; 20] = [
+        0x00, 0x01, 0x00, 0x00,
+        0x21, 0x12, 0xa4, 0x42,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
+        0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+    ];
+    
+    socket.send_to(&binding_request, stun2).await.ok();
+    
+    let mut buf = [0u8; 256];
+    let addr2 = match timeout(Duration::from_secs(2), socket.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) if len >= 20 => parse_stun_response(&buf[..len]),
+        _ => None,
+    };
+    
+    let nat_type = match addr2 {
+        Some(a2) if a2.port() == addr1.port() => {
+            // Same port from different servers = Full Cone or Restricted
+            NatType::FullCone
+        }
+        Some(_) => {
+            // Different port = Symmetric NAT
+            NatType::Symmetric
+        }
+        None => {
+            // Couldn't reach second server, assume restricted
+            NatType::Restricted
+        }
+    };
+    
+    Ok((nat_type, addr1))
+}
+
+fn parse_stun_response(buf: &[u8]) -> Option<SocketAddr> {
+    if buf.len() < 20 { return None; }
+    
+    let mut offset = 20;
+    while offset + 4 <= buf.len() {
+        let attr_type = u16::from_be_bytes([buf[offset], buf[offset + 1]]);
+        let attr_len = u16::from_be_bytes([buf[offset + 2], buf[offset + 3]]) as usize;
+        offset += 4;
+        
+        if offset + attr_len > buf.len() { break; }
+        
+        if attr_type == 0x0020 && attr_len >= 8 && buf[offset + 1] == 0x01 {
+            let port = u16::from_be_bytes([buf[offset + 2], buf[offset + 3]]) ^ 0x2112;
+            let ip = [
+                buf[offset + 4] ^ 0x21, buf[offset + 5] ^ 0x12,
+                buf[offset + 6] ^ 0xa4, buf[offset + 7] ^ 0x42,
+            ];
+            return Some(SocketAddr::from((ip, port)));
+        }
+        
+        offset += attr_len + (4 - attr_len % 4) % 4;
+    }
+    None
+}
+
+// UDP hole punch - send packets to peer to open NAT
+pub async fn hole_punch(socket: &UdpSocket, peer_addr: SocketAddr) -> Result<bool, String> {
+    // Send multiple punch packets
+    let punch_packet = [0x48, 0x50]; // "HP" = Hole Punch
+    
+    for _ in 0..5 {
+        socket.send_to(&punch_packet, peer_addr).await.ok();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    
+    // Wait for response
+    let mut buf = [0u8; 10];
+    match timeout(Duration::from_secs(2), socket.recv_from(&mut buf)).await {
+        Ok(Ok((len, from))) if len >= 2 && from == peer_addr => {
+            Ok(buf[0] == 0x48 || buf[0] == 0x4F) // HP or OK
+        }
+        _ => Ok(false)
+    }
 }

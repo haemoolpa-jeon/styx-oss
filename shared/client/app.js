@@ -2102,9 +2102,10 @@ async function startUdpMode() {
     // Always use relay server (simpler, works for everyone)
     let relayHost = serverUrl ? new URL(serverUrl).hostname : window.location.hostname;
     
-    // Convert nip.io hostname to IP for Rust SocketAddr parsing
-    if (relayHost === '3-39-223-2.nip.io') {
-      relayHost = '3.39.223.2';
+    // Convert hostname to IP for Rust SocketAddr parsing (doesn't support DNS)
+    // nip.io format: X-X-X-X.nip.io -> X.X.X.X
+    if (relayHost.endsWith('.nip.io')) {
+      relayHost = relayHost.replace('.nip.io', '').replace(/-/g, '.');
     }
     
     const mySessionId = socket.id;
