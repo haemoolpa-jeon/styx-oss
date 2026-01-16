@@ -6,11 +6,21 @@ const roomDeletionTimers = new Map();
 const ROOM_EMPTY_TIMEOUT = 5 * 60 * 1000;
 
 let io = null;
-let sfuCleanupCallback = null; // Set by init()
+let sfuCleanupCallback = null;
+let broadcastTimer = null; // Debounce broadcasts
 
 function init(socketIo, onSfuCleanup = null) {
   io = socketIo;
   sfuCleanupCallback = onSfuCleanup;
+}
+
+// Debounced room list broadcast (100ms)
+function debouncedBroadcast() {
+  if (broadcastTimer) return;
+  broadcastTimer = setTimeout(() => {
+    broadcastTimer = null;
+    broadcastRoomList();
+  }, 100);
 }
 
 function broadcastRoomList() {
@@ -109,7 +119,7 @@ function addUserToRoom(roomName, socketId, username, avatar) {
   room.roles.set(socketId, role);
   
   cancelRoomDeletion(roomName);
-  broadcastRoomList();
+  debouncedBroadcast();
   
   return role;
 }
@@ -124,7 +134,7 @@ function removeUserFromRoom(roomName, socketId) {
   if (room.users.size === 0) {
     scheduleRoomDeletion(roomName);
   }
-  broadcastRoomList();
+  debouncedBroadcast();
 }
 
 function getRoomUsers(roomName) {

@@ -9,6 +9,16 @@ let sessionsCacheTime = 0;
 const SESSIONS_CACHE_TTL = 5000;
 
 let sessions = new Map();
+let saveTimer = null;
+
+// Debounced save (1 second delay)
+function debouncedSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    saveSessions(sessions);
+  }, 1000);
+}
 
 async function loadSessions() {
   const now = Date.now();
@@ -66,7 +76,7 @@ function createSession(username, ip, userAgent, isAdmin = false) {
     lastActivity: Date.now()
   });
   
-  saveSessions(sessions);
+  debouncedSave();
   return token;
 }
 
@@ -80,7 +90,7 @@ function validateSession(username, token) {
   if (!safeTokenCompare(session.token, token)) return false;
   if (session.expires < Date.now()) {
     sessions.delete(username);
-    saveSessions(sessions);
+    debouncedSave();
     return false;
   }
   return true;
@@ -90,13 +100,13 @@ function extendSession(username) {
   const session = sessions.get(username);
   if (session) {
     session.expires = Date.now() + 7 * 24 * 60 * 60 * 1000;
-    saveSessions(sessions);
+    debouncedSave();
   }
 }
 
 function deleteSession(username) {
   sessions.delete(username);
-  saveSessions(sessions);
+  debouncedSave();
 }
 
 async function cleanupExpired() {
