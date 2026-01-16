@@ -10,20 +10,58 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::udp::AudioPacketHeader;
 
-const FRAME_SIZE: usize = 960; // 10ms @ 48kHz stereo (480 samples per channel)
+const FRAME_SIZE: usize = 480; // 5ms @ 48kHz stereo (240 samples per channel) - reduced for lower latency
 const MAX_PACKET_SIZE: usize = 1500;
-const MIN_JITTER_BUFFER: usize = 2;  // 20ms minimum (aggressive, for good networks)
-const MAX_JITTER_BUFFER: usize = 10; // 100ms maximum
+const MIN_JITTER_BUFFER: usize = 0;  // Allow zero buffer for excellent connections
+const PLAYBACK_BUFFER_CAP: usize = 9600; // 100ms @ 48kHz stereo
+const MAX_JITTER_BUFFER: usize = 20; // 100ms maximum (5ms * 20 frames)
 const KEEPALIVE_INTERVAL_MS: u64 = 5000; // 5초마다 keepalive
 
-// 적응형 지터 버퍼
+// Configurable buffer sizes (samples)
+pub static CPAL_BUFFER_SIZE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(480);
+
+pub fn set_cpal_buffer_size(size: u32) {
+    // Valid sizes: 64, 128, 256, 480, 960
+    let valid = match size {
+        64 | 128 | 256 | 480 | 960 => size,
+        _ => 480
+    };
+    CPAL_BUFFER_SIZE.store(valid, Ordering::SeqCst);
+}
+
+pub fn get_cpal_buffer_size() -> u32 {
+    CPAL_BUFFER_SIZE.load(Ordering::SeqCst)
+}
+
+// Get best available host (prefer ASIO for low latency)
+fn get_best_host() -> cpal::Host {
+    #[cfg(target_os = "windows")]
+    {
+        // Try ASIO first for lowest latency
+        for host_id in cpal::available_hosts() {
+            if format!("{:?}", host_id).contains("Asio") {
+                if let Ok(host) = cpal::host_from_id(host_id) {
+                    eprintln!("[AUDIO] Using ASIO host for low latency");
+                    return host;
+                }
+            }
+        }
+    }
+    cpal::default_host()
+}
+
+// NetEQ-style adaptive jitter buffer
 pub struct JitterBuffer {
     buffer: BTreeMap<u32, Vec<f32>>,
     next_seq: u32,
     target_size: usize,
-    // 적응형 크기 조절용 통계
+    // Arrival time tracking for variance calculation
+    expected_interval_ms: i64,
+    last_arrival: i64,
+    // Statistics
     late_packets: u32,
     total_packets: u32,
+    jitter_estimate: f32, // Exponential moving average of jitter
 }
 
 impl JitterBuffer {
@@ -31,9 +69,12 @@ impl JitterBuffer {
         Self { 
             buffer: BTreeMap::new(), 
             next_seq: 0, 
-            target_size: initial_size,
+            target_size: initial_size.max(MIN_JITTER_BUFFER),
+            expected_interval_ms: 5, // 5ms frame
+            last_arrival: 0,
             late_packets: 0,
             total_packets: 0,
+            jitter_estimate: 0.0,
         }
     }
     
@@ -50,15 +91,29 @@ impl JitterBuffer {
     }
     
     pub fn push(&mut self, seq: u32, samples: Vec<f32>) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        
         self.total_packets += 1;
         
-        // 너무 오래된 패킷 (이미 재생됨)
+        // Track inter-arrival jitter (RFC 3550 style)
+        if self.last_arrival > 0 {
+            let interval = now - self.last_arrival;
+            let deviation = (interval - self.expected_interval_ms).abs() as f32;
+            // Exponential moving average: jitter = jitter + (|D| - jitter) / 16
+            self.jitter_estimate += (deviation - self.jitter_estimate) / 16.0;
+        }
+        self.last_arrival = now;
+        
+        // Too old packet (already played)
         if self.next_seq > 0 && seq < self.next_seq.wrapping_sub(self.target_size as u32 * 2) {
             self.late_packets += 1;
             return;
         }
         
-        // 버퍼 오버플로우 방지
+        // Prevent buffer overflow
         while self.buffer.len() >= self.target_size * 2 {
             if let Some(&oldest) = self.buffer.keys().next() {
                 self.buffer.remove(&oldest);
@@ -66,8 +121,8 @@ impl JitterBuffer {
         }
         self.buffer.insert(seq, samples);
         
-        // 적응형 크기 조절 (100패킷마다)
-        if self.total_packets % 100 == 0 {
+        // Adaptive sizing every 50 packets
+        if self.total_packets % 50 == 0 {
             self.adapt_size();
         }
     }
@@ -77,27 +132,42 @@ impl JitterBuffer {
         
         let late_ratio = self.late_packets as f32 / self.total_packets as f32;
         
-        if late_ratio > 0.05 && self.target_size < MAX_JITTER_BUFFER {
-            // 5% 이상 늦은 패킷 → 버퍼 증가
-            self.target_size += 1;
-        } else if late_ratio < 0.01 && self.target_size > MIN_JITTER_BUFFER {
-            // 1% 미만 → 버퍼 감소 (지연 줄이기)
-            self.target_size -= 1;
+        // NetEQ-style: target = 2 * jitter_estimate / frame_duration
+        let jitter_frames = (self.jitter_estimate / self.expected_interval_ms as f32 * 2.0).ceil() as usize;
+        let jitter_target = jitter_frames.max(MIN_JITTER_BUFFER).min(MAX_JITTER_BUFFER);
+        
+        // Blend late packet ratio with jitter estimate
+        if late_ratio > 0.03 {
+            // >3% late → increase buffer
+            self.target_size = (self.target_size + 1).min(MAX_JITTER_BUFFER);
+        } else if late_ratio < 0.001 && self.jitter_estimate < 2.0 {
+            // Excellent connection (<0.1% late, <2ms jitter) → allow zero buffer
+            self.target_size = 0;
+        } else if late_ratio < 0.005 && self.target_size > jitter_target {
+            // <0.5% late and above jitter target → decrease
+            self.target_size = self.target_size.saturating_sub(1);
+        } else {
+            // Slowly converge to jitter-based target
+            if self.target_size < jitter_target {
+                self.target_size += 1;
+            } else if self.target_size > jitter_target + 2 {
+                self.target_size = self.target_size.saturating_sub(1);
+            }
         }
         
-        // 통계 리셋
+        // Reset stats
         self.late_packets = 0;
         self.total_packets = 0;
     }
     
     pub fn pop(&mut self) -> Option<Vec<f32>> {
-        // 정상 순서 패킷
+        // Normal sequence packet
         if let Some(samples) = self.buffer.remove(&self.next_seq) {
             self.next_seq = self.next_seq.wrapping_add(1);
             return Some(samples);
         }
         
-        // 버퍼가 충분히 찼으면 가장 오래된 것 반환 (순서 건너뛰기)
+        // If buffer is sufficiently full, return oldest (skip sequence)
         if self.buffer.len() >= self.target_size / 2 {
             if let Some(&seq) = self.buffer.keys().next() {
                 self.next_seq = seq.wrapping_add(1);
@@ -105,6 +175,10 @@ impl JitterBuffer {
             }
         }
         None
+    }
+    
+    pub fn jitter_ms(&self) -> f32 {
+        self.jitter_estimate
     }
 }
 
@@ -139,6 +213,9 @@ pub struct UdpStreamState {
     // 릴레이 모드
     pub relay_addr: Option<SocketAddr>,
     pub session_id: Option<String>,
+    // Optional audio features
+    pub dtx_enabled: Arc<AtomicBool>,      // Discontinuous transmission (save bandwidth during silence)
+    pub comfort_noise: Arc<AtomicBool>,    // Generate comfort noise during silence
 }
 
 impl Default for UdpStreamState {
@@ -161,6 +238,8 @@ impl Default for UdpStreamState {
             output_device: None,
             relay_addr: None,
             session_id: None,
+            dtx_enabled: Arc::new(AtomicBool::new(false)),  // Off by default
+            comfort_noise: Arc::new(AtomicBool::new(false)), // Off by default
         }
     }
 }
@@ -204,7 +283,7 @@ pub fn create_encoder_with_bitrate(bitrate_kbps: u32) -> Result<Encoder, String>
     encoder.set_bitrate(opus::Bitrate::Bits(bitrate_kbps as i32 * 1000)).ok();
     encoder.set_inband_fec(true).ok();
     encoder.set_packet_loss_perc(5).ok();
-    encoder.set_vbr(false).ok();
+    encoder.set_vbr(false).ok(); // CBR for consistent latency
     Ok(encoder)
 }
 
@@ -235,6 +314,7 @@ pub fn decode_frame(decoder: &mut Decoder, data: &[u8]) -> Result<Vec<f32>, Stri
 }
 
 // 패킷 손실 시 PLC (Packet Loss Concealment)
+/// Decode with Opus built-in PLC (Packet Loss Concealment)
 pub fn decode_plc(decoder: &mut Decoder) -> Result<Vec<f32>, String> {
     let mut pcm = vec![0f32; FRAME_SIZE];
     let len = decoder.decode_float(&[], &mut pcm, true)
@@ -258,9 +338,11 @@ pub fn start_send_loop(
     is_muted: Arc<AtomicBool>,
     sequence: Arc<AtomicU32>,
     packets_sent: Arc<AtomicU32>,
+    packets_lost: Arc<AtomicU32>,
+    packets_received: Arc<AtomicU32>,
     input_device_name: Option<String>,
 ) -> Result<(), String> {
-    let host = cpal::default_host();
+    let host = get_best_host();
     let device = match &input_device_name {
         Some(name) => host.input_devices()
             .map_err(|e| e.to_string())?
@@ -328,6 +410,8 @@ pub fn start_send_loop(
             Err(_) => return,
         };
         let mut frame_buffer = Vec::with_capacity(FRAME_SIZE);
+        let mut frame_count = 0u32;
+        let mut last_loss_update = 0u32;
         
         while let Some(samples) = rx.recv().await {
             frame_buffer.extend(samples);
@@ -339,13 +423,30 @@ pub fn start_send_loop(
             
             while frame_buffer.len() >= FRAME_SIZE {
                 let frame: Vec<f32> = frame_buffer.drain(..FRAME_SIZE).collect();
+                
+                // Adaptive FEC: update every 200 frames (~1 second)
+                frame_count += 1;
+                if frame_count - last_loss_update >= 200 {
+                    let lost = packets_lost.load(Ordering::Relaxed);
+                    let recv = packets_received.load(Ordering::Relaxed);
+                    if recv > 0 {
+                        let loss_pct = (lost as f32 / (recv + lost) as f32 * 100.0).min(100.0);
+                        // Add headroom for burst loss: FEC% = loss * 1.5 + 5 (minimum 5%)
+                        let fec_pct = ((loss_pct * 1.5 + 5.0) as i32).max(5).min(50);
+                        encoder.set_packet_loss_perc(fec_pct).ok();
+                    }
+                    last_loss_update = frame_count;
+                }
+                
                 if let Ok(opus_data) = encode_frame(&mut encoder, &frame) {
                     let seq = sequence.fetch_add(1, Ordering::SeqCst);
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_micros() as u64)
+                        .unwrap_or(0);
                     let header = AudioPacketHeader {
                         sequence: seq,
-                        timestamp: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap().as_micros() as u64,
+                        timestamp,
                         sample_rate: 48000,
                         channels: 2,
                         payload_len: {
@@ -382,7 +483,7 @@ pub fn start_recv_loop(
     peer_stats: Arc<Mutex<BTreeMap<SocketAddr, PeerStats>>>,
     output_device_name: Option<String>,
 ) -> Result<(), String> {
-    let host = cpal::default_host();
+    let host = get_best_host();
     let device = match &output_device_name {
         Some(name) => host.output_devices()
             .map_err(|e| e.to_string())?
@@ -486,8 +587,21 @@ pub fn start_recv_loop(
                                 }
                                 
                                 if let Some(decoder) = decoders.get_mut(&addr) {
-                                    for _ in 0..lost {
-                                        if let Ok(plc_samples) = decode_plc(decoder) {
+                                    for i in 0..lost {
+                                        if let Ok(mut plc_samples) = decode_plc(decoder) {
+                                            // Apply fade-out for consecutive losses
+                                            let fade_factor = match i {
+                                                0 => 1.0,
+                                                1 => 0.8,
+                                                2 => 0.5,
+                                                3 => 0.3,
+                                                _ => 0.1,
+                                            };
+                                            if fade_factor < 1.0 {
+                                                for sample in plc_samples.iter_mut() {
+                                                    *sample *= fade_factor;
+                                                }
+                                            }
                                             if let Ok(mut jb) = jitter_buffers.lock() {
                                                 jb.entry(addr)
                                                     .or_insert_with(|| JitterBuffer::new(MIN_JITTER_BUFFER))
@@ -548,8 +662,8 @@ pub fn start_recv_loop(
                     if let Some(samples) = buffer.pop() {
                         if let Ok(mut pb) = playback_buffer.lock() {
                             pb.extend(samples);
-                            // 버퍼 오버플로우 방지 (200ms 최대)
-                            while pb.len() > 19200 { // 200ms @ 48kHz stereo = 19,200 samples
+                            // 버퍼 오버플로우 방지 (100ms 최대)
+                            while pb.len() > 9600 { // 100ms @ 48kHz stereo = 9,600 samples
                                 pb.pop_front();
                             }
                         }
@@ -579,6 +693,8 @@ pub fn start_relay_loop(
     output_device: Option<String>,
     input_level: Arc<AtomicU32>,
     bitrate: Arc<AtomicU32>,
+    dtx_enabled: Arc<AtomicBool>,
+    comfort_noise: Arc<AtomicBool>,
 ) -> Result<(), String> {
     eprintln!("[RELAY] Starting relay loop with proper networking");
     
@@ -612,6 +728,7 @@ pub fn start_relay_loop(
     let sequence_send = sequence.clone();
     let packets_sent_send = packets_sent.clone();
     let input_level_send = input_level.clone();
+    let dtx_enabled_send = dtx_enabled.clone();
     let session_send = session_bytes.clone();
     
     std::thread::spawn(move || {
@@ -620,7 +737,7 @@ pub fn start_relay_loop(
             Err(e) => { eprintln!("[AUDIO] Encoder creation failed: {}", e); return; }
         };
         
-        let host = cpal::default_host();
+        let host = get_best_host();
         let device = input_device
             .and_then(|name| host.input_devices().ok()?.find(|d| d.name().ok().as_ref() == Some(&name)))
             .or_else(|| host.default_input_device());
@@ -633,7 +750,7 @@ pub fn start_relay_loop(
         let config = cpal::StreamConfig {
             channels: 2, // Stereo input
             sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 960 samples for stereo
+            buffer_size: cpal::BufferSize::Fixed(get_cpal_buffer_size()), // Configurable
         };
         
         let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
@@ -661,6 +778,13 @@ pub fn start_relay_loop(
         let copy_len = session_send.len().min(20);
         padded_session[..copy_len].copy_from_slice(&session_send[..copy_len]);
         
+        let mut last_keepalive = std::time::Instant::now();
+        let keepalive_interval = std::time::Duration::from_secs(5);
+        
+        // DTX state
+        const SILENCE_THRESHOLD: f32 = 0.005; // -46dB
+        let mut consecutive_silence_frames = 0u32;
+        
         while is_running_send.load(Ordering::SeqCst) {
             if let Ok(samples) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
                 // Calculate input level
@@ -668,7 +792,32 @@ pub fn start_relay_loop(
                 let level = (rms * 200.0).min(100.0) as u32;
                 input_level_send.store(level, Ordering::Relaxed);
                 
-                if is_muted_send.load(Ordering::SeqCst) { continue; }
+                if is_muted_send.load(Ordering::SeqCst) {
+                    // Send keepalive when muted to maintain NAT mapping
+                    if last_keepalive.elapsed() >= keepalive_interval {
+                        let mut keepalive = vec![0u8; 21];
+                        keepalive[..20].copy_from_slice(&padded_session);
+                        keepalive[20] = 0x50; // 'P' for ping
+                        let _ = std_socket_send.send_to(&keepalive, relay_addr);
+                        last_keepalive = std::time::Instant::now();
+                    }
+                    continue;
+                }
+                
+                // DTX: Skip sending during silence (if enabled)
+                let is_silence = rms < SILENCE_THRESHOLD;
+                if dtx_enabled_send.load(Ordering::SeqCst) && is_silence {
+                    consecutive_silence_frames += 1;
+                    // Send occasional keepalive during silence
+                    if consecutive_silence_frames % 100 == 0 { // Every 500ms
+                        let mut keepalive = vec![0u8; 21];
+                        keepalive[..20].copy_from_slice(&padded_session);
+                        keepalive[20] = 0x50;
+                        let _ = std_socket_send.send_to(&keepalive, relay_addr);
+                    }
+                    continue;
+                }
+                consecutive_silence_frames = 0;
                 
                 if let Ok(encoded) = encode_frame(&mut encoder, &samples) {
                     let seq = sequence_send.fetch_add(1, Ordering::SeqCst);
@@ -706,12 +855,10 @@ pub fn start_relay_loop(
     let session_id_recv = session_id.clone();
     
     std::thread::spawn(move || {
-        let mut decoder = match create_decoder() {
-            Ok(d) => d,
-            Err(e) => { eprintln!("[AUDIO] Decoder creation failed: {}", e); return; }
-        };
+        // Per-peer decoders for multi-peer relay support
+        let mut decoders: std::collections::HashMap<String, Decoder> = std::collections::HashMap::new();
         
-        let host = cpal::default_host();
+        let host = get_best_host();
         let device = output_device
             .and_then(|name| host.output_devices().ok()?.find(|d| d.name().ok().as_ref() == Some(&name)))
             .or_else(|| host.default_output_device());
@@ -724,16 +871,38 @@ pub fn start_relay_loop(
         let config = cpal::StreamConfig {
             channels: 2, // Stereo output
             sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(FRAME_SIZE as u32), // 960 samples for stereo
+            buffer_size: cpal::BufferSize::Fixed(get_cpal_buffer_size()), // Configurable
         };
         
         let pb = playback_buffer.clone();
+        let comfort_noise_enabled = comfort_noise.load(Ordering::Relaxed);
+        let mut fade_out = 1.0f32; // For smooth underrun handling
+        let mut noise_state = 0u32; // Simple PRNG state for comfort noise
         let stream = match device.build_output_stream(
             &config,
             move |data: &mut [f32], _| {
                 if let Ok(mut buf) = pb.lock() {
+                    let buf_len = buf.len();
                     for sample in data.iter_mut() {
-                        *sample = buf.pop_front().unwrap_or(0.0);
+                        if let Some(s) = buf.pop_front() {
+                            *sample = s * fade_out;
+                            fade_out = 1.0; // Reset fade when we have data
+                        } else {
+                            // Buffer underrun - comfort noise or silence
+                            if comfort_noise_enabled {
+                                // Simple PRNG for low-level comfort noise (~-60dB)
+                                noise_state = noise_state.wrapping_mul(1103515245).wrapping_add(12345);
+                                let noise = ((noise_state >> 16) as f32 / 65536.0 - 0.5) * 0.002;
+                                *sample = noise * fade_out;
+                            } else {
+                                *sample = 0.0;
+                            }
+                            fade_out = (fade_out * 0.95).max(0.0);
+                        }
+                    }
+                    // Warn if buffer is getting low
+                    if buf_len < FRAME_SIZE && buf_len > 0 {
+                        fade_out = 0.8; // Start fading early
                     }
                 }
             },
@@ -753,6 +922,7 @@ pub fn start_relay_loop(
         let _stream = stream;
         
         let mut buf = vec![0u8; 2000];
+        let mut last_seq: u32 = 0;
         const SESSION_ID_LEN: usize = 20;
         
         while is_running_recv.load(Ordering::SeqCst) {
@@ -774,19 +944,69 @@ pub fn start_relay_loop(
                     // Validate payload length matches header declaration
                     let expected_total_len = SESSION_ID_LEN + AudioPacketHeader::SIZE + header.payload_len as usize;
                     if len != expected_total_len {
-                        eprintln!("Relay packet length mismatch: got {}, expected {}", len, expected_total_len);
                         continue;
                     }
                     
+                    // Packet loss detection and PLC (handles sequence wrap-around)
+                    let expected_seq = last_seq.wrapping_add(1);
+                    if last_seq > 0 && header.sequence != expected_seq {
+                        // Use wrapping subtraction for correct gap calculation across wrap-around
+                        let lost = header.sequence.wrapping_sub(expected_seq) as usize;
+                        if lost > 0 && lost < 10 {
+                            // Get or create decoder for this peer (for PLC)
+                            let decoder = decoders.entry(sender_id.clone()).or_insert_with(|| {
+                                create_decoder().expect("Decoder creation failed")
+                            });
+                            // Generate PLC for lost packets with fade-out
+                            for i in 0..lost {
+                                if let Ok(mut plc_samples) = decode_plc(decoder) {
+                                    // Apply fade-out for consecutive losses
+                                    let fade_factor = match i {
+                                        0 => 1.0,
+                                        1 => 0.8,
+                                        2 => 0.5,
+                                        3 => 0.3,
+                                        _ => 0.1,
+                                    };
+                                    if fade_factor < 1.0 {
+                                        for sample in plc_samples.iter_mut() {
+                                            *sample *= fade_factor;
+                                        }
+                                    }
+                                    if let Ok(mut pb) = playback_buffer.lock() {
+                                        pb.extend(plc_samples);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    last_seq = header.sequence;
+                    
                     let payload = &buf[SESSION_ID_LEN + AudioPacketHeader::SIZE..len];
                     
-                    if let Ok(samples) = decode_frame(&mut decoder, payload) {
+                    // Get or create per-peer decoder
+                    let decoder = decoders.entry(sender_id.clone()).or_insert_with(|| {
+                        create_decoder().unwrap_or_else(|_| {
+                            eprintln!("[AUDIO] Failed to create decoder for peer {}", sender_id);
+                            create_decoder().expect("Decoder creation should not fail twice")
+                        })
+                    });
+                    
+                    if let Ok(samples) = decode_frame(decoder, payload) {
                         packets_received_recv.fetch_add(1, Ordering::Relaxed);
                         
                         if let Ok(mut pb) = playback_buffer.lock() {
                             pb.extend(samples);
-                            // Prevent buffer overflow (200ms max)
-                            while pb.len() > 19200 { pb.pop_front(); } // 200ms @ 48kHz stereo = 19,200 samples
+                            // Prevent buffer overflow (100ms max)
+                            while pb.len() > PLAYBACK_BUFFER_CAP { pb.pop_front(); }
+                        }
+                    }
+                    
+                    // Cleanup old decoders (keep max 8 peers)
+                    if decoders.len() > 8 {
+                        // Remove oldest (first inserted)
+                        if let Some(key) = decoders.keys().next().cloned() {
+                            decoders.remove(&key);
                         }
                     }
                 }

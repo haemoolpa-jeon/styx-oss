@@ -96,10 +96,11 @@ function validateSession(username, token) {
   return true;
 }
 
-function extendSession(username) {
+function extendSession(username, isAdmin = false) {
   const session = sessions.get(username);
   if (session) {
-    session.expires = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    const timeout = isAdmin ? 7 * 24 * 60 * 60 * 1000 : 4 * 60 * 60 * 1000;
+    session.expires = Date.now() + timeout;
     debouncedSave();
   }
 }

@@ -92,7 +92,7 @@ function init(io, stats) {
         
         socket.username = username;
         socket.isAdmin = user.isAdmin;
-        sessions.extendSession(username);
+        sessions.extendSession(username, user.isAdmin);
         cb({ success: true, user: { username, isAdmin: user.isAdmin, avatar: user.avatar } });
       } catch (e) {
         console.error('[SESSION_ERROR]', e.message);
