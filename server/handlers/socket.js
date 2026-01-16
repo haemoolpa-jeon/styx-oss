@@ -306,6 +306,10 @@ function init(io, stats) {
         console.log(`[LEAVE] ${socket.username} left room: ${socket.room}`);
         socket.room = null;
       }
+      // Clean up UDP room binding
+      if (socket.udpSessionId) {
+        udp.removeFromRoom(socket.udpSessionId);
+      }
     });
 
     socket.on('close-room', ({ roomName }, cb) => {

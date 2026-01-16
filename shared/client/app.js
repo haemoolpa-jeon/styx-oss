@@ -1399,6 +1399,12 @@ const roomView = $('room-view');
 const usersGrid = $('users-grid');
 const chatMessages = $('chat-messages');
 
+// 페이지 종료 시 정리
+window.addEventListener('beforeunload', () => {
+  socket.emit('leave-room');
+  socket.disconnect();
+});
+
 // 오프라인 감지
 window.addEventListener('online', () => {
   isOnline = true;
@@ -2020,7 +2026,7 @@ async function initTauriFeatures() {
     const hosts = await tauriInvoke('get_audio_hosts');
     const hostSelect = $('tauri-audio-host');
     if (hostSelect && hosts.length) {
-      hostSelect.innerHTML = hosts.map(h => `<option value="${h}">${h}</option>`).join('');
+      hostSelect.innerHTML = hosts.map(h => `<option value="${escapeHtml(h)}">${escapeHtml(h)}</option>`).join('');
       if ($('tauri-audio-row')) $('tauri-audio-row').style.display = 'flex';
     }
     
@@ -2267,15 +2273,15 @@ function startUdpStatsMonitor() {
         lastPacketLoss = stats.loss_rate;
         
         // Health check: verify UDP relay is reachable via ping
-        // Don't check packets - they can be 0 if alone or muted
         if (stats.is_running) {
           try {
             const latency = await tauriInvoke('measure_relay_latency');
             if (latency > 0) {
-              udpHealthFailCount = 0; // Relay is reachable
+              udpHealthFailCount = 0;
             }
           } catch (pingErr) {
             udpHealthFailCount++;
+            log(`[UDP] Health check failed (${udpHealthFailCount}/5): ${pingErr}`);
             if (udpHealthFailCount >= 5 && !useTcpFallback) {
               console.warn('UDP 릴레이 연결 끊김, TCP로 전환');
               toast('UDP 연결 끊김, TCP로 전환 중...', 'warning');

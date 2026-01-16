@@ -49,6 +49,15 @@ function init() {
   udpServer = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
   udpServer.on('message', (msg, rinfo) => {
+    // Handle raw ping packets (9 bytes: 'P' + 8-byte timestamp) for latency measurement
+    if (msg.length === 9 && msg[0] === 0x50) {
+      const pong = Buffer.alloc(9);
+      pong[0] = 0x4F; // 'O' for pong
+      msg.copy(pong, 1, 1, 9); // Copy timestamp
+      udpServer.send(pong, rinfo.port, rinfo.address);
+      return;
+    }
+
     if (msg.length < SESSION_ID_LEN + 1 || msg.length > MAX_PACKET_SIZE) return;
 
     if (!checkUdpRateLimit(rinfo.address)) {
@@ -61,6 +70,21 @@ function init() {
 
     udpStats.packetsIn++;
     udpStats.bytesIn += msg.length;
+
+    // Register/update client address BEFORE handling any packet type
+    let client = udpClients.get(sessionId);
+    if (!client) {
+      console.log(`[UDP] New client: ${sessionId.slice(0, 8)}... from ${rinfo.address}:${rinfo.port}`);
+      udpClients.set(sessionId, { address: rinfo.address, port: rinfo.port, roomId: null, lastSeen: Date.now() });
+      client = udpClients.get(sessionId);
+    } else {
+      // Update address/port if changed (NAT rebinding)
+      if (client.address !== rinfo.address || client.port !== rinfo.port) {
+        client.address = rinfo.address;
+        client.port = rinfo.port;
+      }
+      client.lastSeen = Date.now();
+    }
 
     // Handle ping with timestamp
     if (payload.length === 9 && payload[0] === 0x50) {
@@ -77,20 +101,7 @@ function init() {
       return;
     }
 
-    // Register/update client
-    let client = udpClients.get(sessionId);
-    if (!client) {
-      console.log(`[UDP] New client: ${sessionId.slice(0, 8)}... from ${rinfo.address}:${rinfo.port}`);
-      udpClients.set(sessionId, { address: rinfo.address, port: rinfo.port, roomId: null, lastSeen: Date.now() });
-      return;
-    }
-
-    if (client.address !== rinfo.address || client.port !== rinfo.port) {
-      client.address = rinfo.address;
-      client.port = rinfo.port;
-    }
-    client.lastSeen = Date.now();
-
+    // Audio relay requires roomId
     if (!client.roomId) return;
 
     const members = roomMembers.get(client.roomId);
@@ -170,6 +181,19 @@ function removeClient(sessionId) {
   udpClients.delete(sessionId);
 }
 
+function removeFromRoom(sessionId) {
+  const client = udpClients.get(sessionId);
+  if (!client) return;
+  
+  if (client.roomId && roomMembers.has(client.roomId)) {
+    roomMembers.get(client.roomId).delete(sessionId);
+    if (roomMembers.get(client.roomId).size === 0) {
+      roomMembers.delete(client.roomId);
+    }
+  }
+  client.roomId = null;
+}
+
 function cleanupRateLimits() {
   const now = Date.now();
   for (const [ip, record] of udpRateLimits) {
@@ -204,6 +228,7 @@ function disableSfuForRoom(roomId) {
 module.exports = {
   init,
   addToRoom,
+  removeFromRoom,
   removeClient,
   cleanupRateLimits,
   getStats,
