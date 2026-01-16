@@ -5,10 +5,12 @@ const rooms = new Map();
 const roomDeletionTimers = new Map();
 const ROOM_EMPTY_TIMEOUT = 5 * 60 * 1000;
 
-let io = null; // Set by init()
+let io = null;
+let sfuCleanupCallback = null; // Set by init()
 
-function init(socketIo) {
+function init(socketIo, onSfuCleanup = null) {
   io = socketIo;
+  sfuCleanupCallback = onSfuCleanup;
 }
 
 function broadcastRoomList() {
@@ -36,6 +38,7 @@ function scheduleRoomDeletion(roomName) {
   const timer = setTimeout(() => {
     const roomData = rooms.get(roomName);
     if (roomData && roomData.users.size === 0) {
+      if (sfuCleanupCallback) sfuCleanupCallback(roomName);
       rooms.delete(roomName);
       roomDeletionTimers.delete(roomName);
       broadcastRoomList();
@@ -85,6 +88,7 @@ function hasRoom(roomName) {
 }
 
 function deleteRoom(roomName) {
+  if (sfuCleanupCallback) sfuCleanupCallback(roomName);
   rooms.delete(roomName);
   broadcastRoomList();
 }

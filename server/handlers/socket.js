@@ -6,7 +6,7 @@ const path = require('path');
 
 const { config } = require('../config');
 const { logSecurityEvent } = require('../utils/audit');
-const { schemas, validateUsername, validatePassword, sanitize } = require('../utils/validation');
+const { schemas, validateUsername, validatePassword, sanitize, isValidIPv4 } = require('../utils/validation');
 const { checkRateLimit, isIpWhitelisted, getWhitelistStatus, setWhitelistEnabled, addToWhitelist, removeFromWhitelist } = require('../middleware/security');
 const users = require('../services/users');
 const sessions = require('../services/sessions');
@@ -17,7 +17,10 @@ let serverStats = null;
 
 function init(io, stats) {
   serverStats = stats;
-  rooms.init(io);
+  rooms.init(io, (roomId) => {
+    // SFU cleanup callback
+    udp.disableSfuForRoom(roomId);
+  });
 
   io.on('connection', (socket) => {
     serverStats.totalConnections++;
@@ -205,7 +208,7 @@ function init(io, stats) {
 
     socket.on('admin-whitelist-add', ({ ip }, cb) => {
       if (!socket.isAdmin) return cb?.({ error: 'Not authorized' });
-      if (!ip || !/^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/.test(ip)) {
+      if (!isValidIPv4(ip)) {
         return cb?.({ error: 'Invalid IP format' });
       }
       addToWhitelist(ip);

@@ -162,48 +162,51 @@ app.get('/privacy-policy', (req, res) => {
 
 // GDPR data export
 app.post('/api/gdpr/export', async (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-  
-  const user = await users.getUser(username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  
-  const bcrypt = require('bcrypt');
-  const valid = await bcrypt.compare(password, user.password).catch(() => false);
-  if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-  
-  const { password: _, ...userData } = user;
-  res.json({
-    exportDate: new Date().toISOString(),
-    userData,
-    sessions: sessions.getSessionsByUser(username)
-  });
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    
+    const valid = await users.verifyPassword(username, password);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    
+    const user = await users.getUser(username);
+    const { password: _, ...userData } = user;
+    res.json({
+      exportDate: new Date().toISOString(),
+      userData,
+      sessions: sessions.getSessionsByUser(username)
+    });
+  } catch (e) {
+    console.error('[GDPR_EXPORT_ERROR]', e.message);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // GDPR data deletion
 app.post('/api/gdpr/delete', async (req, res) => {
-  const { username, password, confirm } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-  if (confirm !== 'DELETE_MY_ACCOUNT') return res.status(400).json({ error: 'Must confirm with "DELETE_MY_ACCOUNT"' });
-  
-  const user = await users.getUser(username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  
-  const bcrypt = require('bcrypt');
-  const valid = await bcrypt.compare(password, user.password).catch(() => false);
-  if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-  
-  await users.deleteUser(username);
-  sessions.deleteSessionsByUser(username);
-  
-  // Delete avatar
-  const fs = require('fs').promises;
-  const avatarFiles = await fs.readdir(config.paths.avatars).catch(() => []);
-  const userAvatar = avatarFiles.find(f => f.startsWith(username + '.'));
-  if (userAvatar) await fs.unlink(path.join(config.paths.avatars, userAvatar)).catch(() => {});
-  
-  logSecurityEvent('GDPR_ACCOUNT_DELETED', { username, ip: req.ip });
-  res.json({ success: true, message: 'Account and data deleted' });
+  try {
+    const { username, password, confirm } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    if (confirm !== 'DELETE_MY_ACCOUNT') return res.status(400).json({ error: 'Must confirm with "DELETE_MY_ACCOUNT"' });
+    
+    const valid = await users.verifyPassword(username, password);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    
+    await users.deleteUser(username);
+    sessions.deleteSessionsByUser(username);
+    
+    // Delete avatar
+    const fs = require('fs').promises;
+    const avatarFiles = await fs.readdir(config.paths.avatars).catch(() => []);
+    const userAvatar = avatarFiles.find(f => f.startsWith(username + '.'));
+    if (userAvatar) await fs.unlink(path.join(config.paths.avatars, userAvatar)).catch(() => {});
+    
+    logSecurityEvent('GDPR_ACCOUNT_DELETED', { username, ip: req.ip });
+    res.json({ success: true, message: 'Account and data deleted' });
+  } catch (e) {
+    console.error('[GDPR_DELETE_ERROR]', e.message);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Static files
@@ -217,9 +220,11 @@ app.use('/avatars', (req, res, next) => {
 
 // Deep link redirect
 app.get('/join/:roomName', (req, res) => {
-  const roomName = req.params.roomName;
+  // Escape HTML to prevent XSS
+  const escapeHtml = (s) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const roomName = escapeHtml(req.params.roomName);
   const password = req.query.password || '';
-  const deepLink = `styx://join/${encodeURIComponent(roomName)}${password ? `?password=${encodeURIComponent(password)}` : ''}`;
+  const deepLink = `styx://join/${encodeURIComponent(req.params.roomName)}${password ? `?password=${encodeURIComponent(password)}` : ''}`;
   res.send(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Styx - ${roomName}</title>
 <style>body{font-family:sans-serif;background:#08080d;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center}.container{max-width:400px;padding:40px}h1{font-size:24px}.btn{display:inline-block;padding:14px 28px;background:#8b7cf7;color:#fff;text-decoration:none;border-radius:8px;margin:8px}</style>
