@@ -4649,6 +4649,13 @@ function leaveRoom() {
   isMuted = false;
   isPttActive = false;
   
+  // Screen share state reset
+  activeScreenShareUser = null;
+  screenShareZoom = 1;
+  $('screen-share-reopen')?.classList.add('hidden');
+  const screenVideo = $('screen-share-video');
+  if (screenVideo) screenVideo.style.transform = '';
+  
   // 오디오 정리
   cleanupAudio();
   
