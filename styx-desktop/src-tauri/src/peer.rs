@@ -922,7 +922,7 @@ pub fn start_relay_loop(
         let _stream = stream;
         
         let mut buf = vec![0u8; 2000];
-        let mut last_seq: u32 = 0;
+        let mut last_seqs: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
         const SESSION_ID_LEN: usize = 20;
         
         while is_running_recv.load(Ordering::SeqCst) {
@@ -946,6 +946,9 @@ pub fn start_relay_loop(
                     if len != expected_total_len {
                         continue;
                     }
+                    
+                    // Per-peer sequence tracking
+                    let last_seq = *last_seqs.get(&sender_id).unwrap_or(&0);
                     
                     // Packet loss detection and PLC (handles sequence wrap-around)
                     let expected_seq = last_seq.wrapping_add(1);
@@ -980,7 +983,7 @@ pub fn start_relay_loop(
                             }
                         }
                     }
-                    last_seq = header.sequence;
+                    last_seqs.insert(sender_id.clone(), header.sequence);
                     
                     let payload = &buf[SESSION_ID_LEN + AudioPacketHeader::SIZE..len];
                     
