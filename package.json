@@ -15,7 +15,8 @@
     "setup": "node setup.js",
     "start": "node -r dotenv/config server/index.js",
     "dev": "node -r dotenv/config server/index.js",
-    "test": "node server/tests/test.js"
+    "test": "node server/tests/test.js",
+    "test:integration": "node server/tests/integration.js"
   },
   "dependencies": {
     "async-mutex": "^0.5.0",

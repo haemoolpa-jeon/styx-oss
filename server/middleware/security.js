@@ -3,15 +3,22 @@ const fsSync = require('fs');
 const { config } = require('../config');
 const { logSecurityEvent } = require('../utils/audit');
 
-// Rate limiting
+/** @type {Map<string, {start: number, count: number}>} IP rate limit records */
 const rateLimits = new Map();
+/** @type {Map<string, {start: number, count: number}>} User rate limit records */
 const userRateLimits = new Map();
+/** @type {Map<string, {violations: number, penaltyStart?: number}>} Suspicious IP records */
 const suspiciousIPs = new Map();
 
+/** @constant {number} Rate limit window in ms */
 const RATE_LIMIT_WINDOW = 60000;
+/** @constant {number} Max requests per IP per window */
 const RATE_LIMIT_MAX = 100;
+/** @constant {number} Max requests per user per window */
 const USER_RATE_LIMIT_MAX = 50;
+/** @constant {number} Violations before marking suspicious */
 const SUSPICIOUS_THRESHOLD = 3;
+/** @constant {number} Penalty duration for suspicious IPs (5 min) */
 const SUSPICIOUS_PENALTY = 300000;
 
 // IP Whitelist
@@ -43,11 +50,22 @@ function saveWhitelist() {
   }
 }
 
+/**
+ * Check if IP is whitelisted (or whitelist disabled)
+ * @param {string} ip - IP address to check
+ * @returns {boolean}
+ */
 function isIpWhitelisted(ip) {
   if (!whitelistEnabled) return true;
   return ipWhitelist.has(ip) || ip === '127.0.0.1' || ip === '::1';
 }
 
+/**
+ * Check rate limit for IP and optional user
+ * @param {string} ip - Client IP address
+ * @param {string} [userId] - Optional user identifier
+ * @returns {boolean} True if request allowed, false if rate limited
+ */
 function checkRateLimit(ip, userId = null) {
   const now = Date.now();
 

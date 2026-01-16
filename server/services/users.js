@@ -6,11 +6,13 @@ const { Mutex } = require('async-mutex');
 const { config } = require('../config');
 
 const fileMutex = new Mutex();
+/** @param {Function} fn - Function to run with file lock */
 const withLock = (fn) => fileMutex.runExclusive(fn);
 
-// In-memory cache
+/** @type {Object|null} In-memory user data cache */
 let usersCache = null;
 let usersCacheTime = 0;
+/** @constant {number} Cache TTL in ms */
 const USERS_CACHE_TTL = 5000;
 
 // Ensure data directory exists
@@ -44,6 +46,11 @@ async function saveUsers(data) {
   }
 }
 
+/**
+ * Get user by username
+ * @param {string} username
+ * @returns {Promise<Object|null>} User object or null
+ */
 async function getUser(username) {
   const data = await loadUsers();
   return data.users[username] || null;
@@ -147,6 +154,12 @@ async function getAllUsers() {
   }));
 }
 
+/**
+ * Verify user password
+ * @param {string} username
+ * @param {string} password - Plain text password
+ * @returns {Promise<boolean>}
+ */
 async function verifyPassword(username, password) {
   const user = await getUser(username);
   if (!user) return false;

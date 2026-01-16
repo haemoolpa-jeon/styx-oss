@@ -1,6 +1,21 @@
 // Environment configuration and validation
 const path = require('path');
 
+/**
+ * Server configuration object
+ * @type {Object}
+ * @property {number} port - HTTP server port
+ * @property {number} udpPort - UDP relay server port
+ * @property {string} nodeEnv - Node environment (development/production)
+ * @property {boolean} forceHttps - Force HTTPS redirect
+ * @property {string[]} corsOrigins - Allowed CORS origins
+ * @property {string} turnServer - TURN server hostname
+ * @property {string} turnSecret - TURN server secret for credentials
+ * @property {number} turnTtl - TURN credential TTL in seconds
+ * @property {string} adminToken - Admin API token
+ * @property {Object} paths - File paths for data storage
+ * @property {number} saltRounds - bcrypt salt rounds
+ */
 const config = {
   port: process.env.PORT || 3000,
   udpPort: parseInt(process.env.UDP_PORT) || 5000,
@@ -22,6 +37,10 @@ const config = {
   saltRounds: 10,
 };
 
+/**
+ * Validate environment variables and exit if critical ones missing in production
+ * @returns {void}
+ */
 function validateEnv() {
   const warnings = [];
   const errors = [];
