@@ -2266,19 +2266,25 @@ function startUdpStatsMonitor() {
         }
         lastPacketLoss = stats.loss_rate;
         
-        // Health check: if no packets received for 5 seconds, switch to TCP
-        if (stats.is_running && stats.packets_received === 0) {
-          udpHealthFailCount++;
-          if (udpHealthFailCount >= 5 && !useTcpFallback) {
-            console.warn('UDP 연결 끊김, TCP로 전환');
-            toast('UDP 연결 끊김, TCP로 전환 중...', 'warning');
-            await tauriInvoke('udp_stop_stream');
-            useTcpFallback = true;
-            socket.emit('tcp-bind-room', { roomId: socket.room });
-            startTcpAudioStream();
+        // Health check: verify UDP relay is reachable via ping
+        // Don't check packets - they can be 0 if alone or muted
+        if (stats.is_running) {
+          try {
+            const latency = await tauriInvoke('measure_relay_latency');
+            if (latency > 0) {
+              udpHealthFailCount = 0; // Relay is reachable
+            }
+          } catch (pingErr) {
+            udpHealthFailCount++;
+            if (udpHealthFailCount >= 5 && !useTcpFallback) {
+              console.warn('UDP 릴레이 연결 끊김, TCP로 전환');
+              toast('UDP 연결 끊김, TCP로 전환 중...', 'warning');
+              await tauriInvoke('udp_stop_stream');
+              useTcpFallback = true;
+              socket.emit('tcp-bind-room', { roomId: socket.room });
+              startTcpAudioStream();
+            }
           }
-        } else {
-          udpHealthFailCount = 0;
         }
       }
       
