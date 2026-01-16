@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=1.5.2.9">
   <script src="config.js"></script>
 </head>
 <body data-theme="dark">
@@ -21,6 +21,7 @@
       <div class="bar"></div>
     </div>
     <span class="quality-text">연결 중...</span>
+    <span class="latency-text" title="예상 E2E 지연"></span>
   </div>
   <div id="reconnect-overlay" class="reconnect-overlay hidden">
     <div class="reconnect-content">
@@ -36,7 +37,7 @@
     <div class="shortcuts-content">
       <div class="shortcuts-header">
         <h3>키보드 단축키</h3>
-        <button class="close-btn" onclick="$('shortcuts-overlay').classList.add('hidden')">×</button>
+        <button type="button" class="close-btn" onclick="$('shortcuts-overlay').classList.add('hidden')">×</button>
       </div>
       <div class="shortcuts-list">
         <div class="shortcuts-section">
@@ -92,20 +93,24 @@
       <p class="auth-subtitle">HADES 실시간 오디오 협업</p>
       
       <div class="auth-tabs">
-        <button class="tab active" data-tab="login">로그인</button>
-        <button class="tab" data-tab="signup">회원가입</button>
+        <button type="button" class="tab active" data-tab="login">로그인</button>
+        <button type="button" class="tab" data-tab="signup">회원가입</button>
       </div>
 
       <div id="login-form" class="auth-form">
         <input type="text" id="login-user" placeholder="사용자명" autocomplete="username">
         <input type="password" id="login-pass" placeholder="비밀번호" autocomplete="current-password">
-        <button id="loginBtn" class="btn-primary">로그인</button>
+        <label class="checkbox-inline" style="margin: 8px 0; font-size: 13px;">
+          <input type="checkbox" id="remember-me" checked>
+          <span>로그인 상태 유지</span>
+        </label>
+        <button type="button" id="loginBtn" class="btn-primary">로그인</button>
       </div>
 
       <div id="signup-form" class="auth-form hidden">
         <input type="text" id="signup-user" placeholder="사용자명 (2-20자)">
         <input type="password" id="signup-pass" placeholder="비밀번호 (4자 이상)">
-        <button id="signupBtn" class="btn-primary">가입 요청</button>
+        <button type="button" id="signupBtn" class="btn-primary">가입 요청</button>
       </div>
 
       <div id="auth-msg"></div>
@@ -126,11 +131,11 @@
           <span id="my-username"></span>
         </div>
         <div class="header-actions">
-          <button id="themeBtn" title="테마 변경">☀️</button>
-          <button id="shortcutsBtn" title="단축키 (F1)">⌨️</button>
-          <button id="settingsBtn" title="비밀번호 변경">🔑</button>
-          <button id="adminBtn" class="hidden" title="관리자">👑</button>
-          <button id="logoutBtn" class="btn-logout">로그아웃</button>
+          <button type="button" id="themeBtn" title="테마 변경">☀️</button>
+          <button type="button" id="shortcutsBtn" title="단축키 (F1)">⌨️</button>
+          <button type="button" id="settingsBtn" title="비밀번호 변경">🔑</button>
+          <button type="button" id="adminBtn" class="hidden" title="관리자">👑</button>
+          <button type="button" id="logoutBtn" class="btn-logout">로그아웃</button>
         </div>
       </header>
 
@@ -145,68 +150,61 @@
         <!-- 오디오 설정 (데스크톱 앱 전용) -->
         <section id="audio-settings-section" class="lobby-card">
           <h3>🎧 오디오 설정</h3>
-          <div class="audio-grid">
-            <div class="audio-col">
+          
+          <!-- 장치 선택 -->
+          <div class="settings-section">
+            <div class="settings-row">
               <div class="form-field">
                 <label>🎤 입력 장치</label>
-                <select id="audio-device"></select>
+                <select id="audio-device" title="마이크 또는 오디오 인터페이스를 선택하세요"></select>
               </div>
               <div class="form-field">
                 <label>🔊 출력 장치</label>
-                <select id="audio-output"></select>
+                <select id="audio-output" title="스피커 또는 헤드폰을 선택하세요"></select>
               </div>
             </div>
-            <div class="audio-col">
-              <div class="checkbox-group">
-                <label><input type="checkbox" id="echo-cancel" checked> 에코 제거</label>
-                <label><input type="checkbox" id="noise-suppress" checked> 잡음 제거</label>
-                <label><input type="checkbox" id="ai-noise"> 🤖 AI 노이즈 제거 <small>(+지연)</small></label>
-                <label><input type="checkbox" id="auto-gain" checked> 자동 음량</label>
-                <label><input type="checkbox" id="ptt-mode"> 눌러서 말하기 (Space)</label>
-                <label><input type="checkbox" id="vad-mode" checked> 말할 때 표시</label>
-                <label><input type="checkbox" id="ducking-mode"> 자동 볼륨 낮춤</label>
-                <label><input type="checkbox" id="input-monitor"> 🎧 입력 모니터링</label>
-                <label><input type="checkbox" id="tuner-toggle"> 🎸 튜너</label>
-                <label><input type="checkbox" id="auto-adapt" checked> 자동 품질 조절</label>
-              </div>
-              <div id="tuner-display" class="tuner-display hidden"></div>
+            <div class="test-buttons">
+              <button type="button" id="test-audio-btn" class="btn-test" title="마이크가 제대로 작동하는지 테스트합니다">🎤 마이크 테스트</button>
+              <button type="button" id="test-network-btn" class="btn-test" title="네트워크 연결 품질을 측정합니다">📡 네트워크 테스트</button>
             </div>
-            <div class="audio-col">
-              <div class="form-field">
-                <label>📊 버퍼 <span id="jitter-value">50ms</span> <label class="auto-jitter-label"><input type="checkbox" id="auto-jitter" checked> 자동</label></label>
-                <input type="range" id="jitter-slider" min="20" max="150" value="50" step="10">
-              </div>
-              <div class="form-field">
-                <label class="low-latency-label"><input type="checkbox" id="low-latency-mode"> ⚡ 저지연 모드 <small>(ASIO + 유선랜 권장)</small></label>
-              </div>
-              <div class="test-buttons">
-                <button id="test-audio-btn" class="btn-test">🎤 마이크</button>
-                <button id="test-network-btn" class="btn-test">📡 네트워크</button>
-              </div>
-              <div class="mic-meter">
-                <div id="mic-level"></div>
-              </div>
-              <div id="test-results" class="test-results hidden"></div>
-              <span id="test-status" class="test-status"></span>
-            </div>
+            <div class="mic-meter"><div id="mic-level"></div></div>
+            <div id="test-results" class="test-results hidden"></div>
+            <span id="test-status" class="test-status"></span>
           </div>
+
           <!-- Tauri 앱 전용 설정 -->
-          <div id="tauri-settings" style="display:none; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);">
-            <div id="tauri-audio-row" class="form-field" style="display:none;">
-              <label>🎛️ 오디오 드라이버</label>
-              <select id="tauri-audio-host"></select>
-              <span id="tauri-audio-hint" class="hint"></span>
+          <div id="tauri-settings" class="tauri-only hidden">
+            <div class="settings-section">
+              <h4 class="settings-section-title">🖥️ 데스크톱 전용</h4>
+              <div id="tauri-audio-row" class="form-field hidden">
+                <label title="오디오 드라이버를 선택합니다. ASIO가 가장 낮은 지연을 제공합니다">🎛️ 오디오 드라이버</label>
+                <select id="tauri-audio-host"></select>
+              </div>
+              <div class="form-field">
+                <label title="오디오 버퍼 크기. 낮을수록 지연↓, 불안정↑">🔧 버퍼 크기</label>
+                <select id="buffer-size-select">
+                  <option value="64">64 (1.3ms) - 최저 지연</option>
+                  <option value="128">128 (2.7ms) - 저지연</option>
+                  <option value="256">256 (5.3ms) - 균형</option>
+                  <option value="480" selected>480 (10ms) - 안정</option>
+                  <option value="960">960 (20ms) - 최고 안정</option>
+                </select>
+              </div>
             </div>
-            <div id="udp-stats-badge" class="stats-badge hidden"></div>
-            <canvas id="ping-graph" width="200" height="60" style="display:none;"></canvas>
           </div>
+          
+          <p class="settings-hint">💡 오디오 처리 및 성능 설정은 방 입장 후 ⚙️ 버튼에서 변경할 수 있습니다.</p>
+        </section>
+
+          <div id="udp-stats-badge" class="stats-badge hidden"></div>
+          <canvas id="ping-graph" width="200" height="60" style="display:none;"></canvas>
         </section>
 
         <!-- 방 목록 -->
         <section class="lobby-card">
           <div class="card-header">
             <h3>📡 활성 방 목록</h3>
-            <button id="createRoomBtn" class="btn-create">➕ 방 만들기</button>
+            <button type="button" id="createRoomBtn" class="btn-create">➕ 방 만들기</button>
           </div>
           <div id="room-list" class="room-grid"></div>
         </section>
@@ -219,7 +217,7 @@
       <div class="modal-box modal-wide">
         <div class="modal-header">
           <h2>🎵 새 방 만들기</h2>
-          <button class="modal-close">✕</button>
+          <button type="button" class="modal-close">✕</button>
         </div>
         <div class="modal-body">
           <!-- 기본 설정 -->
@@ -254,24 +252,17 @@
             <h4>오디오 설정</h4>
             <div class="form-row">
               <div class="form-field">
-                <label>오디오 모드</label>
-                <select id="new-room-audio-mode">
+                <label title="음성: 저지연 최적화 / 악기: 고음질 풀레인지">오디오 모드</label>
+                <select id="new-room-audio-mode" title="음성 모드는 대화에, 악기 모드는 음악 연주에 적합">
                   <option value="voice">🎤 음성 (저지연)</option>
                   <option value="music">🎸 악기 (고품질)</option>
-                </select>
-              </div>
-              <div class="form-field">
-                <label>샘플레이트</label>
-                <select id="new-room-sample-rate">
-                  <option value="48000" selected>48 kHz (권장)</option>
-                  <option value="44100">44.1 kHz</option>
                 </select>
               </div>
             </div>
             <div class="form-row">
               <div class="form-field">
-                <label>비트레이트</label>
-                <select id="new-room-bitrate">
+                <label title="높을수록 음질↑ 대역폭 사용↑">비트레이트</label>
+                <select id="new-room-bitrate" title="64kbps: 음성용 / 96kbps: 일반 / 128~192kbps: 악기/음악">
                   <option value="64">64 kbps (저대역폭)</option>
                   <option value="96" selected>96 kbps (권장)</option>
                   <option value="128">128 kbps (고품질)</option>
@@ -279,8 +270,8 @@
                 </select>
               </div>
               <div class="form-field">
-                <label>기본 BPM</label>
-                <input type="number" id="new-room-bpm" value="120" min="30" max="300" placeholder="120">
+                <label title="메트로놈 기본 템포">기본 BPM</label>
+                <input type="number" id="new-room-bpm" value="120" min="30" max="300" placeholder="120" title="30~300 BPM">
               </div>
             </div>
           </div>
@@ -296,22 +287,22 @@
           <!-- 템플릿 -->
           <div class="form-section template-section">
             <h4>📋 템플릿</h4>
-            <div class="form-row">
-              <select id="room-template-select" style="flex:1">
+            <div class="template-row">
+              <select id="room-template-select">
                 <option value="">-- 템플릿 선택 --</option>
               </select>
               <button type="button" onclick="loadRoomTemplate($('room-template-select').value)" class="btn-small">적용</button>
               <button type="button" onclick="deleteRoomTemplate($('room-template-select').value)" class="btn-small btn-danger">삭제</button>
             </div>
-            <div class="form-row" style="margin-top:8px">
-              <input type="text" id="new-template-name" placeholder="새 템플릿 이름" style="flex:1">
+            <div class="template-row">
+              <input type="text" id="new-template-name" placeholder="새 템플릿 이름">
               <button type="button" onclick="saveRoomTemplate($('new-template-name').value)" class="btn-small">저장</button>
             </div>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn-secondary">취소</button>
-          <button class="btn-primary">방 만들기</button>
+          <button type="button" class="btn-secondary">취소</button>
+          <button type="button" class="btn-primary">방 만들기</button>
         </div>
       </div>
     </div>
@@ -322,7 +313,7 @@
       <div class="modal-box">
         <div class="modal-header">
           <h2>🔑 비밀번호 변경</h2>
-          <button class="modal-close" id="closeSettingsBtn">✕</button>
+          <button type="button" class="modal-close" id="closeSettingsBtn">✕</button>
         </div>
         <div class="modal-body">
           <div class="form-field">
@@ -335,7 +326,7 @@
               <label for="new-password" style="font-size: 12px; color: #666; margin-bottom: 4px; display: block;">새 비밀번호</label>
               <input type="password" id="new-password" placeholder="새 비밀번호">
             </div>
-            <button id="changePasswordBtn" class="btn-primary" style="margin-top:12px;">변경</button>
+            <button type="button" id="changePasswordBtn" class="btn-primary" style="margin-top:12px;">변경</button>
           </div>
         </div>
       </div>
@@ -347,7 +338,7 @@
       <div class="modal-box modal-wide">
         <div class="modal-header">
           <h2>👑 관리자</h2>
-          <button class="modal-close" id="closeAdminBtn">✕</button>
+          <button type="button" class="modal-close" id="closeAdminBtn">✕</button>
         </div>
         <div class="modal-body">
           <h4>🔒 IP 화이트리스트</h4>
@@ -355,7 +346,7 @@
             <label><input type="checkbox" id="whitelist-enabled"> 화이트리스트 활성화</label>
             <div class="whitelist-add">
               <input type="text" id="whitelist-ip" placeholder="IP 주소 (예: 123.45.67.89)">
-              <button id="whitelist-add-btn" class="btn-small">추가</button>
+              <button type="button" id="whitelist-add-btn" class="btn-small">추가</button>
             </div>
           </div>
           <div id="whitelist-list" class="admin-list"></div>
@@ -366,16 +357,16 @@
           <h4>👥 사용자 관리</h4>
           <div class="user-management-controls">
             <input type="text" id="user-search" placeholder="사용자 검색..." class="search-input">
-            <button id="refresh-users" class="btn-small">새로고침</button>
+            <button type="button" id="refresh-users" class="btn-small">새로고침</button>
           </div>
           <div id="users-list" class="admin-list"></div>
           
           <h4>📊 시스템 모니터링</h4>
           <div class="monitoring-section">
             <div class="monitoring-tabs">
-              <button id="health-tab" class="tab-btn active">상태</button>
-              <button id="metrics-tab" class="tab-btn">메트릭</button>
-              <button id="logs-tab" class="tab-btn">로그</button>
+              <button type="button" id="health-tab" class="tab-btn active">상태</button>
+              <button type="button" id="metrics-tab" class="tab-btn">메트릭</button>
+              <button type="button" id="logs-tab" class="tab-btn">로그</button>
             </div>
             <div id="health-content" class="tab-content">
               <div id="health-stats" class="stats-grid"></div>
@@ -385,11 +376,48 @@
             </div>
             <div id="logs-content" class="tab-content hidden">
               <div class="logs-controls">
-                <button id="refresh-logs" class="btn-small">새로고침</button>
-                <button id="clear-logs" class="btn-small">지우기</button>
+                <button type="button" id="refresh-logs" class="btn-small">새로고침</button>
+                <button type="button" id="clear-logs" class="btn-small">지우기</button>
               </div>
               <div id="logs-display" class="logs-display"></div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 연결 진단 모달 -->
+    <div id="diagnostics-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-box modal-wide">
+        <div class="modal-header">
+          <h2>📊 연결 진단</h2>
+          <button type="button" class="modal-close" onclick="closeDiagnostics()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="diag-section">
+            <h4>📈 지연 시간 (최근 30초)</h4>
+            <canvas id="diag-latency-chart" width="400" height="120"></canvas>
+            <div class="diag-stats">
+              <span>평균: <strong id="diag-avg-latency">-</strong>ms</span>
+              <span>최소: <strong id="diag-min-latency">-</strong>ms</span>
+              <span>최대: <strong id="diag-max-latency">-</strong>ms</span>
+            </div>
+          </div>
+          <div class="diag-section">
+            <h4>📉 지터 분포</h4>
+            <canvas id="diag-jitter-chart" width="400" height="100"></canvas>
+          </div>
+          <div class="diag-section">
+            <h4>📦 패킷 손실</h4>
+            <div class="diag-stats">
+              <span>총 수신: <strong id="diag-packets-recv">-</strong></span>
+              <span>손실: <strong id="diag-packets-lost">-</strong></span>
+              <span>손실률: <strong id="diag-loss-rate">-</strong>%</span>
+            </div>
+          </div>
+          <div class="diag-actions">
+            <button type="button" onclick="exportSessionStats()" class="btn-small">📥 통계 내보내기</button>
           </div>
         </div>
       </div>
@@ -410,18 +438,18 @@
           <div id="self-stats" class="self-stats">
             <span class="self-stat">📡 <span id="self-latency">-</span>ms</span>
             <span class="self-stat">📊 <span id="self-bandwidth">-</span>kbps</span>
-            <span class="self-stat">📉 <span id="self-loss">-</span>loss</span>
+            <span class="self-stat" id="room-connection-status" title="연결 상태">⚪ 대기</span>
           </div>
         </div>
         <div class="room-controls">
           <select id="room-audio-device" title="입력 장치"></select>
           <select id="room-audio-output" title="출력 장치"></select>
-          <button id="muteBtn" class="btn-icon" title="음소거 (M)">🎤</button>
-          <button id="inviteBtn" class="btn-icon" title="초대 링크">🔗</button>
-          <button id="recordBtn" class="btn-icon" title="녹음">⏺️</button>
-          <button id="screenShareBtn" class="btn-icon" title="화면 공유">🖥️</button>
-          <button id="closeRoomBtn" class="btn-icon hidden" title="방 닫기">🚪</button>
-          <button id="leaveBtn" class="btn-leave">나가기</button>
+          <button type="button" id="muteBtn" class="btn-icon" title="음소거 (M)">🎤</button>
+          <button type="button" id="inviteBtn" class="btn-icon" title="초대 링크">🔗</button>
+          <button type="button" id="recordBtn" class="btn-icon" title="녹음">⏺️</button>
+          <button type="button" id="screenShareBtn" class="btn-icon" title="화면 공유">🖥️</button>
+          <button type="button" id="closeRoomBtn" class="btn-icon hidden" title="방 닫기">🚪</button>
+          <button type="button" id="leaveBtn" class="btn-leave">나가기</button>
         </div>
       </header>
 
@@ -429,44 +457,20 @@
       <div id="screen-share-container" class="screen-share-container hidden">
         <div class="screen-share-header">
           <span id="screen-share-user">화면 공유 중</span>
-          <button id="screen-share-close" class="btn-icon">✕</button>
+          <button type="button" id="screen-share-close" class="btn-icon">✕</button>
         </div>
         <video id="screen-share-video" autoplay playsinline></video>
       </div>
 
       <div class="room-toolbar">
         <div class="toolbar-section">
-          <label class="toolbar-check"><input type="checkbox" id="room-echo-cancel" checked> 에코 제거</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-noise-suppress" checked> 잡음 제거</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-ai-noise"> 🤖 AI 노이즈</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-ptt-mode"> 눌러서 말하기</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-vad-mode" checked> 말할 때 표시</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-auto-adapt" checked> 자동 품질</label>
-          <label class="toolbar-check"><input type="checkbox" id="room-ducking"> 자동 볼륨</label>
-          <label class="toolbar-check"><input type="checkbox" id="delay-compensation"> 지연 맞추기</label>
-          <label class="toolbar-check"><input type="checkbox" id="multitrack-mode"> 멀티트랙</label>
-        </div>
-        <div class="toolbar-section">
-          <span class="toolbar-label">버퍼:</span>
-          <input type="range" id="room-jitter-slider" min="30" max="150" value="50" step="10" class="toolbar-slider">
-          <span id="room-jitter-value" class="toolbar-value">50ms</span>
-          <label class="toolbar-check"><input type="checkbox" id="room-auto-jitter" checked> 자동</label>
-        </div>
-        <div class="toolbar-section tauri-only" id="bitrate-section" style="display:none;">
-          <span class="toolbar-label">음질:</span>
-          <select id="bitrate-select" class="toolbar-select">
-            <option value="48">48kbps (저용량)</option>
-            <option value="64">64kbps</option>
-            <option value="96" selected>96kbps (권장)</option>
-            <option value="128">128kbps (고음질)</option>
-            <option value="192">192kbps (최고)</option>
-          </select>
+          <label class="toolbar-check" title="Push-to-Talk: 스페이스바를 누르고 있을 때만 마이크 활성화"><input type="checkbox" id="room-ptt-mode"> PTT</label>
+          <label class="toolbar-check" title="멀티트랙: 각 참가자를 별도 파일로 녹음"><input type="checkbox" id="multitrack-mode"> 멀티트랙</label>
         </div>
         <div class="toolbar-section metronome-section">
-          <button id="metronome-toggle" class="btn-metro">▶️</button>
+          <button type="button" id="metronome-toggle" class="btn-metro">▶️</button>
           <input type="number" id="bpm-input" value="120" min="30" max="300" class="bpm-input">
           <span>BPM</span>
-          <label class="count-in-label"><input type="checkbox" id="count-in"> 카운트인</label>
           <div class="beat-indicators">
             <span class="beat-indicator">1</span>
             <span class="beat-indicator">2</span>
@@ -479,54 +483,113 @@
           <span class="toolbar-label">입력:</span>
           <div class="input-meter"><div id="audio-meter"></div></div>
         </div>
-        <div class="toolbar-section effects-section">
-          <button id="effects-toggle" class="btn-icon" title="EQ">🎛️</button>
-          <div id="effects-panel" class="effects-panel hidden">
-            <div class="effect-row"><span>입력</span><input type="range" id="input-volume" min="0" max="200" value="120"><span class="effect-val">120%</span></div>
-            <div class="effect-row"><span>저음</span><input type="range" id="eq-low" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
-            <div class="effect-row"><span>중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
-            <div class="effect-row"><span>고음</span><input type="range" id="eq-high" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
-            <div class="effect-row"><span>압축</span><input type="range" id="compression-ratio" min="1" max="8" value="4" step="0.5"><span class="effect-val">4:1</span></div>
-            <div class="effect-row spectrum-row">
-              <span>스펙트럼</span>
-              <button id="spectrum-toggle" class="btn-small">📊</button>
-              <canvas id="spectrum-canvas" width="200" height="60" class="spectrum-canvas hidden"></canvas>
-            </div>
-            <div class="effect-row spatial-row">
-              <span>공간음향</span>
-              <button id="spatial-toggle" class="btn-small">🎧</button>
-            </div>
-            <div class="effect-row bandwidth-row">
-              <span>대역폭</span>
-              <button id="bandwidth-toggle" class="btn-small">📊</button>
-            </div>
-            <div class="effect-row routing-row">
-              <span>라우팅</span>
-              <button id="routing-toggle" class="btn-small">🔀</button>
-              <div id="routing-matrix" class="routing-matrix hidden">
-                <div class="routing-control">
-                  <span>입력 → 출력</span>
-                  <select id="input-routing">
-                    <option value="stereo">스테레오</option>
-                    <option value="left">왼쪽만</option>
-                    <option value="right">오른쪽만</option>
-                    <option value="mono">모노 믹스</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-            <div class="effect-row noise-profile-row">
-              <span>노이즈 프로파일</span>
-              <button id="noise-profile-toggle" class="btn-small">🎯</button>
-              <div id="noise-profile-panel" class="noise-profile-panel hidden">
-                <div class="profile-control">
-                  <button id="learn-noise" class="btn-small">학습</button>
-                  <span id="noise-level">-</span>
-                  <button id="reset-profile" class="btn-small">리셋</button>
-                </div>
-              </div>
+        <div class="toolbar-section">
+          <button type="button" id="advanced-settings-btn" class="btn-icon" title="고급 설정">⚙️</button>
+          <button type="button" id="effects-toggle" class="btn-icon" title="EQ">🎛️</button>
+          <button type="button" id="diag-toggle" class="btn-icon" onclick="openDiagnostics()" title="연결 진단">🔍</button>
+        </div>
+        
+        <!-- 고급 설정 패널 -->
+        <div id="advanced-settings-panel" class="advanced-panel hidden">
+          <div class="panel-header">
+            <h4>⚙️ 고급 설정</h4>
+            <button type="button" class="btn-close" onclick="toggleAdvancedPanel()">✕</button>
+          </div>
+          
+          <div class="panel-section">
+            <h5>🎛️ 오디오 처리</h5>
+            <div class="checkbox-group">
+              <label title="상대방 스피커 소리가 마이크로 들어가는 것을 방지">
+                <input type="checkbox" id="adv-echo-cancel" checked> 에코 제거
+              </label>
+              <label title="배경 소음(에어컨, 키보드 등)을 줄여줍니다">
+                <input type="checkbox" id="adv-noise-suppress" checked> 노이즈 제거
+              </label>
+              <label title="AI 기반 고급 노이즈 제거 (약간의 지연 추가)">
+                <input type="checkbox" id="adv-ai-noise"> 🤖 AI 노이즈 제거
+              </label>
+              <label title="마이크 입력 볼륨을 자동으로 조절">
+                <input type="checkbox" id="adv-auto-gain" checked> 자동 음량
+              </label>
             </div>
           </div>
+          
+          <div class="panel-section">
+            <h5>🗣️ 통화 모드</h5>
+            <div class="checkbox-group">
+              <label title="말하고 있을 때 프로필에 표시됩니다">
+                <input type="checkbox" id="adv-vad-mode" checked> 말할 때 표시
+              </label>
+              <label title="내 마이크 소리를 실시간으로 들을 수 있습니다">
+                <input type="checkbox" id="adv-input-monitor"> 🎧 입력 모니터링
+              </label>
+            </div>
+          </div>
+          
+          <div class="panel-section">
+            <h5>⚡ 성능 모드</h5>
+            <div class="radio-group">
+              <label title="일반적인 사용에 적합한 균형 잡힌 설정">
+                <input type="radio" name="adv-performance" value="normal" checked> 🎵 일반
+              </label>
+              <label title="지연시간을 최소화 (유선 연결 권장)">
+                <input type="radio" name="adv-performance" value="low-latency"> ⚡ 저지연
+              </label>
+              <label title="모든 오디오 처리 우회 (ASIO 권장)">
+                <input type="radio" name="adv-performance" value="pro"> 🎸 Pro
+              </label>
+            </div>
+          </div>
+          
+          <div class="panel-section">
+            <h5>📊 네트워크</h5>
+            <div class="panel-row">
+              <span>지터 버퍼</span>
+              <input type="range" id="adv-jitter-slider" min="5" max="150" value="50" step="5" class="panel-slider">
+              <span id="adv-jitter-value" class="panel-value">50ms</span>
+              <label><input type="checkbox" id="adv-auto-jitter" checked> 자동</label>
+            </div>
+            <div class="checkbox-group">
+              <label title="무음 구간에서 패킷 전송을 중단하여 대역폭을 절약합니다">
+                <input type="checkbox" id="adv-dtx"> 📉 DTX (대역폭 절약)
+              </label>
+              <label title="무음 구간에 저레벨 노이즈를 생성하여 자연스러운 전환">
+                <input type="checkbox" id="adv-comfort-noise"> 🔇 컴포트 노이즈
+              </label>
+              <label title="네트워크 상태에 따라 자동으로 품질을 조절합니다">
+                <input type="checkbox" id="adv-auto-adapt" checked> 🔄 자동 품질 조절
+              </label>
+            </div>
+          </div>
+          
+          <div class="panel-section tauri-only">
+            <h5>🎚️ 음질</h5>
+            <select id="adv-bitrate" class="panel-select" title="Opus 인코더 비트레이트">
+              <option value="48">48kbps (저용량)</option>
+              <option value="64">64kbps</option>
+              <option value="96" selected>96kbps (권장)</option>
+              <option value="128">128kbps (고음질)</option>
+              <option value="192">192kbps (최고)</option>
+            </select>
+          </div>
+        </div>
+        
+        <!-- EQ 패널 -->
+        <div id="effects-panel" class="effects-panel hidden">
+          <div class="effect-row preset-row">
+            <span title="EQ와 압축 설정을 한번에 적용">프리셋</span>
+            <select id="audio-preset" onchange="applyAudioPreset(this.value)">
+              <option value="custom">사용자 정의</option>
+              <option value="voice">🎤 음성</option>
+              <option value="instrument">🎸 악기</option>
+              <option value="podcast">🎙️ 팟캐스트</option>
+            </select>
+          </div>
+          <div class="effect-row"><span>입력</span><input type="range" id="input-volume" min="0" max="200" value="120"><span class="effect-val">120%</span></div>
+          <div class="effect-row"><span>저음</span><input type="range" id="eq-low" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+          <div class="effect-row"><span>중음</span><input type="range" id="eq-mid" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+          <div class="effect-row"><span>고음</span><input type="range" id="eq-high" min="-12" max="12" value="0"><span class="effect-val">0dB</span></div>
+          <div class="effect-row"><span>압축</span><input type="range" id="compression-ratio" min="1" max="8" value="4" step="0.5"><span class="effect-val">4:1</span></div>
         </div>
       </div>
 
@@ -546,7 +609,7 @@
           <div id="chat-messages" class="chat-messages"></div>
           <div class="chat-input">
             <input type="text" id="chat-text" placeholder="메시지 입력..." maxlength="500">
-            <button id="sendBtn" class="btn-send">전송</button>
+            <button type="button" id="sendBtn" class="btn-send">전송</button>
           </div>
         </section>
       </main>
@@ -554,6 +617,16 @@
   </div>
 
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <script src="app.js"></script>
+  <script src="styx-modules.js"></script>
+  <script src="utils.js?v=1.5.2.9"></script>
+  <script src="toast.js?v=1.5.2.9"></script>
+  <script src="accessibility.js?v=1.5.2.9"></script>
+  <script src="recording.js?v=1.5.2.9"></script>
+  <script src="sync.js?v=1.5.2.9"></script>
+  <script src="sound.js?v=1.5.2.9"></script>
+  <script src="theme.js?v=1.5.2.9"></script>
+  <script src="tuner.js?v=1.5.2.9"></script>
+  <script src="keyboard.js?v=1.5.2.9"></script>
+  <script src="app.js?v=1.5.2.9"></script>
 </body>
 </html>
